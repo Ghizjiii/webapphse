@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from 'react';
 import { Plus, Trash2, Upload, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import SortableHeader from './SortableHeader';
+import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
 import { uploadPhoto } from '../lib/cloudinary';
 import { useToast } from '../context/ToastContext';
@@ -52,6 +53,14 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   }
 
   const sorted = useMemo(() => sortParticipants(participants, sortConfig), [participants, sortConfig]);
+  const totalCourses = useMemo(
+    () => [...new Set(participants.flatMap(p => (p.courses || []).map(c => c.course_name)))].length,
+    [participants]
+  );
+  const totalCourseRequests = useMemo(
+    () => participants.reduce((sum, p) => sum + (p.courses || []).length, 0),
+    [participants]
+  );
   const totalPages = Math.ceil(sorted.length / pageSize);
   const paged = useMemo(() => sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize), [sorted, currentPage, pageSize]);
 
@@ -158,8 +167,10 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
 
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <span>{participants.length} сотрудников</span>
+        <div className="flex items-center gap-2 text-sm text-gray-500 flex-wrap">
+          <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700">{participants.length} сотрудников</span>
+          <span className="px-2.5 py-0.5 rounded-full bg-green-50 text-green-700">{totalCourses} курсов</span>
+          <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{totalCourseRequests} заявок на курсы</span>
           {totalPages > 1 && (
             <span className="text-gray-400">· стр. {currentPage} из {totalPages}</span>
           )}
@@ -176,7 +187,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
         </div>
       </div>
 
-      <div className="overflow-auto rounded-xl border border-gray-200" style={{ height: '900px' }}>
+      <ResizableTableContainer>
         <table className="w-full text-sm min-w-[1000px]">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-200 sticky top-0 z-10">
@@ -281,7 +292,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
             ))}
           </tbody>
         </table>
-      </div>
+      </ResizableTableContainer>
 
       {totalPages > 1 && (
         <div className="mt-3 flex items-center justify-between">

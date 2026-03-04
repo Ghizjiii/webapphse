@@ -4,6 +4,7 @@ import { Plus, Trash2, Upload, X, CheckCircle2, Shield, Users, Building2, Chevro
 import { supabase } from '../lib/supabase';
 import { uploadPhoto } from '../lib/cloudinary';
 import { fetchCoursesList } from '../lib/bitrix';
+import ResizableTableContainer from '../components/ResizableTableContainer';
 import type { Company, Participant } from '../types';
 
 interface LocalParticipant {
@@ -278,6 +279,7 @@ export default function PublicFormPage() {
   }
 
   const totalCourses = [...new Set(participants.flatMap(p => p.courses))].length;
+  const totalCourseRequests = participants.reduce((sum, p) => sum + p.courses.length, 0);
   const filteredCourses = availableCourses.filter(c => c.toLowerCase().includes(courseSearch.toLowerCase()));
   const totalPages = Math.ceil(participants.length / pageSize);
   const pagedParticipants = participants.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -414,6 +416,9 @@ export default function PublicFormPage() {
                 <span className="flex items-center gap-1.5 bg-green-50 text-green-700 px-3 py-1 rounded-full font-medium">
                   {totalCourses} курсов
                 </span>
+                <span className="flex items-center gap-1.5 bg-amber-50 text-amber-700 px-3 py-1 rounded-full font-medium">
+                  {totalCourseRequests} заявок на курсы
+                </span>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-gray-500">Строк:</span>
                   <select
@@ -433,7 +438,7 @@ export default function PublicFormPage() {
               </div>
             )}
 
-            <div className="overflow-x-auto -mx-6">
+            <ResizableTableContainer>
               <table className="w-full" style={{ minWidth: '1100px' }}>
                 <thead>
                   <tr className="border-b border-gray-100">
@@ -577,7 +582,7 @@ export default function PublicFormPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </ResizableTableContainer>
 
             {totalPages > 1 && (
               <div className="px-6 pt-3 flex items-center justify-between text-sm">

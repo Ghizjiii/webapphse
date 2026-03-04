@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { X, RefreshCw, CheckCircle2, AlertCircle, Send } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import {
@@ -10,7 +10,9 @@ import {
   deleteSmartProcessItem,
   attachPhotoToSmartItem,
   BITRIX_FIELDS,
+  BITRIX_FIELDS_RAW,
   findSmartProcessEntityTypeId,
+  resolveSmartProcessEnumId,
 } from '../lib/bitrix';
 import { useToast } from '../context/ToastContext';
 import type { Company, Participant, BitrixSyncProgress, Deal } from '../types';
@@ -25,6 +27,18 @@ interface Props {
   onDone: () => void;
 }
 
+function decodeUnicodeEscapes(input: string): string {
+  return input.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function prettifySyncError(msg: string): string {
+  const decoded = decodeUnicodeEscapes(msg || '');
+  return decoded
+    .replace(/UF_CRM_BIN_IIN/g, '\u0411\u0418\u041d/\u0418\u0418\u041d \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438')
+    .replace(/custom field/gi, '\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u043e\u0435 \u043f\u043e\u043b\u0435')
+    .replace(/company card/gi, '\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438');
+}
+
 export default function BitrixSyncModal({ questionnaireId, company, participants, dealId, existingDeal, onClose, onDone }: Props) {
   const { showToast } = useToast();
   const [progress, setProgress] = useState<BitrixSyncProgress>({ step: '', current: 0, total: 0, status: 'idle' });
@@ -32,15 +46,15 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
   const isUpdate = !!(existingDeal?.bitrix_deal_id);
 
-  const allCourses = [...new Set(
-    participants.flatMap(p => (p.courses || []).map(c => c.course_name))
-  )].filter(Boolean);
+  const allCourses = [...new Set(participants.flatMap(p => (p.courses || []).map(c => c.course_name)).filter(Boolean))];
+  const participantsCount = participants.length;
+  const uniqueCoursesCount = allCourses.length;
+  const totalCourseRequests = participants.reduce((sum, p) => sum + (p.courses?.length || 0), 0);
 
+  const titlePrefix = [company.name, company.city].filter(Boolean).join(' - ');
   const dealTitle = [
-    company.name,
-    company.city,
-    `${participants.length} сотрудников`,
-    allCourses.join(', '),
+    titlePrefix,
+    `${participantsCount} \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432, ${uniqueCoursesCount} \u043a\u0443\u0440\u0441\u043e\u0432, ${totalCourseRequests} \u0437\u0430\u044f\u0432\u043e\u043a \u043d\u0430 \u043a\u0443\u0440\u0441\u044b`,
   ].filter(Boolean).join(' - ');
 
   async function runSync() {
@@ -48,7 +62,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
     try {
       const entityTypeId = await (async () => {
-        setProgress({ step: 'Поиск смарт-процесса...', current: 0, total: 4, status: 'running' });
+        setProgress({ step: '\u041f\u043e\u0438\u0441\u043a \u0441\u043c\u0430\u0440\u0442-\u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430...', current: 0, total: 4, status: 'running' });
         return await findSmartProcessEntityTypeId();
       })();
 
@@ -56,8 +70,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       let bitrixDealId: string;
 
       if (isUpdate && existingDeal) {
-        // Update existing company
-        setProgress({ step: 'Обновление компании в Битрикс24...', current: 1, total: 4, status: 'running' });
+        setProgress({ step: '\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044e \u0432 \u0411\u0438\u0442\u0440\u0438\u043a\u044124...', current: 1, total: 4, status: 'running' });
         bitrixCompanyId = existingDeal.bitrix_company_id;
         if (bitrixCompanyId) {
           await updateCompany(bitrixCompanyId, {
@@ -76,7 +89,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           await supabase.from('companies').update({ bitrix_company_id: bitrixCompanyId }).eq('id', company.id);
         }
 
-        setProgress({ step: 'Обновление сделки...', current: 2, total: 4, status: 'running' });
+        setProgress({ step: '\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u0441\u0434\u0435\u043b\u043a\u0443...', current: 2, total: 4, status: 'running' });
         bitrixDealId = existingDeal.bitrix_deal_id;
         await updateDeal(bitrixDealId, { title: dealTitle, companyId: bitrixCompanyId, city: company.city });
 
@@ -86,8 +99,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           updated_at: new Date().toISOString(),
         }).eq('id', existingDeal.id);
 
-        // Delete old smart process items
-        setProgress({ step: 'Удаление старых записей...', current: 3, total: 4, status: 'running' });
+        setProgress({ step: '\u0423\u0434\u0430\u043b\u044f\u0435\u043c \u0441\u0442\u0430\u0440\u044b\u0435 \u0437\u0430\u043f\u0438\u0441\u0438...', current: 3, total: 4, status: 'running' });
         const { data: oldCerts } = await supabase
           .from('certificates')
           .select('id, bitrix_item_id')
@@ -104,10 +116,8 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           }
           await supabase.from('certificates').delete().eq('id', cert.id);
         }
-
       } else {
-        // Create new company
-        setProgress({ step: 'Создание компании в Битрикс24...', current: 1, total: 4, status: 'running' });
+        setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044e \u0432 \u0411\u0438\u0442\u0440\u0438\u043a\u044124...', current: 1, total: 4, status: 'running' });
         bitrixCompanyId = await createCompany({
           name: company.name,
           phone: company.phone,
@@ -116,7 +126,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         });
         await supabase.from('companies').update({ bitrix_company_id: bitrixCompanyId }).eq('id', company.id);
 
-        setProgress({ step: 'Создание сделки...', current: 2, total: 4, status: 'running' });
+        setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u0441\u0434\u0435\u043b\u043a\u0443...', current: 2, total: 4, status: 'running' });
         bitrixDealId = await createDeal({ title: dealTitle, companyId: bitrixCompanyId, city: company.city });
         const dealUrl = `https://hsecompany.bitrix24.kz/crm/deal/details/${bitrixDealId}/`;
 
@@ -143,24 +153,42 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       }
 
       const dealUrl = `https://hsecompany.bitrix24.kz/crm/deal/details/${bitrixDealId}/`;
-
-      // Create new smart-process items
       const totalItems = participants.reduce((s, p) => s + Math.max(1, (p.courses || []).length), 0);
       let created = 0;
 
-      setProgress({ step: 'Создание записей сотрудников...', current: 3, total: 3 + totalItems, status: 'running' });
+      setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u0437\u0430\u043f\u0438\u0441\u0438 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432...', current: 3, total: 3 + totalItems, status: 'running' });
 
       for (const p of participants) {
         const courses = p.courses && p.courses.length > 0 ? p.courses : [{ course_name: '' }];
         for (const course of courses) {
+          const categoryValue = (await resolveSmartProcessEnumId({
+            entityTypeId,
+            fieldRawName: BITRIX_FIELDS_RAW.CATEGORY,
+            fieldCamelName: BITRIX_FIELDS.CATEGORY,
+            value: p.category || '',
+          })) || p.category;
+
+          const courseValue = (await resolveSmartProcessEnumId({
+            entityTypeId,
+            fieldRawName: BITRIX_FIELDS_RAW.COURSE_NAME,
+            fieldCamelName: BITRIX_FIELDS.COURSE_NAME,
+            value: course.course_name || '',
+          })) || course.course_name;
+
           const fields: Record<string, unknown> = {
             TITLE: `${p.last_name} ${p.first_name} - ${course.course_name}`,
             [BITRIX_FIELDS.LAST_NAME]: p.last_name,
+            [BITRIX_FIELDS_RAW.LAST_NAME]: p.last_name,
             [BITRIX_FIELDS.FIRST_NAME]: p.first_name,
+            [BITRIX_FIELDS_RAW.FIRST_NAME]: p.first_name,
             [BITRIX_FIELDS.MIDDLE_NAME]: p.patronymic,
+            [BITRIX_FIELDS_RAW.MIDDLE_NAME]: p.patronymic,
             [BITRIX_FIELDS.POSITION]: p.position,
-            [BITRIX_FIELDS.CATEGORY]: p.category,
-            [BITRIX_FIELDS.COURSE_NAME]: course.course_name,
+            [BITRIX_FIELDS_RAW.POSITION]: p.position,
+            [BITRIX_FIELDS.CATEGORY]: categoryValue,
+            [BITRIX_FIELDS_RAW.CATEGORY]: categoryValue,
+            [BITRIX_FIELDS.COURSE_NAME]: courseValue,
+            [BITRIX_FIELDS_RAW.COURSE_NAME]: courseValue,
           };
 
           const bitrixItemId = await createSmartProcessItem({
@@ -196,7 +224,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
           created++;
           setProgress({
-            step: `Создание записей (${created}/${totalItems})...`,
+            step: `\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u043f\u0438\u0441\u0435\u0439 (${created}/${totalItems})...`,
             current: 3 + created,
             total: 3 + totalItems,
             status: 'running',
@@ -204,7 +232,6 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         }
       }
 
-      // Finalize
       await supabase.from('deals').update({
         sync_status: 'success',
         synced_at: new Date().toISOString(),
@@ -212,17 +239,20 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         bitrix_deal_id: bitrixDealId,
         bitrix_company_id: bitrixCompanyId,
       }).eq('questionnaire_id', questionnaireId);
+
       await supabase.from('questionnaires').update({ status: 'synced' }).eq('id', questionnaireId);
 
-      setProgress({ step: 'Готово!', current: 3 + totalItems, total: 3 + totalItems, status: 'done' });
-      showToast('success', isUpdate ? `Данные обновлены: ${dealTitle}` : `Сделка создана: ${dealTitle}`);
+      setProgress({ step: '\u0413\u043e\u0442\u043e\u0432\u043e!', current: 3 + totalItems, total: 3 + totalItems, status: 'done' });
+      showToast('success', isUpdate
+        ? `\u0414\u0430\u043d\u043d\u044b\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b: ${dealTitle}`
+        : `\u0421\u0434\u0435\u043b\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0430: ${dealTitle}`);
       setTimeout(onDone, 1500);
-
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Неизвестная ошибка';
+      const rawMsg = e instanceof Error ? e.message : '\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430';
+      const msg = prettifySyncError(rawMsg);
       setProgress(p => ({ ...p, status: 'error', error: msg }));
       await supabase.from('deals').update({ sync_status: 'error', error_message: msg }).eq('questionnaire_id', questionnaireId);
-      showToast('error', `Ошибка синхронизации: ${msg}`);
+      showToast('error', `\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438: ${msg}`);
     }
   }
 
@@ -233,7 +263,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div className="flex items-center justify-between p-6 border-b border-gray-100">
           <h2 className="text-lg font-semibold text-gray-900">
-            {isUpdate ? 'Обновить данные в Битрикс24' : 'Отправить в Битрикс24'}
+            {isUpdate ? '\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0432 \u0411\u0438\u0442\u0440\u0438\u043a\u044124' : '\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0432 \u0411\u0438\u0442\u0440\u0438\u043a\u044124'}
           </h2>
           {progress.status !== 'running' && (
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -248,39 +278,43 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
               {isUpdate && (
                 <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                   <RefreshCw size={15} className="flex-shrink-0 mt-0.5" />
-                  <span>Существующие записи сотрудников будут удалены и созданы заново. Сделка и компания будут обновлены.</span>
+                  <span>{'\u0421\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0435 \u0437\u0430\u043f\u0438\u0441\u0438 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432 \u0431\u0443\u0434\u0443\u0442 \u0443\u0434\u0430\u043b\u0435\u043d\u044b \u0438 \u0441\u043e\u0437\u0434\u0430\u043d\u044b \u0437\u0430\u043d\u043e\u0432\u043e. \u0421\u0434\u0435\u043b\u043a\u0430 \u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044f \u0431\u0443\u0434\u0443\u0442 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b.'}</span>
                 </div>
               )}
               <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
                 <div className="flex gap-2">
-                  <span className="text-gray-500 w-28 flex-shrink-0">Название сделки:</span>
+                  <span className="text-gray-500 w-28 flex-shrink-0">{'\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0441\u0434\u0435\u043b\u043a\u0438:'}</span>
                   <span className="font-medium text-gray-900 leading-snug">{dealTitle}</span>
                 </div>
                 <div className="flex gap-2">
-                  <span className="text-gray-500 w-28 flex-shrink-0">Компания:</span>
+                  <span className="text-gray-500 w-28 flex-shrink-0">{'\u041a\u043e\u043c\u043f\u0430\u043d\u0438\u044f:'}</span>
                   <span className="font-medium text-gray-900">{company.name}</span>
                 </div>
                 <div className="flex gap-2">
-                  <span className="text-gray-500 w-28 flex-shrink-0">Сотрудников:</span>
-                  <span className="font-medium text-gray-900">{participants.length}</span>
+                  <span className="text-gray-500 w-28 flex-shrink-0">{'\u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432:'}</span>
+                  <span className="font-medium text-gray-900">{participantsCount}</span>
                 </div>
                 <div className="flex gap-2">
-                  <span className="text-gray-500 w-28 flex-shrink-0">Курсы:</span>
-                  <span className="font-medium text-gray-900">{allCourses.join(', ') || '—'}</span>
+                  <span className="text-gray-500 w-28 flex-shrink-0">{'\u041a\u0443\u0440\u0441\u043e\u0432:'}</span>
+                  <span className="font-medium text-gray-900">{uniqueCoursesCount}</span>
+                </div>
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-28 flex-shrink-0">{'\u0417\u0430\u044f\u0432\u043e\u043a:'}</span>
+                  <span className="font-medium text-gray-900">{totalCourseRequests}</span>
                 </div>
                 {isUpdate && existingDeal?.bitrix_deal_id && (
                   <div className="flex gap-2">
-                    <span className="text-gray-500 w-28 flex-shrink-0">ID сделки:</span>
+                    <span className="text-gray-500 w-28 flex-shrink-0">{'ID \u0441\u0434\u0435\u043b\u043a\u0438:'}</span>
                     <span className="font-medium text-gray-900">#{existingDeal.bitrix_deal_id}</span>
                   </div>
                 )}
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all">
-                  Отмена
+                  {'\u041e\u0442\u043c\u0435\u043d\u0430'}
                 </button>
                 <button onClick={runSync} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2">
-                  {isUpdate ? <><RefreshCw size={15} /> Обновить</> : <><Send size={15} /> Отправить</>}
+                  {isUpdate ? <><RefreshCw size={15} /> {'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c'}</> : <><Send size={15} /> {'\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c'}</>}
                 </button>
               </div>
             </>
@@ -304,27 +338,27 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
               {progress.status === 'done' && (
                 <div className="flex items-center gap-2 text-green-600 text-sm font-medium">
-                  <CheckCircle2 size={16} /> {isUpdate ? 'Данные обновлены успешно' : 'Синхронизация завершена успешно'}
+                  <CheckCircle2 size={16} /> {isUpdate ? '\u0414\u0430\u043d\u043d\u044b\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b \u0443\u0441\u043f\u0435\u0448\u043d\u043e' : '\u0421\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u044f \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e'}
                 </div>
               )}
               {progress.status === 'error' && (
                 <div className="flex items-start gap-2 text-red-600 text-sm">
                   <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-medium">Ошибка синхронизации</div>
+                    <div className="font-medium">{'\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438'}</div>
                     {progress.error && <div className="text-xs text-red-500 mt-1">{progress.error}</div>}
                   </div>
                 </div>
               )}
               {progress.status === 'running' && (
                 <div className="flex items-center gap-2 text-blue-600 text-sm">
-                  <RefreshCw size={14} className="animate-spin" /> Выполняется...
+                  <RefreshCw size={14} className="animate-spin" /> {'\u0412\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f...'}
                 </div>
               )}
 
               {progress.status === 'error' && (
                 <button onClick={onClose} className="w-full py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all">
-                  Закрыть
+                  {'\u0417\u0430\u043a\u0440\u044b\u0442\u044c'}
                 </button>
               )}
             </div>

@@ -35,17 +35,39 @@ export default function QuestionnairePage() {
   const loadData = useCallback(async () => {
     if (!id) return;
 
-    const [qRes, cRes, dRes] = await Promise.all([
+    const [qRes, companiesRes, dealsRes] = await Promise.all([
       supabase.from('questionnaires').select('*').eq('id', id).maybeSingle(),
-      supabase.from('companies').select('*').eq('questionnaire_id', id).maybeSingle(),
-      supabase.from('deals').select('*').eq('questionnaire_id', id).maybeSingle(),
+      supabase.from('companies').select('*').eq('questionnaire_id', id).order('updated_at', { ascending: false }).order('created_at', { ascending: false }),
+      supabase.from('deals').select('*').eq('questionnaire_id', id).order('updated_at', { ascending: false }).order('created_at', { ascending: false }),
     ]);
 
     if (qRes.error || !qRes.data) { navigate('/dashboard'); return; }
 
+    const companyRows = companiesRes.data || [];
+    const dealRows = dealsRes.data || [];
+
+    const resolvedCompany =
+      companyRows.find((c: Company) =>
+        Boolean((c.name || '').trim()) ||
+        Boolean((c.phone || '').trim()) ||
+        Boolean((c.email || '').trim()) ||
+        Boolean((c.bin_iin || '').trim()) ||
+        Boolean((c.city || '').trim()) ||
+        Boolean((c.bitrix_company_id || '').trim())
+      ) ||
+      companyRows[0] ||
+      null;
+    const resolvedDeal = dealRows.find((d: Deal) => !!d.bitrix_deal_id) || dealRows[0] || null;
+    const resolvedDealWithUrl = resolvedDeal?.bitrix_deal_id
+      ? {
+          ...resolvedDeal,
+          deal_url: resolvedDeal.deal_url || `https://hsecompany.bitrix24.kz/crm/deal/details/${resolvedDeal.bitrix_deal_id}/`,
+        }
+      : resolvedDeal;
+
     setQuestionnaire(qRes.data);
-    setCompany(cRes.data);
-    setDeal(dRes.data);
+    setCompany(resolvedCompany);
+    setDeal(resolvedDealWithUrl);
 
     const { data: partData } = await supabase
       .from('participants')
@@ -245,13 +267,11 @@ export default function QuestionnairePage() {
                 className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
               <button onClick={saveExpiry} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-all">
-                Сохранить
-              </button>
+                Сохранить</button>
               <button onClick={() => { if (questionnaire) { supabase.from('questionnaires').update({ expires_at: null }).eq('id', questionnaire.id).then(() => { setLinkEditing(false); loadData(); }); } }}
                 className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-all"
               >
-                Снять срок
-              </button>
+                Снять срок</button>
             </div>
           ) : (
             <div className="flex items-center gap-3 text-sm">
@@ -292,11 +312,11 @@ export default function QuestionnairePage() {
               </div>
               <div>
                 <div className="text-xs text-gray-500 mb-0.5">ID компании</div>
-                <div className="font-medium text-gray-900">{deal.bitrix_company_id || '—'}</div>
+                <div className="font-medium text-gray-900">{deal.bitrix_company_id || '?'}</div>
               </div>
               <div className="col-span-2">
                 <div className="text-xs text-gray-500 mb-0.5">Название сделки</div>
-                <div className="font-medium text-gray-900">{deal.deal_title || '—'}</div>
+                <div className="font-medium text-gray-900">{deal.deal_title || '?'}</div>
               </div>
             </div>
           ) : (
@@ -353,7 +373,7 @@ export default function QuestionnairePage() {
                 { key: 'name', label: 'Название компании' },
                 { key: 'phone', label: 'Телефон' },
                 { key: 'email', label: 'Email' },
-                { key: 'bin_iin', label: 'БИН/ИИН' },
+                { key: 'bin_iin', label: '\u0411\u0418\u041d/\u0418\u0418\u041d \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438' },
                 { key: 'city', label: 'Город' },
                 { key: 'bitrix_company_id', label: 'ID компании в Битрикс' },
               ].map(({ key, label }) => (
@@ -367,7 +387,7 @@ export default function QuestionnairePage() {
                     />
                   ) : (
                     <div className="text-sm font-medium text-gray-900">
-                      {String((company as Record<string, unknown>)[key] || '—')}
+                      {String((company as Record<string, unknown>)[key] || '?')}
                     </div>
                   )}
                 </div>
@@ -456,3 +476,7 @@ export default function QuestionnairePage() {
     </DashboardLayout>
   );
 }
+
+
+
+

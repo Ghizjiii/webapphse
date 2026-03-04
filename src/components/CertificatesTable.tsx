@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Plus, Trash2, CheckCircle, XCircle } from 'lucide-react';
 import SortableHeader from './SortableHeader';
+import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../context/ToastContext';
 import type { Certificate, SortConfig } from '../types';
@@ -154,7 +155,7 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
 
   return (
     <div>
-      <div className="overflow-x-auto rounded-xl border border-gray-200">
+      <ResizableTableContainer>
         <table className="w-full text-sm" style={{ minWidth: '1600px' }}>
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-200">
@@ -205,7 +206,7 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
             )}
           </tbody>
         </table>
-      </div>
+      </ResizableTableContainer>
 
       <button
         onClick={addCertificate}
