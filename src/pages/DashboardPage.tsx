@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Link as LinkIcon, Copy, Power, PowerOff, Clock, CheckCircle2, Archive, RefreshCw, Trash2 } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
@@ -32,7 +32,7 @@ export default function DashboardPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     const { data: questionnaires, error } = await supabase
       .from('questionnaires')
@@ -61,9 +61,9 @@ export default function DashboardPage() {
     }
     setRows(result);
     setLoading(false);
-  }
+  }, [showToast]);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [loadData]);
 
   function getFormUrl(token: string) {
     return `${window.location.origin}/form/${token}`;

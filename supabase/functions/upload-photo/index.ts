@@ -1,14 +1,16 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
+const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN") || "";
+
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Origin": allowedOrigin,
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const CLOUD_NAME = "dpdvf6746";
-const API_KEY = "185137974926745";
-const API_SECRET = "byxK5u4Ern8txzJ2tyEFmD3zJ7w";
+const CLOUD_NAME = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
+const API_KEY = Deno.env.get("CLOUDINARY_API_KEY") || "";
+const API_SECRET = Deno.env.get("CLOUDINARY_API_SECRET") || "";
 
 async function sha1Hex(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
@@ -18,11 +20,25 @@ async function sha1Hex(message: string): Promise<string> {
 }
 
 Deno.serve(async (req: Request) => {
+  if (!allowedOrigin) {
+    return new Response(JSON.stringify({ error: "ALLOWED_ORIGIN is not configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
+    if (!CLOUD_NAME || !API_KEY || !API_SECRET) {
+      return new Response(JSON.stringify({ error: "Cloudinary env vars are not configured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const folder = (formData.get("folder") as string) || "hse-participants";

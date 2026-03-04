@@ -106,14 +106,26 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           .eq('questionnaire_id', questionnaireId)
           .not('bitrix_item_id', 'is', null);
 
-        for (const cert of oldCerts || []) {
-          if (cert.bitrix_item_id) {
-            try {
-              await deleteSmartProcessItem({ entityTypeId, itemId: cert.bitrix_item_id });
-            } catch {
-              // ignore deletion errors
+        const deleteIds = Array.from(new Set(
+          (oldCerts || [])
+            .map(c => String(c.bitrix_item_id || '').trim())
+            .filter(id => /^\d+$/.test(id))
+        ));
+
+        for (const itemId of deleteIds) {
+          try {
+            await deleteSmartProcessItem({ entityTypeId, itemId });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e || '');
+            // Missing item is expected in resync scenarios.
+            if (!/NOT_FOUND|Элемент не найден/i.test(msg)) {
+              // ignore other delete errors too, but keep them visible in console for diagnostics
+              console.warn('[BitrixSyncModal] deleteSmartProcessItem failed', itemId, msg);
             }
           }
+        }
+
+        for (const cert of oldCerts || []) {
           await supabase.from('certificates').delete().eq('id', cert.id);
         }
       } else {
@@ -155,6 +167,8 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       const dealUrl = `https://hsecompany.bitrix24.kz/crm/deal/details/${bitrixDealId}/`;
       const totalItems = participants.reduce((s, p) => s + Math.max(1, (p.courses || []).length), 0);
       let created = 0;
+      let photoFailures = 0;
+      const photoFailureSamples: string[] = [];
 
       setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u0437\u0430\u043f\u0438\u0441\u0438 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432...', current: 3, total: 3 + totalItems, status: 'running' });
 
@@ -200,12 +214,22 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
           if (p.photo_url) {
             const fullName = [p.last_name, p.first_name, p.patronymic].filter(Boolean).join(' ');
-            await attachPhotoToSmartItem({
-              entityTypeId,
-              itemId: bitrixItemId,
-              photoUrl: p.photo_url,
-              participantName: fullName,
-            });
+            try {
+              await attachPhotoToSmartItem({
+                entityTypeId,
+                itemId: bitrixItemId,
+                photoUrl: p.photo_url,
+                participantName: fullName,
+              });
+            } catch (err) {
+              // Keep main sync successful even if photo attachment fails for some rows.
+              photoFailures++;
+              if (photoFailureSamples.length < 3) {
+                const reason = err instanceof Error ? err.message : String(err || 'Unknown photo error');
+                const who = fullName || `${p.last_name} ${p.first_name}`.trim() || p.id;
+                photoFailureSamples.push(`${who}: ${reason}`);
+              }
+            }
           }
 
           await supabase.from('certificates').insert({
@@ -243,6 +267,10 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       await supabase.from('questionnaires').update({ status: 'synced' }).eq('id', questionnaireId);
 
       setProgress({ step: '\u0413\u043e\u0442\u043e\u0432\u043e!', current: 3 + totalItems, total: 3 + totalItems, status: 'done' });
+      if (photoFailures > 0) {
+        const suffix = photoFailureSamples.length > 0 ? ` Примеры: ${photoFailureSamples.join(' | ')}` : '';
+        showToast('warning', `Синхронизация завершена, но фото не прикрепились у ${photoFailures} записей.${suffix}`);
+      }
       showToast('success', isUpdate
         ? `\u0414\u0430\u043d\u043d\u044b\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b: ${dealTitle}`
         : `\u0421\u0434\u0435\u043b\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0430: ${dealTitle}`);

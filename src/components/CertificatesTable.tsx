@@ -37,8 +37,8 @@ const TEXT_FIELDS: { key: keyof Certificate; label: string }[] = [
 function sortCerts(list: Certificate[], cfg: SortConfig | null): Certificate[] {
   if (!cfg) return list;
   return [...list].sort((a, b) => {
-    const aVal = String((a as Record<string, unknown>)[cfg.key] ?? '');
-    const bVal = String((b as Record<string, unknown>)[cfg.key] ?? '');
+    const aVal = String((a as unknown as Record<string, unknown>)[cfg.key] ?? '');
+    const bVal = String((b as unknown as Record<string, unknown>)[cfg.key] ?? '');
     const cmp = aVal.localeCompare(bVal, 'ru');
     return cfg.direction === 'asc' ? cmp : -cmp;
   });

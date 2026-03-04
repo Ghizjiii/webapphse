@@ -1,4 +1,6 @@
-﻿const WEBHOOK = import.meta.env.VITE_BITRIX_WEBHOOK as string;
+import { logger } from './logger';
+
+const WEBHOOK = import.meta.env.VITE_BITRIX_WEBHOOK as string;
 const ENTITY_TYPE_ID = 1;
 
 export const BITRIX_FIELDS = {
@@ -47,6 +49,7 @@ const SMART_PROCESS_ENTITY_TYPE_ID = 1056;
 
 const COMPANY_BIN_FIELD_CANDIDATES = [
   'UF_CRM_BIN_IIN',
+  'UF_CRM_1772589149',
   'UF_CRM_1772598092',
   'UF_CRM_1772598149',
 ];
@@ -91,15 +94,75 @@ function buildCompanyBinFields(binIin: string, fieldCodes: string[]): Record<str
   return fields;
 }
 
-async function callBitrix(method: string, params: Record<string, unknown>) {
-  const response = await fetch(`${WEBHOOK}/${method}.json`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  const data = await response.json();
-  if (data.error) throw new Error(data.error_description || data.error);
-  return data.result;
+// Bitrix REST schema is method-specific and dynamic, so a strict shared type is not practical here.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callBitrix(method: string, params: Record<string, unknown>): Promise<any> {
+  const url = `${WEBHOOK}/${method}.json`;
+  const maxAttempts = 4;
+  let lastError: Error | null = null;
+
+  const shouldRetryHttp = (status: number) => status === 429 || status >= 500;
+  const shouldRetryBitrix = (code: string) =>
+    code === 'QUERY_LIMIT_EXCEEDED' ||
+    code === 'TOO_MANY_REQUESTS' ||
+    code === 'TIMEOUT';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+
+      const bodyText = await response.text();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let data: any = {};
+      try {
+        data = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        const err = new Error(`Bitrix HTTP ${response.status} at ${method}: ${bodyText || 'empty response'}`);
+        lastError = err;
+        if (attempt < maxAttempts && shouldRetryHttp(response.status)) {
+          logger.warn('bitrix.call', `Retry ${attempt}/${maxAttempts} for ${method} after HTTP ${response.status}`);
+          await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+          continue;
+        }
+        throw err;
+      }
+
+      if (data.error) {
+        const code = String(data.error || '').trim().toUpperCase();
+        const desc = String(data.error_description || data.error || 'Unknown Bitrix error');
+        const err = new Error(`Bitrix ${method} error ${code}: ${desc}`);
+        lastError = err;
+        if (attempt < maxAttempts && shouldRetryBitrix(code)) {
+          logger.warn('bitrix.call', `Retry ${attempt}/${maxAttempts} for ${method} after ${code}`);
+          await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+          continue;
+        }
+        throw err;
+      }
+
+      return data.result;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const networkLike = /failed to fetch|networkerror|network request failed|load failed/i.test(message);
+      lastError = e instanceof Error ? e : new Error(message);
+
+      if (attempt < maxAttempts && networkLike) {
+        logger.warn('bitrix.call', `Retry ${attempt}/${maxAttempts} for ${method} after network error: ${message}`);
+        await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error(`Bitrix call failed: ${method}`);
 }
 
 export async function findSmartProcessEntityTypeId(): Promise<number> {
@@ -660,41 +723,6 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   await callBitrix('crm.deal.update', { id: bitrixDealId, fields });
 }
 
-function hasPersistedFileValue(value: unknown): boolean {
-  if (value == null) return false;
-
-  if (typeof value === 'number') return value > 0;
-
-  if (typeof value === 'string') {
-    const v = value.trim();
-    if (!v) return false;
-    if (/^\d+$/.test(v)) return Number(v) > 0;
-    return !/^(null|undefined|0)$/i.test(v);
-  }
-
-  if (Array.isArray(value)) {
-    return value.some(v => hasPersistedFileValue(v));
-  }
-
-  if (typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    return [
-      obj.id,
-      obj.ID,
-      obj.fileId,
-      obj.FILE_ID,
-      obj.value,
-      obj.VALUE,
-      obj.url,
-      obj.URL,
-      obj.src,
-      obj.SRC,
-    ].some(v => hasPersistedFileValue(v));
-  }
-
-  return false;
-}
-
 async function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
@@ -746,7 +774,7 @@ async function preparePhotoForBitrix(photoUrl: string, participantName: string):
         break;
       } catch (e) {
         fetchError = e;
-        await new Promise(resolve => setTimeout(resolve, 180));
+        await new Promise(resolve => setTimeout(resolve, 280 * (i + 1)));
       }
     }
     if (response) break;
@@ -790,8 +818,13 @@ async function preparePhotoForBitrix(photoUrl: string, participantName: string):
   const dataUri = await blobToDataUri(jpegBlob);
   const base64 = dataUri.includes(',') ? dataUri.split(',')[1] : dataUri;
 
-  const baseName = (participantName || 'photo').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-.]/g, '');
-  const fileName = `${baseName || 'photo'}.jpg`;
+  const baseName = String(participantName || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\.+$/, '');
+  const safeBase = baseName.length > 0 ? baseName : `Фото ${Date.now().toString(36)}`;
+  const fileName = `${safeBase}.jpg`;
 
   return { fileName, dataUri, base64 };
 }
@@ -810,6 +843,75 @@ function buildCloudinaryJpgCandidates(photoUrl: string): string[] {
 
   return Array.from(out);
 }
+
+function hasPersistedFileValue(value: unknown): boolean {
+  if (value == null) return false;
+
+  if (typeof value === 'number') return value > 0;
+
+  if (typeof value === 'string') {
+    const v = value.trim();
+    if (!v) return false;
+    if (/^\d+$/.test(v)) return Number(v) > 0;
+    return !/^(null|undefined|0)$/i.test(v);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(v => hasPersistedFileValue(v));
+  }
+
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return [
+      obj.id,
+      obj.ID,
+      obj.fileId,
+      obj.FILE_ID,
+      obj.value,
+      obj.VALUE,
+      obj.url,
+      obj.URL,
+      obj.src,
+      obj.SRC,
+      obj.downloadUrl,
+      obj.DOWNLOAD_URL,
+    ].some(v => hasPersistedFileValue(v));
+  }
+
+  return false;
+}
+
+async function verifyPhotoAttached(params: {
+  entityTypeId: number;
+  itemId: string;
+  fieldKeys: string[];
+}): Promise<boolean> {
+  const keys = Array.from(new Set(params.fieldKeys.filter(Boolean)));
+  const tries = 2;
+
+  for (let i = 0; i < tries; i++) {
+    try {
+      const raw = await callBitrix('crm.item.get', {
+        entityTypeId: params.entityTypeId,
+        id: params.itemId,
+      });
+      const item = ((raw as Record<string, unknown>)?.item || raw || {}) as Record<string, unknown>;
+
+      for (const key of keys) {
+        if (hasPersistedFileValue(item[key])) return true;
+      }
+    } catch {
+      // best effort probe
+    }
+
+    if (i < tries - 1) {
+      await new Promise(resolve => setTimeout(resolve, 220));
+    }
+  }
+
+  return false;
+}
+
 export async function attachPhotoToSmartItem(params: {
   entityTypeId: number;
   itemId: string;
@@ -826,10 +928,6 @@ export async function attachPhotoToSmartItem(params: {
     prepareError = e;
   }
 
-  const baseName = (params.participantName || 'photo').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-.]/g, '');
-  const fallbackName = `${baseName || 'photo'}.jpg`;
-  const urlCandidates = buildCloudinaryJpgCandidates(params.photoUrl);
-
   let lastError: unknown = prepareError;
 
   for (const fieldKeyRaw of photoFieldKeys) {
@@ -844,26 +942,10 @@ export async function attachPhotoToSmartItem(params: {
 
       if (prepared) {
         payloads.push(
-          { [fieldKey]: { fileData: [prepared.fileName, prepared.base64] } },
-          { [fieldKey]: { fileData: [prepared.fileName, prepared.dataUri] } },
-          { [fieldKey]: { id: '', fileData: [prepared.fileName, prepared.base64] } },
-          { [fieldKey]: { id: '', fileData: [prepared.fileName, prepared.dataUri] } },
+          // Same primary format as working GAS flow: UF_FILE_FIELD: [fileName, base64]
           { [fieldKey]: [prepared.fileName, prepared.base64] },
-          { [fieldKey]: [prepared.fileName, prepared.dataUri] },
-          { [fieldKey]: [{ fileData: [prepared.fileName, prepared.base64] }] },
-          { [fieldKey]: [{ fileData: [prepared.fileName, prepared.dataUri] }] },
-          { [fieldKey]: [{ id: 0, fileData: [prepared.fileName, prepared.base64] }] },
-          { [fieldKey]: [{ id: 0, fileData: [prepared.fileName, prepared.dataUri] }] },
-        );
-      }
-
-      for (const url of urlCandidates) {
-        payloads.push(
-          { [fieldKey]: [fallbackName, url] },
-          { [fieldKey]: { fileData: [fallbackName, url] } },
-          { [fieldKey]: { id: '', fileData: [fallbackName, url] } },
-          { [fieldKey]: [{ fileData: [fallbackName, url] }] },
-          { [fieldKey]: [{ id: 0, fileData: [fallbackName, url] }] },
+          { [fieldKey]: { fileData: [prepared.fileName, prepared.base64] } },
+          { [fieldKey]: { id: '', fileData: [prepared.fileName, prepared.base64] } },
         );
       }
 
@@ -875,8 +957,21 @@ export async function attachPhotoToSmartItem(params: {
             fields: photoFieldPayload,
           });
 
-          // GAS-like behavior: if crm.item.update succeeded, treat photo upload as successful.
-          return;
+          const probeKeys = [fieldKey];
+          const upperProbe = String(fieldKey).toUpperCase();
+          if (upperProbe !== fieldKey) probeKeys.push(upperProbe);
+          const camelProbe = smartUfCamelFromUpper(upperProbe);
+          if (camelProbe) probeKeys.push(camelProbe);
+
+          if (await verifyPhotoAttached({
+            entityTypeId: params.entityTypeId,
+            itemId: params.itemId,
+            fieldKeys: probeKeys,
+          })) {
+            return;
+          }
+
+          lastError = new Error(`Bitrix accepted update but photo field stayed empty (${fieldKey})`);
         } catch (e) {
           lastError = e;
         }
@@ -1009,6 +1104,7 @@ export async function listSmartProcessItemIdsForDeal(params: {
   return [];
 }
 export { SMART_PROCESS_ENTITY_TYPE_ID, ENTITY_TYPE_ID, callBitrix };
+
 
 
 

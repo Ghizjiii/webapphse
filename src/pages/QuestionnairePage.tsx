@@ -12,6 +12,10 @@ import type { QuestionnaireLink, Company, Deal, Participant, Certificate } from 
 
 type Tab = 'participants' | 'certificates';
 
+function getRecordValue(record: unknown, key: string): string {
+  return String((record as Record<string, unknown>)[key] ?? '');
+}
+
 export default function QuestionnairePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -381,13 +385,13 @@ export default function QuestionnairePage() {
                   <div className="text-xs text-gray-500 mb-1">{label}</div>
                   {companyEditing ? (
                     <input
-                      value={String((companyDraft as Record<string, unknown>)[key] ?? '')}
+                      value={getRecordValue(companyDraft, key)}
                       onChange={e => setCompanyDraft(prev => ({ ...prev, [key]: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
                   ) : (
                     <div className="text-sm font-medium text-gray-900">
-                      {String((company as Record<string, unknown>)[key] || '?')}
+                      {getRecordValue(company, key) || '?'}
                     </div>
                   )}
                 </div>

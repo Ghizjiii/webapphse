@@ -4,6 +4,7 @@ import { Plus, Trash2, Upload, X, CheckCircle2, Shield, Users, Building2, Chevro
 import { supabase } from '../lib/supabase';
 import { uploadPhoto } from '../lib/cloudinary';
 import { fetchCoursesList } from '../lib/bitrix';
+import { logger } from '../lib/logger';
 import ResizableTableContainer from '../components/ResizableTableContainer';
 import type { Company, Participant } from '../types';
 
@@ -259,7 +260,7 @@ export default function PublicFormPage() {
 
       setSubmitted(true);
     } catch (err) {
-      console.error(err);
+      logger.error('PublicFormPage', 'Submit failed', err);
       setErrors({ participants: 'Ошибка отправки. Попробуйте ещё раз.' });
     } finally {
       setSubmitting(false);

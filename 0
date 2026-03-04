@@ -1,0 +1,221 @@
+src/lib/bitrix.ts:3:const WEBHOOK = import.meta.env.VITE_BITRIX_WEBHOOK as string;
+src/lib/bitrix.ts:4:const ENTITY_TYPE_ID = 1;
+src/lib/bitrix.ts:6:export const BITRIX_FIELDS = {
+src/lib/bitrix.ts:29:export const BITRIX_FIELDS_RAW = {
+src/lib/bitrix.ts:39:export const PHOTO_FIELD_KEY = 'ufCrm12_1772578817';
+src/lib/bitrix.ts:41:const photoFieldKeyCache = new Map<number, string[]>();
+src/lib/bitrix.ts:42:const enumFieldOptionsCache = new Map<string, Map<string, string>>();
+src/lib/bitrix.ts:48:const SMART_PROCESS_ENTITY_TYPE_ID = 1056;
+src/lib/bitrix.ts:50:const COMPANY_BIN_FIELD_CANDIDATES = [
+src/lib/bitrix.ts:57:const PHOTO_FIELD_CANDIDATES = [
+src/lib/bitrix.ts:63:  const m = String(code || '').match(/^UF_CRM_(\d+)$/i);
+src/lib/bitrix.ts:69:  const m = String(code || '').match(/^UF_CRM_12_(\d+)$/i);
+src/lib/bitrix.ts:75:  const fields: Record<string, string> = {};
+src/lib/bitrix.ts:76:  const digits = String(binIin || '').replace(/\D/g, '');
+src/lib/bitrix.ts:77:  const value = digits || String(binIin || '').trim();
+src/lib/bitrix.ts:78:  const allCodes = new Set<string>(fieldCodes.filter(Boolean));
+src/lib/bitrix.ts:80:  for (const codeRaw of Array.from(allCodes)) {
+src/lib/bitrix.ts:81:    const code = String(codeRaw || '').trim();
+src/lib/bitrix.ts:87:      const upper = code.toUpperCase();
+src/lib/bitrix.ts:89:      const camel = companyUfCamelFromUpper(upper);
+src/lib/bitrix.ts:100:  const url = `${WEBHOOK}/${method}.json`;
+src/lib/bitrix.ts:101:  const maxAttempts = 4;
+src/lib/bitrix.ts:104:  const shouldRetryHttp = (status: number) => status === 429 || status >= 500;
+src/lib/bitrix.ts:105:  const shouldRetryBitrix = (code: string) =>
+src/lib/bitrix.ts:112:      const response = await fetch(url, {
+src/lib/bitrix.ts:118:      const bodyText = await response.text();
+src/lib/bitrix.ts:128:        const err = new Error(`Bitrix HTTP ${response.status} at ${method}: ${bodyText || 'empty response'}`);
+src/lib/bitrix.ts:139:        const code = String(data.error || '').trim().toUpperCase();
+src/lib/bitrix.ts:140:        const desc = String(data.error_description || data.error || 'Unknown Bitrix error');
+src/lib/bitrix.ts:141:        const err = new Error(`Bitrix ${method} error ${code}: ${desc}`);
+src/lib/bitrix.ts:153:      const message = e instanceof Error ? e.message : String(e);
+src/lib/bitrix.ts:154:      const networkLike = /failed to fetch|networkerror|network request failed|load failed/i.test(message);
+src/lib/bitrix.ts:170:    const result = await callBitrix('crm.type.list', {});
+src/lib/bitrix.ts:171:    const types = result?.types || [];
+src/lib/bitrix.ts:172:    const found = types.find((t: { title?: string; entityTypeId?: number }) => {
+src/lib/bitrix.ts:173:      const title = (t.title || '').toLowerCase();
+src/lib/bitrix.ts:184:  const tryFetch = async (f: Record<string, string>) => {
+src/lib/bitrix.ts:186:      const result = await callBitrix('crm.userfield.list', {
+src/lib/bitrix.ts:190:      const fields = Array.isArray(result) ? result : (result?.result || result?.fields || []);
+src/lib/bitrix.ts:191:      for (const field of fields) {
+src/lib/bitrix.ts:192:        const items = field.LIST || field.list || field.ENUM || field.enum || [];
+src/lib/bitrix.ts:206:  const entitiesToTry = [
+src/lib/bitrix.ts:213:  for (const eid of entitiesToTry) {
+src/lib/bitrix.ts:214:    const result = await tryFetch({ FIELD_NAME: fieldName, ENTITY_ID: eid });
+src/lib/bitrix.ts:218:  const withoutEntity = await tryFetch({ FIELD_NAME: fieldName });
+src/lib/bitrix.ts:225:  const tryArr = (arr: unknown): string[] => {
+src/lib/bitrix.ts:233:  const settings = fieldDef.settings as Record<string, unknown> | undefined;
+src/lib/bitrix.ts:234:  const sources = [
+src/lib/bitrix.ts:244:  for (const src of sources) {
+src/lib/bitrix.ts:245:    const vals = tryArr(src);
+src/lib/bitrix.ts:252:  const cached = photoFieldKeyCache.get(entityTypeId);
+src/lib/bitrix.ts:255:  const found = new Set<string>([BITRIX_FIELDS_RAW.PHOTO, PHOTO_FIELD_KEY, ...PHOTO_FIELD_CANDIDATES]);
+src/lib/bitrix.ts:258:    const raw = await callBitrix('crm.item.fields', { entityTypeId });
+src/lib/bitrix.ts:259:    const fields: Record<string, unknown> = raw?.fields || raw || {};
+src/lib/bitrix.ts:261:    for (const [key, val] of Object.entries(fields)) {
+src/lib/bitrix.ts:263:      const f = val as Record<string, unknown>;
+src/lib/bitrix.ts:265:      const userType = String(f.userType || f.USER_TYPE || f.type || f.TYPE || '').toLowerCase();
+src/lib/bitrix.ts:266:      const title = decodeUnicodeEscapes(String(f.title || f.formLabel || f.LIST_LABEL || '')).toLowerCase();
+src/lib/bitrix.ts:267:      const isPhotoByTitle = /(?:\u0444\u043e\u0442\u043e|photo)/i.test(title);
+src/lib/bitrix.ts:268:      const isFileType = /file/.test(userType);
+src/lib/bitrix.ts:272:      const codes = [
+src/lib/bitrix.ts:284:      for (const code of codes) {
+src/lib/bitrix.ts:286:        const upper = String(code).toUpperCase();
+src/lib/bitrix.ts:287:        const camel = smartUfCamelFromUpper(upper);
+src/lib/bitrix.ts:295:  const keys = Array.from(found);
+src/lib/bitrix.ts:300:const COMPANY_FIELD_TITLE_ALIASES: Record<string, string[]> = {
+src/lib/bitrix.ts:309:  const result: Record<string, string> = {};
+src/lib/bitrix.ts:312:    const raw = await callBitrix('crm.item.fields', { entityTypeId });
+src/lib/bitrix.ts:313:    const fields: Record<string, unknown> = raw?.fields || raw || {};
+src/lib/bitrix.ts:314:    const normalizedEntries = Object.entries(fields).map(([key, val]) => {
+src/lib/bitrix.ts:315:      const field = (val || {}) as Record<string, unknown>;
+src/lib/bitrix.ts:316:      const title = String(field.title || field.formLabel || '').trim().toLowerCase();
+src/lib/bitrix.ts:324:    for (const [alias, names] of Object.entries(COMPANY_FIELD_TITLE_ALIASES)) {
+src/lib/bitrix.ts:325:      const match = normalizedEntries.find(entry => names.some(name => entry.title === name));
+src/lib/bitrix.ts:338:  const rows = Array.isArray(result)
+src/lib/bitrix.ts:349:  const lowerRaw = rawName.toLowerCase();
+src/lib/bitrix.ts:350:  const lowerCamel = camelName.toLowerCase();
+src/lib/bitrix.ts:352:  for (const [key, val] of Object.entries(fields)) {
+src/lib/bitrix.ts:354:    const lowerKey = key.toLowerCase();
+src/lib/bitrix.ts:358:    const fieldObj = val as Record<string, unknown>;
+src/lib/bitrix.ts:359:    const upperName = String(fieldObj.upperName || fieldObj.UPPER_NAME || fieldObj.fieldName || fieldObj.FIELD_NAME || '').toUpperCase();
+src/lib/bitrix.ts:369:    const raw = await callBitrix('crm.item.fields', { entityTypeId });
+src/lib/bitrix.ts:370:    const fields: Record<string, unknown> = raw?.fields || raw || {};
+src/lib/bitrix.ts:372:    const fieldDef = findFieldByName(fields, BITRIX_FIELDS_RAW.COURSE_NAME, BITRIX_FIELDS.COURSE_NAME);
+src/lib/bitrix.ts:374:      const vals = extractEnumFromField(fieldDef);
+src/lib/bitrix.ts:378:    const values = await fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.COURSE_NAME, `CRM_SPA_12_${entityTypeId}`);
+src/lib/bitrix.ts:389:    const raw = await callBitrix('crm.type.fields', { entityTypeId });
+src/lib/bitrix.ts:390:    const fields: Record<string, unknown> = raw?.fields || raw || {};
+src/lib/bitrix.ts:392:    const fieldDef = findFieldByName(fields, BITRIX_FIELDS_RAW.COURSE_NAME, BITRIX_FIELDS.COURSE_NAME);
+src/lib/bitrix.ts:394:      const vals = extractEnumFromField(fieldDef);
+src/lib/bitrix.ts:405:    const raw = await callBitrix('crm.item.fields', { entityTypeId });
+src/lib/bitrix.ts:406:    const fields: Record<string, unknown> = raw?.fields || raw || {};
+src/lib/bitrix.ts:408:    const fieldDef = findFieldByName(fields, BITRIX_FIELDS_RAW.CATEGORY, BITRIX_FIELDS.CATEGORY);
+src/lib/bitrix.ts:410:      const vals = extractEnumFromField(fieldDef);
+src/lib/bitrix.ts:414:    const values = await fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.CATEGORY, `CRM_SPA_12_${entityTypeId}`);
+src/lib/bitrix.ts:425:    const entityTypeId = await findSmartProcessEntityTypeId();
+src/lib/bitrix.ts:434:    const entityTypeId = await findSmartProcessEntityTypeId();
+src/lib/bitrix.ts:436:    const fromItemFields = await fetchCoursesFromFields(entityTypeId);
+src/lib/bitrix.ts:439:    const fromTypeFields = await fetchCoursesViaTypeFields(entityTypeId);
+src/lib/bitrix.ts:442:    const fromUserFields = await fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.COURSE_NAME, `CRM_SPA_12_${entityTypeId}`);
+src/lib/bitrix.ts:457:  const result = new Set<string>(COMPANY_BIN_FIELD_CANDIDATES);
+src/lib/bitrix.ts:460:    const raw = await callBitrix('crm.company.fields', {});
+src/lib/bitrix.ts:461:    const fields = (raw?.fields || raw || {}) as Record<string, unknown>;
+src/lib/bitrix.ts:463:    for (const [key, val] of Object.entries(fields)) {
+src/lib/bitrix.ts:464:      const f = (val || {}) as Record<string, unknown>;
+src/lib/bitrix.ts:465:      const titleRaw = String(f.title || f.formLabel || f.LIST_LABEL || '');
+src/lib/bitrix.ts:466:      const title = decodeUnicodeEscapes(titleRaw).toLowerCase();
+src/lib/bitrix.ts:467:      const code = String(f.name || f.fieldName || f.FIELD_NAME || key || '').toUpperCase();
+src/lib/bitrix.ts:469:      const byCode = /\bBIN\b|\bIIN\b/.test(code);
+src/lib/bitrix.ts:470:      const byTitle = /(?:\u0431\u0438\u043d|\u0438\u0438\u043d|bin|iin)/i.test(title);
+src/lib/bitrix.ts:474:        const camel = companyUfCamelFromUpper(code);
+src/lib/bitrix.ts:483:    const rawUf = await callBitrix('crm.company.userfield.list', {
+src/lib/bitrix.ts:487:    const list = Array.isArray(rawUf) ? rawUf : (rawUf?.result || []);
+src/lib/bitrix.ts:489:    for (const uf of list as Array<Record<string, unknown>>) {
+src/lib/bitrix.ts:490:      const code = String(uf.FIELD_NAME || uf.fieldName || '').toUpperCase();
+src/lib/bitrix.ts:491:      const titleRaw = String(uf.LIST_COLUMN_LABEL || uf.EDIT_FORM_LABEL || uf.FIELD_NAME || '');
+src/lib/bitrix.ts:492:      const title = decodeUnicodeEscapes(titleRaw).toLowerCase();
+src/lib/bitrix.ts:495:      const byCode = /\bBIN\b|\bIIN\b/.test(code);
+src/lib/bitrix.ts:496:      const byTitle = /(?:\u0431\u0438\u043d|\u0438\u0438\u043d|bin|iin)/i.test(title);
+src/lib/bitrix.ts:499:        const camel = companyUfCamelFromUpper(code);
+src/lib/bitrix.ts:515:  const binValue = String(params.binIin || '').trim();
+src/lib/bitrix.ts:518:  const allCodes = Array.from(new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...params.fieldCodes]));
+src/lib/bitrix.ts:519:  const mergedFields = buildCompanyBinFields(binValue, allCodes);
+src/lib/bitrix.ts:531:  const digitOnly = String(binValue).replace(/\D/g, '');
+src/lib/bitrix.ts:532:  const numericValue = Number.isFinite(Number(digitOnly)) ? Number(digitOnly) : null;
+src/lib/bitrix.ts:534:  for (const code of allCodes) {
+src/lib/bitrix.ts:535:    const perCodeFields = buildCompanyBinFields(binValue, [code]);
+src/lib/bitrix.ts:544:      const digitsFields = buildCompanyBinFields(digitOnly, [code]);
+src/lib/bitrix.ts:553:      const asNumber: Record<string, unknown> = {};
+src/lib/bitrix.ts:554:      for (const k of Object.keys(perCodeFields)) asNumber[k] = numericValue;
+src/lib/bitrix.ts:576:  const dynamicBinFields = await resolveCompanyBinFieldCodes();
+src/lib/bitrix.ts:577:  const allBinFields = Array.from(new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...dynamicBinFields]));
+src/lib/bitrix.ts:579:  const fields: Record<string, unknown> = {
+src/lib/bitrix.ts:587:  const result = await callBitrix('crm.company.add', { fields });
+src/lib/bitrix.ts:588:  const companyId = String(result);
+src/lib/bitrix.ts:604:  const dynamicBinFields = await resolveCompanyBinFieldCodes();
+src/lib/bitrix.ts:605:  const allBinFields = Array.from(new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...dynamicBinFields]));
+src/lib/bitrix.ts:607:  const fields: Record<string, unknown> = {
+src/lib/bitrix.ts:627:  const expectedNorm = String(expected || '').replace(/\D/g, '');
+src/lib/bitrix.ts:630:  const keys = new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...fieldCodes]);
+src/lib/bitrix.ts:631:  for (const k of Array.from(keys)) {
+src/lib/bitrix.ts:632:    const upper = String(k).toUpperCase();
+src/lib/bitrix.ts:635:      const camel = companyUfCamelFromUpper(upper);
+src/lib/bitrix.ts:640:  const expectedNoZero = expectedNorm.replace(/^0+/, '');
+src/lib/bitrix.ts:642:  const extractValues = (value: unknown): string[] => {
+src/lib/bitrix.ts:647:      const obj = value as Record<string, unknown>;
+src/lib/bitrix.ts:653:  const matchesExpected = (data: Record<string, unknown>): boolean => {
+src/lib/bitrix.ts:654:    for (const key of keys) {
+src/lib/bitrix.ts:655:      const rawValues = extractValues(data[key]);
+src/lib/bitrix.ts:656:      for (const raw of rawValues) {
+src/lib/bitrix.ts:657:        const str = String(raw || '').trim();
+src/lib/bitrix.ts:660:        const norm = str.replace(/\D/g, '');
+src/lib/bitrix.ts:663:        const normNoZero = norm.replace(/^0+/, '');
+src/lib/bitrix.ts:671:    const select = ['ID', 'TITLE', 'UF_*', ...Array.from(keys)];
+src/lib/bitrix.ts:672:    const raw = await callBitrix('crm.company.get', { id: bitrixCompanyId, select });
+src/lib/bitrix.ts:673:    const data = (raw || {}) as Record<string, unknown>;
+src/lib/bitrix.ts:680:    const listRaw = await callBitrix('crm.company.list', {
+src/lib/bitrix.ts:684:    const row = Array.isArray(listRaw) ? listRaw[0] : Array.isArray(listRaw?.items) ? listRaw.items[0] : null;
+src/lib/bitrix.ts:697:  const fields: Record<string, unknown> = {
+src/lib/bitrix.ts:706:  const result = await callBitrix('crm.deal.add', { fields });
+src/lib/bitrix.ts:715:  const fields: Record<string, unknown> = {
+src/lib/bitrix.ts:728:    const url = URL.createObjectURL(blob);
+src/lib/bitrix.ts:729:    const img = new Image();
+src/lib/bitrix.ts:757:    const reader = new FileReader();
+src/lib/bitrix.ts:768:  for (const url of buildCloudinaryJpgCandidates(photoUrl)) {
+src/lib/bitrix.ts:771:        const r = await fetch(url, { cache: 'no-store' });
+src/lib/bitrix.ts:784:    const msg = fetchError instanceof Error ? fetchError.message : String(fetchError || 'Failed to fetch');
+src/lib/bitrix.ts:788:  const sourceBlob = await response.blob();
+src/lib/bitrix.ts:789:  const img = await loadImageFromBlob(sourceBlob);
+src/lib/bitrix.ts:791:  const maxSide = 1600;
+src/lib/bitrix.ts:792:  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+src/lib/bitrix.ts:793:  const width = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+src/lib/bitrix.ts:794:  const height = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+src/lib/bitrix.ts:796:  const canvas = document.createElement('canvas');
+src/lib/bitrix.ts:799:  const ctx = canvas.getContext('2d');
+src/lib/bitrix.ts:806:  const qualities = [0.9, 0.82, 0.74, 0.66];
+src/lib/bitrix.ts:807:  const maxBytes = 1_500_000;
+src/lib/bitrix.ts:810:  for (const quality of qualities) {
+src/lib/bitrix.ts:811:    const candidate = await canvasToJpegBlob(canvas, quality);
+src/lib/bitrix.ts:818:  const dataUri = await blobToDataUri(jpegBlob);
+src/lib/bitrix.ts:819:  const base64 = dataUri.includes(',') ? dataUri.split(',')[1] : dataUri;
+src/lib/bitrix.ts:821:  const baseName = String(participantName || '')
+src/lib/bitrix.ts:826:  const safeBase = baseName.length > 0 ? baseName : `Фото ${Date.now().toString(36)}`;
+src/lib/bitrix.ts:827:  const fileName = `${safeBase}.jpg`;
+src/lib/bitrix.ts:833:  const base = String(photoUrl || '').trim();
+src/lib/bitrix.ts:836:  const out = new Set<string>([base]);
+src/lib/bitrix.ts:853:    const v = value.trim();
+src/lib/bitrix.ts:864:    const obj = value as Record<string, unknown>;
+src/lib/bitrix.ts:889:  const keys = Array.from(new Set(params.fieldKeys.filter(Boolean)));
+src/lib/bitrix.ts:890:  const tries = 2;
+src/lib/bitrix.ts:894:      const raw = await callBitrix('crm.item.get', {
+src/lib/bitrix.ts:898:      const item = ((raw as Record<string, unknown>)?.item || raw || {}) as Record<string, unknown>;
+src/lib/bitrix.ts:900:      for (const key of keys) {
+src/lib/bitrix.ts:921:  const photoFieldKeys = await resolvePhotoFieldKeys(params.entityTypeId);
+src/lib/bitrix.ts:933:  for (const fieldKeyRaw of photoFieldKeys) {
+src/lib/bitrix.ts:934:    const variants = new Set<string>([fieldKeyRaw]);
+src/lib/bitrix.ts:935:    const upper = String(fieldKeyRaw).toUpperCase();
+src/lib/bitrix.ts:937:    const camel = smartUfCamelFromUpper(upper);
+src/lib/bitrix.ts:940:    for (const fieldKey of variants) {
+src/lib/bitrix.ts:941:      const payloads: Array<Record<string, unknown>> = [];
+src/lib/bitrix.ts:952:      for (const photoFieldPayload of payloads) {
+src/lib/bitrix.ts:960:          const probeKeys = [fieldKey];
+src/lib/bitrix.ts:961:          const upperProbe = String(fieldKey).toUpperCase();
+src/lib/bitrix.ts:963:          const camelProbe = smartUfCamelFromUpper(upperProbe);
+src/lib/bitrix.ts:982:  const msg = lastError instanceof Error ? lastError.message : String(lastError || 'photo attachment failed');
+src/lib/bitrix.ts:991:  const variants: Array<Record<string, unknown>> = [
+src/lib/bitrix.ts:1000:  for (const relationFields of variants) {
+src/lib/bitrix.ts:1002:      const result = await callBitrix('crm.item.add', {
+src/lib/bitrix.ts:1026:  const normalizedValue = (params.value || '').trim().toLowerCase();
+src/lib/bitrix.ts:1029:  const cacheKey = `${params.entityTypeId}:${params.fieldRawName}`;
+src/lib/bitrix.ts:1035:      const raw = await callBitrix('crm.item.fields', { entityTypeId: params.entityTypeId });
+src/lib/bitrix.ts:1036:      const fields: Record<string, unknown> = raw?.fields || raw || {};
+src/lib/bitrix.ts:1037:      const fieldDef = findFieldByName(fields, params.fieldRawName, params.fieldCamelName);
+src/lib/bitrix.ts:1038:      const items = Array.isArray((fieldDef as Record<string, unknown>)?.items)
+src/lib/bitrix.ts:1042:      for (const item of items) {
+src/lib/bitrix.ts:1043:        const id = String(item.ID || item.id || '').trim();
+src/lib/bitrix.ts:1044:        const value = String(item.VALUE || item.value || '').trim().toLowerCase();
+src/lib/bitrix.ts:1082:  const filterVariants: Array<Record<string, unknown>> = [
+src/lib/bitrix.ts:1090:  for (const filter of filterVariants) {
+src/lib/bitrix.ts:1092:      const result = await callBitrix('crm.item.list', {
+src/lib/bitrix.ts:1097:      const ids = extractItemIdsFromList(result);
