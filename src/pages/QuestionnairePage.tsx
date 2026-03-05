@@ -459,6 +459,8 @@ export default function QuestionnairePage() {
               questionnaireId={id!}
               dealId={deal?.id || null}
               companyId={company?.id || null}
+              bitrixDealId={deal?.bitrix_deal_id || null}
+              bitrixCompanyId={company?.bitrix_company_id || null}
               certificates={certificates}
               onRefresh={loadData}
             />

@@ -100,6 +100,25 @@ export interface Certificate {
   updated_at: string;
 }
 
+export type GeneratedDocumentType = 'certificate' | 'id_card';
+
+export interface GeneratedDocument {
+  id: string;
+  questionnaire_id: string;
+  certificate_id: string | null;
+  company_id: string | null;
+  participant_id: string | null;
+  deal_id: string | null;
+  bitrix_item_id: string | null;
+  doc_type: GeneratedDocumentType;
+  template_name: string;
+  file_name: string;
+  file_url: string;
+  generated_at: string;
+  generated_by: string | null;
+  created_at: string;
+}
+
 export interface SortConfig {
   key: string;
   direction: 'asc' | 'desc';

@@ -3,6 +3,14 @@ import { Plus, Trash2, CheckCircle, XCircle } from 'lucide-react';
 import SortableHeader from './SortableHeader';
 import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
+import {
+  BITRIX_FIELDS,
+  BITRIX_FIELDS_RAW,
+  createSmartProcessItem,
+  findSmartProcessEntityTypeId,
+  resolveSmartProcessEnumId,
+  updateSmartProcessItem,
+} from '../lib/bitrix';
 import { useToast } from '../context/ToastContext';
 import type { Certificate, SortConfig } from '../types';
 
@@ -10,6 +18,8 @@ interface Props {
   questionnaireId: string;
   dealId: string | null;
   companyId: string | null;
+  bitrixDealId?: string | null;
+  bitrixCompanyId?: string | null;
   certificates: Certificate[];
   onRefresh: () => void;
 }
@@ -57,13 +67,22 @@ const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = 
   { key: 'manager', label: 'Руководитель' },
 ];
 
-export default function CertificatesTable({ questionnaireId, dealId, companyId, certificates, onRefresh }: Props) {
+export default function CertificatesTable({
+  questionnaireId,
+  dealId,
+  companyId,
+  bitrixDealId = null,
+  bitrixCompanyId = null,
+  certificates,
+  onRefresh,
+}: Props) {
   const { showToast } = useToast();
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
   const [editCell, setEditCell] = useState<EditCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [syncingBitrix, setSyncingBitrix] = useState(false);
   const [courseFilter, setCourseFilter] = useState<string>('all');
   const [bulkStartDate, setBulkStartDate] = useState<string>('');
   const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
@@ -78,6 +97,10 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
     [sorted, courseFilter]
   );
   const targetRowsInfo = courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`;
+  const hasBitrixRows = useMemo(
+    () => certificates.some(c => String(c.bitrix_item_id || '').trim().length > 0 || c.sync_status === 'synced'),
+    [certificates]
+  );
 
   function handleSort(key: string) {
     setSortConfig(prev =>
@@ -202,6 +225,120 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
     );
   }
 
+  function toBitrixDate(value: string | null): string {
+    if (!value) return '';
+    return value.includes('T') ? value.split('T')[0] : value;
+  }
+
+  async function syncCertificatesToBitrix() {
+    if (syncingBitrix) return;
+
+    if (!bitrixDealId || !bitrixCompanyId) {
+      showToast('error', 'Сначала выполните общую синхронизацию, чтобы получить ID сделки и компании в Bitrix24');
+      return;
+    }
+    if (visibleRows.length === 0) {
+      showToast('warning', 'Нет строк для отправки');
+      return;
+    }
+
+    setSyncingBitrix(true);
+    try {
+      const entityTypeId = await findSmartProcessEntityTypeId();
+      let success = 0;
+      let failed = 0;
+
+      for (const cert of visibleRows) {
+        try {
+          const categoryValue = (await resolveSmartProcessEnumId({
+            entityTypeId,
+            fieldRawName: BITRIX_FIELDS_RAW.CATEGORY,
+            fieldCamelName: BITRIX_FIELDS.CATEGORY,
+            value: cert.category || '',
+          })) || cert.category;
+
+          const courseValue = (await resolveSmartProcessEnumId({
+            entityTypeId,
+            fieldRawName: BITRIX_FIELDS_RAW.COURSE_NAME,
+            fieldCamelName: BITRIX_FIELDS.COURSE_NAME,
+            value: cert.course_name || '',
+          })) || cert.course_name;
+
+          const fields: Record<string, unknown> = {
+            TITLE: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - '),
+            [BITRIX_FIELDS.LAST_NAME]: cert.last_name || '',
+            [BITRIX_FIELDS.FIRST_NAME]: cert.first_name || '',
+            [BITRIX_FIELDS.MIDDLE_NAME]: cert.middle_name || '',
+            [BITRIX_FIELDS.POSITION]: cert.position || '',
+            [BITRIX_FIELDS.CATEGORY]: categoryValue || '',
+            [BITRIX_FIELDS.COURSE_NAME]: courseValue || '',
+            [BITRIX_FIELDS.COURSE_START_DATE]: toBitrixDate(cert.start_date),
+            [BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE]: toBitrixDate(cert.expiry_date),
+            [BITRIX_FIELDS.COMMISSION_CHAIR]: cert.commission_chair || '',
+            [BITRIX_FIELDS.PROTOCOL]: cert.protocol_number || '',
+            [BITRIX_FIELDS.DOCUMENT_NUMBER]: cert.document_number || '',
+            [BITRIX_FIELDS.COMMISSION_MEMBER_1]: cert.commission_member_1 || '',
+            [BITRIX_FIELDS.COMMISSION_MEMBER_2]: cert.commission_member_2 || '',
+            [BITRIX_FIELDS.COMMISSION_MEMBER_3]: cert.commission_member_3 || '',
+            [BITRIX_FIELDS.COMMISSION_MEMBER_4]: cert.commission_member_4 || '',
+            [BITRIX_FIELDS.COMMISSION_MEMBERS]: cert.commission_members || '',
+            [BITRIX_FIELDS.QUALIFICATION]: cert.qualification || '',
+            [BITRIX_FIELDS.MANAGER]: cert.manager || '',
+            [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? '1' : '0',
+            [BITRIX_FIELDS.EMPLOYEE_STATUS]: cert.employee_status || '',
+          };
+
+          const existingItemId = String(cert.bitrix_item_id || '').trim();
+          let finalItemId = existingItemId;
+
+          if (/^\d+$/.test(existingItemId)) {
+            await updateSmartProcessItem({
+              entityTypeId,
+              itemId: existingItemId,
+              fields,
+            });
+          } else {
+            finalItemId = await createSmartProcessItem({
+              entityTypeId,
+              dealId: bitrixDealId,
+              companyId: bitrixCompanyId,
+              fields,
+            });
+          }
+
+          await supabase.from('certificates').update({
+            bitrix_item_id: finalItemId,
+            sync_status: 'synced',
+            sync_error: '',
+            updated_at: new Date().toISOString(),
+          }).eq('id', cert.id);
+
+          success++;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e || 'sync failed');
+          await supabase.from('certificates').update({
+            sync_status: 'error',
+            sync_error: msg,
+            updated_at: new Date().toISOString(),
+          }).eq('id', cert.id);
+          failed++;
+        }
+      }
+
+      if (failed > 0) {
+        showToast('warning', `Синхронизация завершена частично: ${success} успешно, ${failed} с ошибкой`);
+      } else {
+        showToast('success', `Успешно отправлено в Bitrix: ${success} записей`);
+      }
+      onRefresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Ошибка синхронизации';
+      showToast('error', msg);
+    } finally {
+      setSyncingBitrix(false);
+    }
+  }
+
   function EditableCell({ certId, field, value }: { certId: string; field: string; value: string }) {
     const isEditing = editCell?.certId === certId && editCell?.field === field;
     if (isEditing) {
@@ -273,6 +410,13 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
         <span className="text-xs text-gray-500">
           Массовое заполнение применится к: <b>{targetRowsInfo}</b> ({visibleRows.length} строк)
         </span>
+        <button
+          onClick={() => void syncCertificatesToBitrix()}
+          disabled={syncingBitrix || bulkSaving}
+          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+        >
+          {syncingBitrix ? 'Синхронизация...' : (hasBitrixRows ? 'Обновить данные в Bitrix' : 'Отправить в BITRIX')}
+        </button>
       </div>
 
       <ResizableTableContainer>
