@@ -49,3 +49,19 @@ npm run build
   - `ADMIN_API_TOKEN` secret
   - `Authorization: Bearer <ADMIN_API_TOKEN>` header
 - `ALLOWED_ORIGIN` is required in edge-function secrets (functions fail closed if missing).
+- Document generation via Google Apps Script requires:
+  - `GOOGLE_APPS_SCRIPT_URL` (deployed GAS Web App endpoint)
+  - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
+
+## Google Docs generation flow
+
+1. Frontend calls Supabase Edge Function `generate-document`.
+2. Edge Function sends request to Google Apps Script Web App with:
+   - `templateKey`
+   - `templateName`
+   - `fileName`
+   - `placeholders` (key/value map for `{{...}}`)
+   - `photoUrl` (optional)
+3. GAS creates Google Doc from template and returns `fileUrl`.
+4. Frontend stores generated file metadata in `generated_documents` and updates related `certificates.document_url`.
+5. Coordinator marks rows as `Напечатан` in tab `Распечатанные документы`, then syncs this flag to Bitrix24.

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Plus, Trash2, CheckCircle, XCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Plus, Trash2, CheckCircle, XCircle, FileOutput } from 'lucide-react';
 import SortableHeader from './SortableHeader';
 import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
@@ -11,13 +11,16 @@ import {
   resolveSmartProcessEnumId,
   updateSmartProcessItem,
 } from '../lib/bitrix';
+import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate } from '../lib/documentGeneration';
 import { useToast } from '../context/ToastContext';
-import type { Certificate, SortConfig } from '../types';
+import type { Certificate, Participant, SortConfig } from '../types';
 
 interface Props {
   questionnaireId: string;
   dealId: string | null;
   companyId: string | null;
+  companyName?: string;
+  participants?: Participant[];
   bitrixDealId?: string | null;
   bitrixCompanyId?: string | null;
   certificates: Certificate[];
@@ -44,18 +47,6 @@ const TEXT_FIELDS: { key: keyof Certificate; label: string }[] = [
   { key: 'employee_status', label: 'Статус сотр.' },
 ];
 
-function sortCerts(list: Certificate[], cfg: SortConfig | null): Certificate[] {
-  if (!cfg) return list;
-  return [...list].sort((a, b) => {
-    const aVal = String((a as unknown as Record<string, unknown>)[cfg.key] ?? '');
-    const bVal = String((b as unknown as Record<string, unknown>)[cfg.key] ?? '');
-    const cmp = aVal.localeCompare(bVal, 'ru');
-    return cfg.direction === 'asc' ? cmp : -cmp;
-  });
-}
-
-interface EditCell { certId: string; field: string; }
-
 const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = [
   { key: 'commission_chair', label: 'Председатель' },
   { key: 'commission_member_1', label: 'Член комиссии 1' },
@@ -67,22 +58,53 @@ const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = 
   { key: 'manager', label: 'Руководитель' },
 ];
 
+interface EditCell {
+  certId: string;
+  field: string;
+}
+
+function sortCerts(list: Certificate[], cfg: SortConfig | null): Certificate[] {
+  if (!cfg) return list;
+  return [...list].sort((a, b) => {
+    const aVal = String((a as unknown as Record<string, unknown>)[cfg.key] ?? '');
+    const bVal = String((b as unknown as Record<string, unknown>)[cfg.key] ?? '');
+    const cmp = aVal.localeCompare(bVal, 'ru');
+    return cfg.direction === 'asc' ? cmp : -cmp;
+  });
+}
+
+function toBitrixDate(value: string | null): string {
+  if (!value) return '';
+  return value.includes('T') ? value.split('T')[0] : value;
+}
+
+function makeGeneratedFileName(cert: Certificate): string {
+  const fio = [cert.last_name, cert.first_name, cert.middle_name].filter(Boolean).join(' ').trim() || 'Без ФИО';
+  const now = new Date();
+  const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  return `${fio} - ${stamp}`;
+}
+
 export default function CertificatesTable({
   questionnaireId,
   dealId,
   companyId,
+  companyName = '',
+  participants = [],
   bitrixDealId = null,
   bitrixCompanyId = null,
   certificates,
   onRefresh,
 }: Props) {
   const { showToast } = useToast();
+
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
   const [editCell, setEditCell] = useState<EditCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [syncingBitrix, setSyncingBitrix] = useState(false);
+  const [generatingDocs, setGeneratingDocs] = useState(false);
   const [courseFilter, setCourseFilter] = useState<string>('all');
   const [bulkStartDate, setBulkStartDate] = useState<string>('');
   const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
@@ -101,6 +123,14 @@ export default function CertificatesTable({
     () => certificates.some(c => String(c.bitrix_item_id || '').trim().length > 0 || c.sync_status === 'synced'),
     [certificates]
   );
+  const participantPhotoById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const participant of participants) {
+      if (!participant.id) continue;
+      map.set(participant.id, String(participant.photo_url || '').trim());
+    }
+    return map;
+  }, [participants]);
 
   function handleSort(key: string) {
     setSortConfig(prev =>
@@ -118,12 +148,19 @@ export default function CertificatesTable({
       is_printed: false,
       sync_status: 'pending',
     });
-    if (error) { showToast('error', 'Ошибка добавления'); return; }
+    if (error) {
+      showToast('error', 'Ошибка добавления');
+      return;
+    }
     onRefresh();
   }
 
   async function deleteCertificate(id: string) {
-    await supabase.from('certificates').delete().eq('id', id);
+    const { error } = await supabase.from('certificates').delete().eq('id', id);
+    if (error) {
+      showToast('error', 'Ошибка удаления');
+      return;
+    }
     onRefresh();
   }
 
@@ -135,17 +172,20 @@ export default function CertificatesTable({
   async function saveEdit() {
     if (!editCell) return;
     setSaving(true);
-    const val = editCell.field.includes('date')
-      ? (editValue ? editValue : null)
-      : editValue;
-    const { error } = await supabase
-      .from('certificates')
-      .update({ [editCell.field]: val, updated_at: new Date().toISOString() })
-      .eq('id', editCell.certId);
-    if (error) showToast('error', 'Ошибка сохранения');
-    setSaving(false);
-    setEditCell(null);
-    onRefresh();
+    try {
+      const val = editCell.field.includes('date') ? (editValue ? editValue : null) : editValue;
+      const { error } = await supabase
+        .from('certificates')
+        .update({ [editCell.field]: val, updated_at: new Date().toISOString() })
+        .eq('id', editCell.certId);
+      if (error) throw error;
+      setEditCell(null);
+      onRefresh();
+    } catch {
+      showToast('error', 'Ошибка сохранения');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function runBulk(updates: Array<{ id: string; patch: Partial<Certificate> }>) {
@@ -153,7 +193,6 @@ export default function CertificatesTable({
       showToast('warning', 'Нет строк для массового заполнения');
       return;
     }
-
     setBulkSaving(true);
     try {
       const now = new Date().toISOString();
@@ -187,7 +226,6 @@ export default function CertificatesTable({
       showToast('error', 'Введите целое число >= 0');
       return;
     }
-
     await runBulk(
       visibleRows.map((row, index) => ({
         id: row.id,
@@ -200,7 +238,6 @@ export default function CertificatesTable({
     if (bulkSaving) return;
     const value = window.prompt(`Значение для "${label}" (${targetRowsInfo}):`, '');
     if (value === null) return;
-
     await runBulk(
       visibleRows.map(row => ({
         id: row.id,
@@ -225,9 +262,76 @@ export default function CertificatesTable({
     );
   }
 
-  function toBitrixDate(value: string | null): string {
-    if (!value) return '';
-    return value.includes('T') ? value.split('T')[0] : value;
+  async function generateDocuments() {
+    if (generatingDocs) return;
+    if (visibleRows.length === 0) {
+      showToast('warning', 'Нет строк для генерации');
+      return;
+    }
+
+    setGeneratingDocs(true);
+    let generated = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    try {
+      for (const cert of visibleRows) {
+        const template = resolveTemplateForCertificate(cert);
+        if (!template) {
+          skipped++;
+          continue;
+        }
+
+        try {
+          const placeholders = buildPlaceholders(cert, companyName);
+          const photoUrl = cert.participant_id ? participantPhotoById.get(cert.participant_id) : '';
+
+          const { fileUrl, fileName } = await callGenerateDocumentFunction({
+            template,
+            fileName: makeGeneratedFileName(cert),
+            placeholders,
+            photoUrl,
+          });
+
+          await supabase.from('generated_documents').insert({
+            questionnaire_id: questionnaireId,
+            certificate_id: cert.id,
+            company_id: companyId,
+            participant_id: cert.participant_id,
+            deal_id: dealId,
+            bitrix_item_id: cert.bitrix_item_id || null,
+            doc_type: template.docType,
+            template_name: template.name,
+            file_name: fileName,
+            file_url: fileUrl,
+            generated_at: new Date().toISOString(),
+          });
+
+          await supabase
+            .from('certificates')
+            .update({
+              document_url: fileUrl,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', cert.id);
+
+          generated++;
+        } catch {
+          failed++;
+        }
+      }
+
+      if (generated > 0) {
+        showToast('success', `Сгенерировано: ${generated}. Пропущено: ${skipped}. Ошибок: ${failed}.`);
+      } else if (skipped > 0 && failed === 0) {
+        showToast('warning', 'Нет подходящих шаблонов для выбранных записей');
+      } else {
+        showToast('error', 'Не удалось сгенерировать документы');
+      }
+      onRefresh();
+    } finally {
+      setGeneratingDocs(false);
+    }
   }
 
   async function syncCertificatesToBitrix() {
@@ -348,7 +452,10 @@ export default function CertificatesTable({
           value={editValue}
           onChange={e => setEditValue(e.target.value)}
           onBlur={saveEdit}
-          onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEditCell(null); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') void saveEdit();
+            if (e.key === 'Escape') setEditCell(null);
+          }}
           className="w-full px-2 py-1 border border-blue-400 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-blue-50 min-w-[80px]"
           disabled={saving}
         />
@@ -359,7 +466,7 @@ export default function CertificatesTable({
         className="px-1 py-0.5 rounded cursor-pointer hover:bg-blue-50 hover:ring-1 hover:ring-blue-200 transition-all min-h-[20px] text-xs whitespace-nowrap"
         onClick={() => startEdit(certId, field, value)}
       >
-        {value || <span className="text-gray-300">—</span>}
+        {value || <span className="text-gray-300">-</span>}
       </div>
     );
   }
@@ -375,7 +482,10 @@ export default function CertificatesTable({
           value={editValue}
           onChange={e => setEditValue(e.target.value)}
           onBlur={saveEdit}
-          onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEditCell(null); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') void saveEdit();
+            if (e.key === 'Escape') setEditCell(null);
+          }}
           className="px-2 py-1 border border-blue-400 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-blue-50"
           disabled={saving}
         />
@@ -386,7 +496,7 @@ export default function CertificatesTable({
         className="px-1 py-0.5 rounded cursor-pointer hover:bg-blue-50 hover:ring-1 hover:ring-blue-200 transition-all min-h-[20px] text-xs whitespace-nowrap"
         onClick={() => startEdit(certId, field, value?.split('T')[0] || '')}
       >
-        {displayVal || <span className="text-gray-300">—</span>}
+        {displayVal || <span className="text-gray-300">-</span>}
       </div>
     );
   }
@@ -408,14 +518,22 @@ export default function CertificatesTable({
           </select>
         </label>
         <span className="text-xs text-gray-500">
-          Массовое заполнение применится к: <b>{targetRowsInfo}</b> ({visibleRows.length} строк)
+          Массовое заполнение применяется к: <b>{targetRowsInfo}</b> ({visibleRows.length} строк)
         </span>
+        <button
+          onClick={() => void generateDocuments()}
+          disabled={generatingDocs || bulkSaving}
+          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+        >
+          <FileOutput size={13} />
+          {generatingDocs ? 'Генерация...' : 'Сгенерировать документы'}
+        </button>
         <button
           onClick={() => void syncCertificatesToBitrix()}
           disabled={syncingBitrix || bulkSaving}
-          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
         >
-          {syncingBitrix ? 'Синхронизация...' : (hasBitrixRows ? 'Обновить данные в Bitrix' : 'Отправить в BITRIX')}
+          {syncingBitrix ? 'Синхронизация...' : (hasBitrixRows ? 'Обновить данные в Bitrix' : 'Отправить в Bitrix')}
         </button>
       </div>
 
@@ -436,7 +554,7 @@ export default function CertificatesTable({
                 <th key={`${f.key}-bulk`} className="px-2 py-2 text-left">
                   {f.key === 'document_number' && (
                     <button
-                      onClick={() => bulkFillNumber('document_number', 'Номер документа')}
+                      onClick={() => void bulkFillNumber('document_number', 'Номер документа')}
                       disabled={bulkSaving}
                       className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
                     >
@@ -445,7 +563,7 @@ export default function CertificatesTable({
                   )}
                   {f.key === 'protocol_number' && (
                     <button
-                      onClick={() => bulkFillNumber('protocol_number', 'Протокол')}
+                      onClick={() => void bulkFillNumber('protocol_number', 'Протокол')}
                       disabled={bulkSaving}
                       className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
                     >
@@ -477,7 +595,7 @@ export default function CertificatesTable({
                     disabled={bulkSaving}
                   />
                   <button
-                    onClick={() => bulkFillDate('start_date', bulkStartDate)}
+                    onClick={() => void bulkFillDate('start_date', bulkStartDate)}
                     disabled={bulkSaving}
                     className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
                   >
@@ -495,7 +613,7 @@ export default function CertificatesTable({
                     disabled={bulkSaving}
                   />
                   <button
-                    onClick={() => bulkFillDate('expiry_date', bulkExpiryDate)}
+                    onClick={() => void bulkFillDate('expiry_date', bulkExpiryDate)}
                     disabled={bulkSaving}
                     className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
                   >
@@ -523,14 +641,14 @@ export default function CertificatesTable({
                 </td>
                 <td className="px-4 py-2">
                   <span className={`inline-flex items-center gap-1 text-xs font-medium ${cert.is_printed ? 'text-green-600' : 'text-gray-400'}`}>
-                    {cert.is_printed
-                      ? <><CheckCircle size={13} /> Да</>
-                      : <><XCircle size={13} /> Нет</>
-                    }
+                    {cert.is_printed ? <><CheckCircle size={13} /> Да</> : <><XCircle size={13} /> Нет</>}
                   </span>
                 </td>
                 <td className="px-4 py-2">
-                  <button onClick={() => deleteCertificate(cert.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
+                  <button
+                    onClick={() => void deleteCertificate(cert.id)}
+                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                  >
                     <Trash2 size={14} />
                   </button>
                 </td>
@@ -539,7 +657,7 @@ export default function CertificatesTable({
             {visibleRows.length === 0 && (
               <tr>
                 <td colSpan={TEXT_FIELDS.length + 4} className="px-4 py-8 text-center text-gray-400 text-sm">
-                  Нет записей. Добавьте документ или выполните синхронизацию с Битрикс24.
+                  Нет записей. Добавьте документ или выполните синхронизацию с Bitrix24.
                 </td>
               </tr>
             )}
@@ -548,7 +666,7 @@ export default function CertificatesTable({
       </ResizableTableContainer>
 
       <button
-        onClick={addCertificate}
+        onClick={() => void addCertificate()}
         className="mt-4 flex items-center gap-2 px-4 py-2 border border-dashed border-gray-300 text-gray-500 rounded-lg text-sm hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all"
       >
         <Plus size={15} /> Добавить запись

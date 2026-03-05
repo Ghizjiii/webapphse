@@ -4,13 +4,14 @@ import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, Power
 import DashboardLayout from '../components/DashboardLayout';
 import ParticipantsTable from '../components/ParticipantsTable';
 import CertificatesTable from '../components/CertificatesTable';
+import PrintedDocumentsTable from '../components/PrintedDocumentsTable';
 import BitrixSyncModal from '../components/BitrixSyncModal';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../context/ToastContext';
 import { fetchCoursesList } from '../lib/bitrix';
-import type { QuestionnaireLink, Company, Deal, Participant, Certificate } from '../types';
+import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument } from '../types';
 
-type Tab = 'participants' | 'certificates';
+type Tab = 'participants' | 'certificates' | 'printed_documents';
 
 function getRecordValue(record: unknown, key: string): string {
   return String((record as Record<string, unknown>)[key] ?? '');
@@ -26,6 +27,7 @@ export default function QuestionnairePage() {
   const [deal, setDeal] = useState<Deal | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
   const [availableCourses, setAvailableCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('participants');
@@ -45,7 +47,10 @@ export default function QuestionnairePage() {
       supabase.from('deals').select('*').eq('questionnaire_id', id).order('updated_at', { ascending: false }).order('created_at', { ascending: false }),
     ]);
 
-    if (qRes.error || !qRes.data) { navigate('/dashboard'); return; }
+    if (qRes.error || !qRes.data) {
+      navigate('/dashboard');
+      return;
+    }
 
     const companyRows = companiesRes.data || [];
     const dealRows = dealsRes.data || [];
@@ -61,6 +66,7 @@ export default function QuestionnairePage() {
       ) ||
       companyRows[0] ||
       null;
+
     const resolvedDeal = dealRows.find((d: Deal) => !!d.bitrix_deal_id) || dealRows[0] || null;
     const resolvedDealWithUrl = resolvedDeal?.bitrix_deal_id
       ? {
@@ -97,6 +103,13 @@ export default function QuestionnairePage() {
       .order('created_at', { ascending: false });
     setCertificates(certData || []);
 
+    const { data: docsData } = await supabase
+      .from('generated_documents')
+      .select('*')
+      .eq('questionnaire_id', id)
+      .order('generated_at', { ascending: false });
+    setGeneratedDocuments(docsData || []);
+
     setLoading(false);
   }, [id, navigate]);
 
@@ -118,8 +131,8 @@ export default function QuestionnairePage() {
       ...companyDraft,
       updated_at: new Date().toISOString(),
     }).eq('id', company.id);
-    if (error) { showToast('error', 'Ошибка сохранения'); }
-    else { showToast('success', 'Данные компании сохранены'); }
+    if (error) showToast('error', 'Ошибка сохранения');
+    else showToast('success', 'Данные компании сохранены');
     setSavingCompany(false);
     setCompanyEditing(false);
     loadData();
@@ -135,7 +148,10 @@ export default function QuestionnairePage() {
       bin_iin: '',
       city: '',
     });
-    if (error) { showToast('error', 'Ошибка создания'); return; }
+    if (error) {
+      showToast('error', 'Ошибка создания');
+      return;
+    }
     loadData();
   }
 
@@ -150,7 +166,7 @@ export default function QuestionnairePage() {
     if (!questionnaire) return;
     const expires_at = expiryDraft ? new Date(expiryDraft + 'T23:59:59').toISOString() : null;
     await supabase.from('questionnaires').update({ expires_at }).eq('id', questionnaire.id);
-    showToast('success', 'Срок действия обновлён');
+    showToast('success', 'Срок действия обновлен');
     setLinkEditing(false);
     loadData();
   }
@@ -175,7 +191,6 @@ export default function QuestionnairePage() {
   }
 
   if (!questionnaire) return null;
-
   const isExpired = questionnaire.expires_at && new Date(questionnaire.expires_at) < new Date();
 
   return (
@@ -186,7 +201,6 @@ export default function QuestionnairePage() {
       ]}
     >
       <div className="space-y-6">
-        {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{questionnaire.title || 'Без названия'}</h1>
@@ -250,13 +264,16 @@ export default function QuestionnairePage() {
           </div>
         </div>
 
-        {/* Link management */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-gray-900 text-sm uppercase tracking-wide flex items-center gap-2">
               <Clock size={15} className="text-gray-400" /> Управление ссылкой
             </h2>
-            <button onClick={() => { setLinkEditing(p => !p); setExpiryDraft(questionnaire.expires_at?.split('T')[0] || ''); }}
+            <button
+              onClick={() => {
+                setLinkEditing(p => !p);
+                setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
+              }}
               className="text-xs text-blue-600 hover:underline"
             >
               {linkEditing ? 'Отмена' : 'Изменить срок'}
@@ -271,11 +288,21 @@ export default function QuestionnairePage() {
                 className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
               <button onClick={saveExpiry} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-all">
-                Сохранить</button>
-              <button onClick={() => { if (questionnaire) { supabase.from('questionnaires').update({ expires_at: null }).eq('id', questionnaire.id).then(() => { setLinkEditing(false); loadData(); }); } }}
+                Сохранить
+              </button>
+              <button
+                onClick={() => {
+                  if (questionnaire) {
+                    supabase.from('questionnaires').update({ expires_at: null }).eq('id', questionnaire.id).then(() => {
+                      setLinkEditing(false);
+                      loadData();
+                    });
+                  }
+                }}
                 className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-all"
               >
-                Снять срок</button>
+                Снять срок
+              </button>
             </div>
           ) : (
             <div className="flex items-center gap-3 text-sm">
@@ -291,7 +318,6 @@ export default function QuestionnairePage() {
           )}
         </div>
 
-        {/* Deal info */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-gray-900 text-sm uppercase tracking-wide flex items-center gap-2">
@@ -325,12 +351,11 @@ export default function QuestionnairePage() {
             </div>
           ) : (
             <div className="text-sm text-gray-400">
-              Сделка ещё не создана в Битрикс24. Нажмите «Отправить в Битрикс24» чтобы создать.
+              Сделка еще не создана в Битрикс24. Нажмите «Отправить в Битрикс24», чтобы создать.
             </div>
           )}
         </div>
 
-        {/* Company info */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900 text-sm uppercase tracking-wide flex items-center gap-2">
@@ -351,14 +376,15 @@ export default function QuestionnairePage() {
               {company ? (
                 <button
                   onClick={() => {
-                    if (companyEditing) { saveCompany(); }
-                    else { setCompanyDraft({ ...company }); setCompanyEditing(true); }
+                    if (companyEditing) saveCompany();
+                    else {
+                      setCompanyDraft({ ...company });
+                      setCompanyEditing(true);
+                    }
                   }}
                   disabled={savingCompany}
                   className={`text-sm font-medium transition-all px-3 py-1.5 rounded-lg ${
-                    companyEditing
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                    companyEditing ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
                   }`}
                 >
                   {savingCompany ? 'Сохраняем...' : companyEditing ? 'Сохранить' : 'Редактировать'}
@@ -377,7 +403,7 @@ export default function QuestionnairePage() {
                 { key: 'name', label: 'Название компании' },
                 { key: 'phone', label: 'Телефон' },
                 { key: 'email', label: 'Email' },
-                { key: 'bin_iin', label: '\u0411\u0418\u041d/\u0418\u0418\u041d \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438' },
+                { key: 'bin_iin', label: 'БИН/ИИН компании' },
                 { key: 'city', label: 'Город' },
                 { key: 'bitrix_company_id', label: 'ID компании в Битрикс' },
               ].map(({ key, label }) => (
@@ -390,9 +416,7 @@ export default function QuestionnairePage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
                   ) : (
-                    <div className="text-sm font-medium text-gray-900">
-                      {getRecordValue(company, key) || '?'}
-                    </div>
+                    <div className="text-sm font-medium text-gray-900">{getRecordValue(company, key) || '?'}</div>
                   )}
                 </div>
               ))}
@@ -417,16 +441,16 @@ export default function QuestionnairePage() {
               )}
             </div>
           ) : (
-            <div className="text-sm text-gray-400 py-2">Клиент ещё не заполнил форму</div>
+            <div className="text-sm text-gray-400 py-2">Клиент еще не заполнил форму</div>
           )}
         </div>
 
-        {/* Tabs */}
         <div>
           <div className="flex gap-1 border-b border-gray-200 mb-5">
             {([
               { key: 'participants', label: 'Сотрудники', icon: <Users size={15} />, count: participants.length },
               { key: 'certificates', label: 'Удостоверения и сертификаты', icon: <FileText size={15} />, count: certificates.length },
+              { key: 'printed_documents', label: 'Распечатанные документы', icon: <FileText size={15} />, count: generatedDocuments.length },
             ] as const).map(t => (
               <button
                 key={t.key}
@@ -459,9 +483,20 @@ export default function QuestionnairePage() {
               questionnaireId={id!}
               dealId={deal?.id || null}
               companyId={company?.id || null}
+              companyName={company?.name || ''}
+              participants={participants}
               bitrixDealId={deal?.bitrix_deal_id || null}
               bitrixCompanyId={company?.bitrix_company_id || null}
               certificates={certificates}
+              onRefresh={loadData}
+            />
+          )}
+          {tab === 'printed_documents' && (
+            <PrintedDocumentsTable
+              documents={generatedDocuments}
+              certificates={certificates}
+              bitrixDealId={deal?.bitrix_deal_id || null}
+              bitrixCompanyId={company?.bitrix_company_id || null}
               onRefresh={loadData}
             />
           )}
@@ -476,13 +511,12 @@ export default function QuestionnairePage() {
           dealId={deal?.id || null}
           existingDeal={deal}
           onClose={() => setShowSyncModal(false)}
-          onDone={() => { setShowSyncModal(false); loadData(); }}
+          onDone={() => {
+            setShowSyncModal(false);
+            loadData();
+          }}
         />
       )}
     </DashboardLayout>
   );
 }
-
-
-
-
