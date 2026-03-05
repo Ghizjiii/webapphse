@@ -46,14 +46,38 @@ function sortCerts(list: Certificate[], cfg: SortConfig | null): Certificate[] {
 
 interface EditCell { certId: string; field: string; }
 
+const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = [
+  { key: 'commission_chair', label: 'Председатель' },
+  { key: 'commission_member_1', label: 'Член комиссии 1' },
+  { key: 'commission_member_2', label: 'Член комиссии 2' },
+  { key: 'commission_member_3', label: 'Член комиссии 3' },
+  { key: 'commission_member_4', label: 'Член комиссии 4' },
+  { key: 'commission_members', label: 'Все члены комиссии' },
+  { key: 'qualification', label: 'Квалификация' },
+  { key: 'manager', label: 'Руководитель' },
+];
+
 export default function CertificatesTable({ questionnaireId, dealId, companyId, certificates, onRefresh }: Props) {
   const { showToast } = useToast();
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
   const [editCell, setEditCell] = useState<EditCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [courseFilter, setCourseFilter] = useState<string>('all');
+  const [bulkStartDate, setBulkStartDate] = useState<string>('');
+  const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
 
   const sorted = useMemo(() => sortCerts(certificates, sortConfig), [certificates, sortConfig]);
+  const courseOptions = useMemo(
+    () => Array.from(new Set(certificates.map(c => String(c.course_name || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
+    [certificates]
+  );
+  const visibleRows = useMemo(
+    () => sorted.filter(c => (courseFilter === 'all' ? true : c.course_name === courseFilter)),
+    [sorted, courseFilter]
+  );
+  const targetRowsInfo = courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`;
 
   function handleSort(key: string) {
     setSortConfig(prev =>
@@ -99,6 +123,83 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
     setSaving(false);
     setEditCell(null);
     onRefresh();
+  }
+
+  async function runBulk(updates: Array<{ id: string; patch: Partial<Certificate> }>) {
+    if (updates.length === 0) {
+      showToast('warning', 'Нет строк для массового заполнения');
+      return;
+    }
+
+    setBulkSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const results = await Promise.all(
+        updates.map(({ id, patch }) =>
+          supabase
+            .from('certificates')
+            .update({ ...patch, updated_at: now })
+            .eq('id', id)
+        )
+      );
+
+      const errorCount = results.filter(r => r.error).length;
+      if (errorCount > 0) {
+        showToast('warning', `Частично заполнено: ${updates.length - errorCount} из ${updates.length}`);
+      } else {
+        showToast('success', `Заполнено ${updates.length} записей (${targetRowsInfo})`);
+      }
+      onRefresh();
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
+  async function bulkFillNumber(field: 'document_number' | 'protocol_number', label: string) {
+    if (bulkSaving) return;
+    const startRaw = window.prompt(`Начальное значение для "${label}" (${targetRowsInfo}):`, '1');
+    if (startRaw === null) return;
+    const start = Number(startRaw);
+    if (!Number.isInteger(start) || start < 0) {
+      showToast('error', 'Введите целое число >= 0');
+      return;
+    }
+
+    await runBulk(
+      visibleRows.map((row, index) => ({
+        id: row.id,
+        patch: { [field]: String(start + index) } as Partial<Certificate>,
+      }))
+    );
+  }
+
+  async function bulkFillText(field: keyof Certificate, label: string) {
+    if (bulkSaving) return;
+    const value = window.prompt(`Значение для "${label}" (${targetRowsInfo}):`, '');
+    if (value === null) return;
+
+    await runBulk(
+      visibleRows.map(row => ({
+        id: row.id,
+        patch: { [field]: value } as Partial<Certificate>,
+      }))
+    );
+  }
+
+  async function bulkFillDate(field: 'start_date' | 'expiry_date', value: string) {
+    if (bulkSaving) return;
+    const normalized = value.trim();
+    if (normalized && !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      showToast('error', 'Формат даты: YYYY-MM-DD');
+      return;
+    }
+
+    await runBulk(
+      visibleRows.map(row => ({
+        id: row.id,
+        patch: { [field]: normalized || null } as Partial<Certificate>,
+      }))
+    );
   }
 
   function EditableCell({ certId, field, value }: { certId: string; field: string; value: string }) {
@@ -155,6 +256,25 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
 
   return (
     <div>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <label className="text-xs text-gray-600 flex items-center gap-2">
+          <span>Фильтр по курсам:</span>
+          <select
+            value={courseFilter}
+            onChange={e => setCourseFilter(e.target.value)}
+            className="px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+          >
+            <option value="all">Все курсы</option>
+            {courseOptions.map(course => (
+              <option key={course} value={course}>{course}</option>
+            ))}
+          </select>
+        </label>
+        <span className="text-xs text-gray-500">
+          Массовое заполнение применится к: <b>{targetRowsInfo}</b> ({visibleRows.length} строк)
+        </span>
+      </div>
+
       <ResizableTableContainer>
         <table className="w-full text-sm" style={{ minWidth: '1600px' }}>
           <thead>
@@ -167,9 +287,84 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
               <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider whitespace-nowrap">Напечатан</th>
               <th className="px-4 py-3.5 w-10" />
             </tr>
+            <tr className="bg-white border-b border-gray-100">
+              {TEXT_FIELDS.map(f => (
+                <th key={`${f.key}-bulk`} className="px-2 py-2 text-left">
+                  {f.key === 'document_number' && (
+                    <button
+                      onClick={() => bulkFillNumber('document_number', 'Номер документа')}
+                      disabled={bulkSaving}
+                      className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                    >
+                      Заполнить
+                    </button>
+                  )}
+                  {f.key === 'protocol_number' && (
+                    <button
+                      onClick={() => bulkFillNumber('protocol_number', 'Протокол')}
+                      disabled={bulkSaving}
+                      className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                    >
+                      Заполнить
+                    </button>
+                  )}
+                  {BULK_TEXT_FILL_FIELDS.some(i => i.key === f.key) && (
+                    <button
+                      onClick={() => {
+                        const field = BULK_TEXT_FILL_FIELDS.find(i => i.key === f.key);
+                        if (!field) return;
+                        void bulkFillText(field.key, field.label);
+                      }}
+                      disabled={bulkSaving}
+                      className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                    >
+                      Заполнить
+                    </button>
+                  )}
+                </th>
+              ))}
+              <th className="px-2 py-2 text-left">
+                <div className="flex items-center gap-1">
+                  <input
+                    type="date"
+                    value={bulkStartDate}
+                    onChange={e => setBulkStartDate(e.target.value)}
+                    className="px-1.5 py-1 text-[11px] border border-gray-300 rounded bg-white"
+                    disabled={bulkSaving}
+                  />
+                  <button
+                    onClick={() => bulkFillDate('start_date', bulkStartDate)}
+                    disabled={bulkSaving}
+                    className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                  >
+                    Заполнить
+                  </button>
+                </div>
+              </th>
+              <th className="px-2 py-2 text-left">
+                <div className="flex items-center gap-1">
+                  <input
+                    type="date"
+                    value={bulkExpiryDate}
+                    onChange={e => setBulkExpiryDate(e.target.value)}
+                    className="px-1.5 py-1 text-[11px] border border-gray-300 rounded bg-white"
+                    disabled={bulkSaving}
+                  />
+                  <button
+                    onClick={() => bulkFillDate('expiry_date', bulkExpiryDate)}
+                    disabled={bulkSaving}
+                    className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                  >
+                    Заполнить
+                  </button>
+                </div>
+              </th>
+              <th />
+              <th />
+            </tr>
           </thead>
           <tbody>
-            {sorted.map(cert => (
+            {visibleRows.map(cert => (
               <tr key={cert.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
                 {TEXT_FIELDS.map(f => (
                   <td key={f.key} className="px-4 py-2">
@@ -197,9 +392,9 @@ export default function CertificatesTable({ questionnaireId, dealId, companyId, 
                 </td>
               </tr>
             ))}
-            {sorted.length === 0 && (
+            {visibleRows.length === 0 && (
               <tr>
-                <td colSpan={TEXT_FIELDS.length + 3} className="px-4 py-8 text-center text-gray-400 text-sm">
+                <td colSpan={TEXT_FIELDS.length + 4} className="px-4 py-8 text-center text-gray-400 text-sm">
                   Нет записей. Добавьте документ или выполните синхронизацию с Битрикс24.
                 </td>
               </tr>

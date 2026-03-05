@@ -7,12 +7,14 @@ import DashboardPage from './pages/DashboardPage';
 import QuestionnairePage from './pages/QuestionnairePage';
 import PublicFormPage from './pages/PublicFormPage';
 import ReferencePage from './pages/ReferencePage';
+import ConnectionWarningModal from './components/ConnectionWarningModal';
 
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <ToastProvider>
+          <ConnectionWarningModal />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/form/:token" element={<PublicFormPage />} />
