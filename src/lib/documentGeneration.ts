@@ -165,7 +165,15 @@ export async function callGenerateDocumentFunction(input: {
   placeholders?: Record<string, string>;
   photoUrl?: string;
   items?: GenerateDocumentItem[];
-}): Promise<{ fileUrl: string; fileName: string; fileId: string; unresolvedCount: number; unresolvedTokens: string[] }> {
+}): Promise<{
+  fileUrl: string;
+  fileName: string;
+  fileId: string;
+  unresolvedCount: number;
+  unresolvedTokens: string[];
+  photoIssueCount: number;
+  photoIssues: string[];
+}> {
   const { data, error } = await supabase.functions.invoke('generate-document', {
     headers: {
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
@@ -191,7 +199,11 @@ export async function callGenerateDocumentFunction(input: {
   const unresolvedTokens = Array.isArray(data?.unresolvedTokens)
     ? data.unresolvedTokens.map((v: unknown) => String(v))
     : [];
+  const photoIssueCount = Number(data?.photoIssueCount || 0);
+  const photoIssues = Array.isArray(data?.photoIssues)
+    ? data.photoIssues.map((v: unknown) => String(v))
+    : [];
   if (!fileUrl) throw new Error('Google Apps Script did not return fileUrl');
 
-  return { fileUrl, fileName, fileId, unresolvedCount, unresolvedTokens };
+  return { fileUrl, fileName, fileId, unresolvedCount, unresolvedTokens, photoIssueCount, photoIssues };
 }

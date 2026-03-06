@@ -353,6 +353,7 @@ export default function CertificatesTable({
     let generated = 0;
     let failed = 0;
     const unresolvedByFile: Array<{ fileName: string; tokens: string[] }> = [];
+    const photoIssuesByFile: Array<{ fileName: string; issues: string[] }> = [];
 
     try {
       for (const group of groupList) {
@@ -365,7 +366,14 @@ export default function CertificatesTable({
             .eq('questionnaire_id', questionnaireId)
             .in('certificate_id', certIds);
 
-          const { fileUrl, fileName, unresolvedCount, unresolvedTokens } = await callGenerateDocumentFunction({
+          const {
+            fileUrl,
+            fileName,
+            unresolvedCount,
+            unresolvedTokens,
+            photoIssueCount,
+            photoIssues,
+          } = await callGenerateDocumentFunction({
             template,
             fileName: makeGeneratedFileName(group.courseName),
             items: group.rows.map(row => ({
@@ -376,6 +384,9 @@ export default function CertificatesTable({
 
           if (unresolvedCount > 0) {
             unresolvedByFile.push({ fileName, tokens: unresolvedTokens });
+          }
+          if (photoIssueCount > 0) {
+            photoIssuesByFile.push({ fileName, issues: photoIssues });
           }
 
           await supabase.from('generated_documents').insert(
@@ -418,6 +429,13 @@ export default function CertificatesTable({
             .map(x => `${x.fileName}: ${x.tokens.slice(0, 4).join(', ')}`)
             .join(' | ');
           showToast('warning', `Внимание: в ${unresolvedByFile.length} файлах остались незамененные плейсхолдеры. ${preview}`);
+        }
+        if (photoIssuesByFile.length > 0) {
+          const preview = photoIssuesByFile
+            .slice(0, 2)
+            .map(x => `${x.fileName}: ${x.issues.slice(0, 2).join(', ')}`)
+            .join(' | ');
+          showToast('warning', `Проблемы с фото в ${photoIssuesByFile.length} файлах. ${preview}`);
         }
       } else if (skipped > 0 && failed === 0) {
         showToast('warning', 'Нет подходящих шаблонов для выбранных записей');

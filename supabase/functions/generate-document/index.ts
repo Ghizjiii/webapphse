@@ -120,6 +120,8 @@ Deno.serve(async (req: Request) => {
     const upstreamError = String(upstreamJson.error || "").trim();
     const unresolvedCount = Number(upstreamJson.unresolvedCount || 0);
     const unresolvedTokens = Array.isArray(upstreamJson.unresolvedTokens) ? upstreamJson.unresolvedTokens : [];
+    const photoIssueCount = Number(upstreamJson.photoIssueCount || 0);
+    const photoIssues = Array.isArray(upstreamJson.photoIssues) ? upstreamJson.photoIssues : [];
 
     if (upstreamError) {
       return new Response(JSON.stringify({
@@ -147,6 +149,8 @@ Deno.serve(async (req: Request) => {
       templateName: body.templateName || "",
       unresolvedCount,
       unresolvedTokens,
+      photoIssueCount,
+      photoIssues,
     }), {
       headers: { ...headers, "Content-Type": "application/json" },
     });

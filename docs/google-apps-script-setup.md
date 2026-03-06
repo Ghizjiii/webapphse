@@ -70,12 +70,13 @@ function doPost(e) {
     const templateBody = DocumentApp.openById(templateId).getBody();
     const docType = String(body.docType || '');
     const items = Array.isArray(body.items) ? body.items : [];
+    const report = { photoIssues: [] };
 
     if (items.length > 0) {
       if (docType === 'certificate') {
-        fillCertificateDocument(targetBody, templateBody, items);
+        fillCertificateDocument(targetBody, templateBody, items, report);
       } else {
-        fillIdCardDocument(targetBody, templateBody, items);
+        fillIdCardDocument(targetBody, templateBody, items, report);
       }
     } else {
       // fallback for old single payload
@@ -84,7 +85,7 @@ function doPost(e) {
         photoUrl: body.photoUrl || '',
       };
       if (docType === 'certificate') fillCertificatePage(targetBody, one);
-      else fillIdCardBatch(targetBody, [one]);
+      else fillIdCardBatch(targetBody, [one], report);
     }
 
     const unresolvedTokens = findUnresolvedTokens(targetBody);
@@ -96,26 +97,28 @@ function doPost(e) {
       fileUrl: `https://docs.google.com/document/d/${copy.getId()}/edit`,
       unresolvedCount: unresolvedTokens.length,
       unresolvedTokens: unresolvedTokens.slice(0, 100),
+      photoIssueCount: report.photoIssues.length,
+      photoIssues: report.photoIssues.slice(0, 100),
     });
   } catch (err) {
     return json({ error: String(err) });
   }
 }
 
-function fillIdCardDocument(targetBody, templateBody, items) {
+function fillIdCardDocument(targetBody, templateBody, items, report) {
   const batches = chunk(items, 4);
 
   // first template copy already exists in target document
-  fillIdCardBatch(targetBody, batches[0] || []);
+  fillIdCardBatch(targetBody, batches[0] || [], report);
 
   for (let i = 1; i < batches.length; i++) {
     targetBody.appendPageBreak();
     appendTemplateBody(targetBody, templateBody);
-    fillIdCardBatch(targetBody, batches[i]);
+    fillIdCardBatch(targetBody, batches[i], report);
   }
 }
 
-function fillCertificateDocument(targetBody, templateBody, items) {
+function fillCertificateDocument(targetBody, templateBody, items, report) {
   // first template copy already exists in target document
   fillCertificatePage(targetBody, items[0] || {});
 
@@ -126,7 +129,7 @@ function fillCertificateDocument(targetBody, templateBody, items) {
   }
 }
 
-function fillIdCardBatch(body, batch) {
+function fillIdCardBatch(body, batch, report) {
   for (let slot = 1; slot <= 4; slot++) {
     const item = batch[slot - 1];
     if (!item) {
@@ -162,7 +165,7 @@ function fillIdCardBatch(body, batch) {
     replaceToken(body, `COMMISSION_MEMB_${slot}_3`, values.COMMISSION_MEMB_3);
     replaceToken(body, `COMMISSION_MEMB_${slot}_4`, values.COMMISSION_MEMB_4);
 
-    fillPhoto(body, `PHOTO_${slot}`, item.photoUrl || '');
+    fillPhoto(body, `PHOTO_${slot}`, item.photoUrl || '', report);
   }
 }
 
@@ -298,24 +301,42 @@ function normalizeToken(token) {
     .trim();
 }
 
-function fillPhoto(body, token, photoUrl) {
+function fillPhoto(body, token, photoUrl, report) {
+  const normalized = normalizeToken(token);
+  const issue = (msg) => {
+    if (!report || !Array.isArray(report.photoIssues)) return;
+    report.photoIssues.push(`${normalized}: ${msg}`);
+  };
+
   try {
     if (!photoUrl) {
-      clearToken(body, token);
+      clearToken(body, normalized);
       return;
     }
-    const normalized = normalizeToken(token);
-    const found = body.findText(`\\{\\{?\\s*${escapeRegex(normalized)}\\s*\\}\\}?`);
-    if (!found) return;
 
-    const blob = UrlFetchApp.fetch(photoUrl, { muteHttpExceptions: true }).getBlob();
+    const found = body.findText(`\\{\\{?\\s*${escapeRegex(normalized)}\\s*\\}\\}?`);
+    if (!found) {
+      issue('token not found in document');
+      return;
+    }
+
+    const blob = fetchImageBlob(photoUrl);
+    if (!blob) {
+      clearToken(body, normalized);
+      issue('image fetch failed');
+      return;
+    }
+
     const textEl = found.getElement().asText();
     textEl.deleteText(found.getStartOffset(), found.getEndOffsetInclusive());
 
     const parent = textEl.getParent();
-    let image;
+    let image = null;
+
     if (parent.getType() === DocumentApp.ElementType.PARAGRAPH) {
       image = parent.asParagraph().insertInlineImage(0, blob);
+    } else if (parent.getType() === DocumentApp.ElementType.LIST_ITEM) {
+      image = parent.asListItem().insertInlineImage(0, blob);
     } else if (parent.getType() === DocumentApp.ElementType.TABLE_CELL) {
       image = parent.asTableCell().insertImage(0, blob);
     } else {
@@ -324,9 +345,44 @@ function fillPhoto(body, token, photoUrl) {
 
     image.setWidth(PHOTO_WIDTH_POINTS);
     image.setHeight(PHOTO_HEIGHT_POINTS);
-  } catch (_e) {
-    clearToken(body, token);
+  } catch (e) {
+    clearToken(body, normalized);
+    issue(String(e));
   }
+}
+
+function buildPhotoUrlCandidates(photoUrl) {
+  const source = String(photoUrl || '').trim();
+  if (!source) return [];
+  const out = [source];
+
+  if (source.indexOf('/upload/') !== -1) {
+    out.push(source.replace('/upload/', '/upload/f_jpg,q_auto:good/'));
+    out.push(source.replace('/upload/', '/upload/f_auto,q_auto/'));
+  }
+
+  return Array.from(new Set(out));
+}
+
+function fetchImageBlob(photoUrl) {
+  const urls = buildPhotoUrlCandidates(photoUrl);
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i];
+    const response = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true,
+      followRedirects: true,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HSEDocGen/1.0)' },
+    });
+
+    const status = Number(response.getResponseCode() || 0);
+    if (status < 200 || status >= 300) continue;
+
+    const blob = response.getBlob();
+    const type = String(blob.getContentType() || '');
+    if (!/^image\//i.test(type)) continue;
+    return blob;
+  }
+  return null;
 }
 
 function chunk(arr, size) {
@@ -358,3 +414,14 @@ function json(obj) {
 2. Edit current Web App deployment
 3. Deploy new version
 4. If URL changed: update `GOOGLE_APPS_SCRIPT_URL` secret
+
+## 7) Photo troubleshooting
+
+If text placeholders are filled but photos are missing:
+
+1. Confirm Edge Function response contains `photoIssueCount` / `photoIssues`.
+2. In UI, after generation, check warning toast with photo issues.
+3. Typical reasons:
+  - `PHOTO_X` token is missing in template.
+  - Photo URL is not publicly reachable.
+  - URL returns non-image content.
