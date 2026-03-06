@@ -78,11 +78,15 @@ function toBitrixDate(value: string | null): string {
   return value.includes('T') ? value.split('T')[0] : value;
 }
 
-function makeGeneratedFileName(cert: Certificate): string {
-  const fio = [cert.last_name, cert.first_name, cert.middle_name].filter(Boolean).join(' ').trim() || 'Без ФИО';
+function makeGeneratedFileName(courseName: string): string {
+  const safeCourseName = String(courseName || '').trim() || 'Курс';
   const now = new Date();
-  const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  return `${fio} - ${stamp}`;
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  return `${safeCourseName} - ${yyyy}-${mm}-${dd} ${hh}-${mi}`;
 }
 
 export default function CertificatesTable({
@@ -108,6 +112,13 @@ export default function CertificatesTable({
   const [courseFilter, setCourseFilter] = useState<string>('all');
   const [bulkStartDate, setBulkStartDate] = useState<string>('');
   const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
+  const [generationProgress, setGenerationProgress] = useState<{
+    total: number;
+    processed: number;
+    generated: number;
+    skipped: number;
+    failed: number;
+  } | null>(null);
 
   const sorted = useMemo(() => sortCerts(certificates, sortConfig), [certificates, sortConfig]);
   const courseOptions = useMemo(
@@ -233,7 +244,34 @@ export default function CertificatesTable({
       }))
     );
   }
+  async function bulkFillProtocolWithMode() {
+    if (bulkSaving) return;
+    const modeRaw = window.prompt(
+      `Режим заполнения поля "Протокол" (${targetRowsInfo}):\n1 - Автонумерация\n2 - Одинаковое значение`,
+      '1'
+    );
+    if (modeRaw === null) return;
 
+    const mode = modeRaw.trim();
+    if (mode === '1') {
+      await bulkFillNumber('protocol_number', 'Протокол');
+      return;
+    }
+
+    if (mode === '2') {
+      const value = window.prompt(`Введите значение для "Протокол" (${targetRowsInfo}):`, '');
+      if (value === null) return;
+      await runBulk(
+        visibleRows.map(row => ({
+          id: row.id,
+          patch: { protocol_number: value } as Partial<Certificate>,
+        }))
+      );
+      return;
+    }
+
+    showToast('warning', 'Выберите режим: 1 или 2');
+  }
   async function bulkFillText(field: keyof Certificate, label: string) {
     if (bulkSaving) return;
     const value = window.prompt(`Значение для "${label}" (${targetRowsInfo}):`, '');
@@ -270,42 +308,91 @@ export default function CertificatesTable({
     }
 
     setGeneratingDocs(true);
-    let generated = 0;
+    const grouped = new Map<string, {
+      template: NonNullable<ReturnType<typeof resolveTemplateForCertificate>>;
+      courseName: string;
+      rows: Array<{ cert: Certificate; placeholders: Record<string, string>; photoUrl: string }>;
+    }>();
+
     let skipped = 0;
+    for (const cert of visibleRows) {
+      const template = resolveTemplateForCertificate(cert);
+      if (!template) {
+        skipped++;
+        continue;
+      }
+
+      const courseName = String(cert.course_name || '').trim() || 'Без названия курса';
+      const key = `${template.key}::${courseName.toLowerCase()}`;
+      const group = grouped.get(key) || {
+        template,
+        courseName,
+        rows: [],
+      };
+
+      const placeholders = buildPlaceholders(cert, companyName);
+      const photoUrl = cert.participant_id ? String(participantPhotoById.get(cert.participant_id) || '') : '';
+      group.rows.push({ cert, placeholders, photoUrl });
+      grouped.set(key, group);
+    }
+
+    const groupList = Array.from(grouped.values());
+    if (groupList.length === 0) {
+      showToast('warning', 'Нет подходящих шаблонов для выбранных записей');
+      setGeneratingDocs(false);
+      return;
+    }
+
+    setGenerationProgress({
+      total: groupList.length,
+      processed: 0,
+      generated: 0,
+      skipped,
+      failed: 0,
+    });
+    let generated = 0;
     let failed = 0;
+    const unresolvedByFile: Array<{ fileName: string; tokens: string[] }> = [];
 
     try {
-      for (const cert of visibleRows) {
-        const template = resolveTemplateForCertificate(cert);
-        if (!template) {
-          skipped++;
-          continue;
-        }
-
+      for (const group of groupList) {
+        const template = group.template;
         try {
-          const placeholders = buildPlaceholders(cert, companyName);
-          const photoUrl = cert.participant_id ? participantPhotoById.get(cert.participant_id) : '';
+          const certIds = group.rows.map(r => r.cert.id);
+          await supabase
+            .from('generated_documents')
+            .delete()
+            .eq('questionnaire_id', questionnaireId)
+            .in('certificate_id', certIds);
 
-          const { fileUrl, fileName } = await callGenerateDocumentFunction({
+          const { fileUrl, fileName, unresolvedCount, unresolvedTokens } = await callGenerateDocumentFunction({
             template,
-            fileName: makeGeneratedFileName(cert),
-            placeholders,
-            photoUrl,
+            fileName: makeGeneratedFileName(group.courseName),
+            items: group.rows.map(row => ({
+              placeholders: row.placeholders,
+              photoUrl: row.photoUrl,
+            })),
           });
 
-          await supabase.from('generated_documents').insert({
-            questionnaire_id: questionnaireId,
-            certificate_id: cert.id,
-            company_id: companyId,
-            participant_id: cert.participant_id,
-            deal_id: dealId,
-            bitrix_item_id: cert.bitrix_item_id || null,
-            doc_type: template.docType,
-            template_name: template.name,
-            file_name: fileName,
-            file_url: fileUrl,
-            generated_at: new Date().toISOString(),
-          });
+          if (unresolvedCount > 0) {
+            unresolvedByFile.push({ fileName, tokens: unresolvedTokens });
+          }
+
+          await supabase.from('generated_documents').insert(
+            group.rows.map(row => ({
+              questionnaire_id: questionnaireId,
+              certificate_id: row.cert.id,
+              company_id: companyId,
+              participant_id: row.cert.participant_id,
+              deal_id: dealId,
+              bitrix_item_id: row.cert.bitrix_item_id || null,
+              doc_type: template.docType,
+              template_name: template.name,
+              file_name: fileName,
+              file_url: fileUrl,
+              generated_at: new Date().toISOString(),
+            }))
+          );
 
           await supabase
             .from('certificates')
@@ -313,16 +400,25 @@ export default function CertificatesTable({
               document_url: fileUrl,
               updated_at: new Date().toISOString(),
             })
-            .eq('id', cert.id);
+            .in('id', certIds);
 
           generated++;
+          setGenerationProgress(prev => prev ? { ...prev, processed: prev.processed + 1, generated } : prev);
         } catch {
           failed++;
+          setGenerationProgress(prev => prev ? { ...prev, processed: prev.processed + 1, failed } : prev);
         }
       }
 
       if (generated > 0) {
-        showToast('success', `Сгенерировано: ${generated}. Пропущено: ${skipped}. Ошибок: ${failed}.`);
+        showToast('success', `Сгенерировано файлов: ${generated}. Пропущено записей: ${skipped}. Ошибок: ${failed}.`);
+        if (unresolvedByFile.length > 0) {
+          const preview = unresolvedByFile
+            .slice(0, 2)
+            .map(x => `${x.fileName}: ${x.tokens.slice(0, 4).join(', ')}`)
+            .join(' | ');
+          showToast('warning', `Внимание: в ${unresolvedByFile.length} файлах остались незамененные плейсхолдеры. ${preview}`);
+        }
       } else if (skipped > 0 && failed === 0) {
         showToast('warning', 'Нет подходящих шаблонов для выбранных записей');
       } else {
@@ -331,6 +427,7 @@ export default function CertificatesTable({
       onRefresh();
     } finally {
       setGeneratingDocs(false);
+      setTimeout(() => setGenerationProgress(null), 2200);
     }
   }
 
@@ -536,6 +633,26 @@ export default function CertificatesTable({
           {syncingBitrix ? 'Синхронизация...' : (hasBitrixRows ? 'Обновить данные в Bitrix' : 'Отправить в Bitrix')}
         </button>
       </div>
+      {generationProgress && (
+        <div className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
+          <div className="mb-2 flex items-center justify-between text-xs text-gray-600">
+            <span>
+              Генерация документов: {generationProgress.processed}/{generationProgress.total}
+            </span>
+            <span>
+              Успешно (файлы): {generationProgress.generated} | Пропущено: {generationProgress.skipped} | Ошибки: {generationProgress.failed}
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded bg-gray-100">
+            <div
+              className="h-full bg-emerald-500 transition-all duration-200"
+              style={{
+                width: `${generationProgress.total > 0 ? Math.round((generationProgress.processed / generationProgress.total) * 100) : 0}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <ResizableTableContainer>
         <table className="w-full text-sm" style={{ minWidth: '1600px' }}>
@@ -563,7 +680,7 @@ export default function CertificatesTable({
                   )}
                   {f.key === 'protocol_number' && (
                     <button
-                      onClick={() => void bulkFillNumber('protocol_number', 'Протокол')}
+                      onClick={() => void bulkFillProtocolWithMode()}
                       disabled={bulkSaving}
                       className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
                     >
@@ -674,3 +791,5 @@ export default function CertificatesTable({
     </div>
   );
 }
+
+

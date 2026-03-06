@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Certificate, GeneratedDocumentType } from '../types';
+
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 export interface TemplateConfig {
@@ -8,26 +9,52 @@ export interface TemplateConfig {
   docType: GeneratedDocumentType;
 }
 
+export interface GenerateDocumentItem {
+  placeholders: Record<string, string>;
+  photoUrl?: string;
+}
+
 const TEMPLATE_BOT_CERT: TemplateConfig = {
   key: 'tpl_01_bot_itr_certificate',
-  name: '01. Сертификат Безопасность и охрана труда для ИТР состава',
+  name: '01. BOT safety certificate (ITR)',
   docType: 'certificate',
 };
 
 const TEMPLATE_BOT_ID: TemplateConfig = {
   key: 'tpl_02_bot_worker_id',
-  name: '02. Безопасность и охрана труда удостоверение для рабочего состава',
+  name: '02. BOT worker ID',
   docType: 'id_card',
 };
 
 const TEMPLATE_RULES: Array<{ matcher: RegExp; template: TemplateConfig }> = [
-  { matcher: /пожарно[-\s]?технический минимум/i, template: { key: 'tpl_03_fire_tech_minimum', name: '03. Пожарно-технический минимум', docType: 'id_card' } },
-  { matcher: /сосуд[а-я\s]*под давлен/i, template: { key: 'tpl_06_pressure_vessels', name: '06. Промышленная безопасность сосуды под давлением', docType: 'id_card' } },
-  { matcher: /на высоте|безопасное ведение работ на высоте/i, template: { key: 'tpl_07_work_at_height', name: '07. Безопасное ведение работ на высоте', docType: 'id_card' } },
-  { matcher: /ответственн[а-я\s]*грузоподъемн/i, template: { key: 'tpl_08_responsible_lifting', name: '08. Промышленная безопасность для ответственных лиц по грузоподъемным механизмам', docType: 'id_card' } },
-  { matcher: /грузоподъемн|гпм/i, template: { key: 'tpl_09_lifting_mechanisms', name: '09. Промышленная безопасность при работе с грузоподъемными механизмами (ГПМ)', docType: 'id_card' } },
-  { matcher: /промышленн[а-я\s]*безопасност/i, template: { key: 'tpl_04_industrial_safety', name: '04. Промышленная безопасность', docType: 'id_card' } },
-  { matcher: /квалификационн/i, template: { key: 'tpl_05_qualification_id', name: '05. Квалификационное удостоверение', docType: 'id_card' } },
+  {
+    matcher: /(?:\u043f\u043e\u0436\u0430\u0440\u043d\u043e)[-\s]?(?:\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a(?:\u0438\u0439|\u043e\u0433\u043e))\s+(?:\u043c\u0438\u043d\u0438\u043c\u0443\u043c)/i,
+    template: { key: 'tpl_03_fire_tech_minimum', name: '03. Fire technical minimum', docType: 'id_card' },
+  },
+  {
+    matcher: /(?:\u0441\u043e\u0441\u0443\u0434(?:\u044b|\u0430)?).*?(?:\u043f\u043e\u0434)\s+(?:\u0434\u0430\u0432\u043b\u0435\u043d)/i,
+    template: { key: 'tpl_06_pressure_vessels', name: '06. Pressure vessels', docType: 'id_card' },
+  },
+  {
+    matcher: /(?:\u043d\u0430)\s+(?:\u0432\u044b\u0441\u043e\u0442\u0435)|(?:\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0435)\s+(?:\u0432\u0435\u0434\u0435\u043d\u0438\u0435)\s+(?:\u0440\u0430\u0431\u043e\u0442)\s+(?:\u043d\u0430)\s+(?:\u0432\u044b\u0441\u043e\u0442\u0435)/i,
+    template: { key: 'tpl_07_work_at_height', name: '07. Work at height', docType: 'id_card' },
+  },
+  {
+    matcher: /(?:\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0435\u043d\u043d).*?(?:\u0433\u0440\u0443\u0437\u043e\u043f\u043e\u0434\u044a\u0435\u043c\u043d)/i,
+    template: { key: 'tpl_08_responsible_lifting', name: '08. Responsible lifting persons', docType: 'id_card' },
+  },
+  {
+    matcher: /(?:\u0433\u0440\u0443\u0437\u043e\u043f\u043e\u0434\u044a\u0435\u043c\u043d)|(?:\u0433\u043f\u043c)/i,
+    template: { key: 'tpl_09_lifting_mechanisms', name: '09. Lifting mechanisms', docType: 'id_card' },
+  },
+  {
+    matcher: /(?:\u043f\u0440\u043e\u043c\u044b\u0448\u043b\u0435\u043d\u043d(?:\u0430\u044f|\u043e\u0439))\s+(?:\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442)/i,
+    template: { key: 'tpl_04_industrial_safety', name: '04. Industrial safety', docType: 'id_card' },
+  },
+  {
+    matcher: /(?:\u043a\u0432\u0430\u043b\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u043e\u043d\u043d)/i,
+    template: { key: 'tpl_05_qualification_id', name: '05. Qualification ID', docType: 'id_card' },
+  },
 ];
 
 function normalizeText(value: string | null | undefined): string {
@@ -54,9 +81,24 @@ export function resolveTemplateForCertificate(cert: Certificate): TemplateConfig
   const course = normalizeText(cert.course_name);
   const category = normalizeText(cert.category);
 
-  if (course.includes('безопасность') && course.includes('охрана труда')) {
-    if (category.includes('итр')) return TEMPLATE_BOT_CERT;
+  const hasBot = course.includes('\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u044c') && course.includes('\u043e\u0445\u0440\u0430\u043d\u0430 \u0442\u0440\u0443\u0434\u0430');
+  if (hasBot) {
+    if (category.includes('\u0438\u0442\u0440')) return TEMPLATE_BOT_CERT;
     return TEMPLATE_BOT_ID;
+  }
+
+  const responsibleLifting =
+    course.includes('\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0435\u043d') &&
+    course.includes('\u0433\u0440\u0443\u0437\u043e\u043f\u043e\u0434');
+  if (responsibleLifting) {
+    return { key: 'tpl_08_responsible_lifting', name: '08. Responsible lifting persons', docType: 'id_card' };
+  }
+
+  const liftingMechanisms =
+    course.includes('\u043f\u0440\u0438 \u0440\u0430\u0431\u043e\u0442\u0435') &&
+    (course.includes('\u0433\u0440\u0443\u0437\u043e\u043f\u043e\u0434') || course.includes('\u0433\u043f\u043c'));
+  if (liftingMechanisms) {
+    return { key: 'tpl_09_lifting_mechanisms', name: '09. Lifting mechanisms', docType: 'id_card' };
   }
 
   for (const rule of TEMPLATE_RULES) {
@@ -72,43 +114,58 @@ export function buildPlaceholders(cert: Certificate, companyName: string): Recor
   const middleName = String(cert.middle_name || '').trim();
   const fullName = [lastName, firstName, middleName].filter(Boolean).join(' ');
   const chairman = String(cert.commission_chair || '').trim();
+  const courseName = String(cert.course_name || '').trim();
 
   const values: Record<string, string> = {
     WORK_PLACE: firstNotEmpty(companyName, cert.employee_status),
+    WORKPLACE: firstNotEmpty(companyName, cert.employee_status),
     LAST_NAME: lastName,
     NAME: firstName,
     SEC_NAME: middleName,
     FIO: firstNotEmpty(fullName, `${firstName} ${middleName}`.trim()),
+    POSITION: String(cert.position || '').trim(),
     POS: String(cert.position || '').trim(),
     CATEGORY: String(cert.category || '').trim(),
-    COURSE_NAME: String(cert.course_name || '').trim(),
+    COURSE_NAME: courseName,
+    COURSE: courseName,
     DOC_NUM: String(cert.document_number || '').trim(),
     CERT_NUM: String(cert.document_number || '').trim(),
     PROTOCOL_NUM: String(cert.protocol_number || '').trim(),
     PROTOCOL: String(cert.protocol_number || '').trim(),
     CHAIRMAN: chairman,
+    COMMISSION_CHAIR: chairman,
     COMMISSION_ALL: firstNotEmpty(cert.commission_members, chairman),
-    COURSE_START: normalizeDate(cert.start_date),
-    DOC_VALID: normalizeDate(cert.expiry_date),
+    COMMISSION: firstNotEmpty(cert.commission_members, chairman),
+    COMMISSION_MEMB_1: String(cert.commission_member_1 || '').trim(),
+    COMMISSION_MEMB_2: String(cert.commission_member_2 || '').trim(),
+    COMMISSION_MEMB_3: String(cert.commission_member_3 || '').trim(),
+    COMMISSION_MEMB_4: String(cert.commission_member_4 || '').trim(),
+    COMMISSION_MEMBER_1: String(cert.commission_member_1 || '').trim(),
+    COMMISSION_MEMBER_2: String(cert.commission_member_2 || '').trim(),
+    COMMISSION_MEMBER_3: String(cert.commission_member_3 || '').trim(),
+    COMMISSION_MEMBER_4: String(cert.commission_member_4 || '').trim(),
+    QUALIFICATION: String(cert.qualification || '').trim(),
+    MANAGER: String(cert.manager || '').trim(),
+    HEAD: String(cert.manager || '').trim(),
     DATE: normalizeDate(cert.start_date),
+    DATE_ISSUE: normalizeDate(cert.start_date),
     DATE_END: normalizeDate(cert.expiry_date),
+    DOC_VALID: normalizeDate(cert.expiry_date),
+    COURSE_START: normalizeDate(cert.start_date),
   };
 
   const output: Record<string, string> = {};
-  for (const [key, val] of Object.entries(values)) {
-    output[`{{${key}}}`] = val;
-    output[`{{${key}_1}}`] = val;
-  }
-
+  for (const [key, val] of Object.entries(values)) output[`{{${key}}}`] = val;
   return output;
 }
 
 export async function callGenerateDocumentFunction(input: {
   template: TemplateConfig;
   fileName: string;
-  placeholders: Record<string, string>;
+  placeholders?: Record<string, string>;
   photoUrl?: string;
-}): Promise<{ fileUrl: string; fileName: string }> {
+  items?: GenerateDocumentItem[];
+}): Promise<{ fileUrl: string; fileName: string; fileId: string; unresolvedCount: number; unresolvedTokens: string[] }> {
   const { data, error } = await supabase.functions.invoke('generate-document', {
     headers: {
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
@@ -117,21 +174,24 @@ export async function callGenerateDocumentFunction(input: {
     body: {
       templateKey: input.template.key,
       templateName: input.template.name,
+      docType: input.template.docType,
       fileName: input.fileName,
-      placeholders: input.placeholders,
+      placeholders: input.placeholders || {},
       photoUrl: input.photoUrl || '',
+      items: input.items || [],
     },
   });
 
-  if (error) {
-    throw new Error(error.message || 'Ошибка вызова функции generate-document');
-  }
+  if (error) throw new Error(error.message || 'Failed to invoke generate-document');
 
   const fileUrl = String(data?.fileUrl || '');
   const fileName = String(data?.fileName || input.fileName);
-  if (!fileUrl) {
-    throw new Error('Google Apps Script не вернул ссылку на документ');
-  }
+  const fileId = String(data?.fileId || '');
+  const unresolvedCount = Number(data?.unresolvedCount || 0);
+  const unresolvedTokens = Array.isArray(data?.unresolvedTokens)
+    ? data.unresolvedTokens.map((v: unknown) => String(v))
+    : [];
+  if (!fileUrl) throw new Error('Google Apps Script did not return fileUrl');
 
-  return { fileUrl, fileName };
+  return { fileUrl, fileName, fileId, unresolvedCount, unresolvedTokens };
 }

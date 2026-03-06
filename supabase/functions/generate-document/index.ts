@@ -29,9 +29,14 @@ function corsHeaders(req: Request): Record<string, string> {
 type GenerateBody = {
   templateKey: string;
   templateName?: string;
+  docType?: "certificate" | "id_card";
   fileName: string;
-  placeholders: Record<string, string>;
+  placeholders?: Record<string, string>;
   photoUrl?: string;
+  items?: Array<{
+    placeholders: Record<string, string>;
+    photoUrl?: string;
+  }>;
 };
 
 Deno.serve(async (req: Request) => {
@@ -65,8 +70,10 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json() as GenerateBody;
 
-    if (!body.templateKey || !body.fileName || !body.placeholders || typeof body.placeholders !== "object") {
-      return new Response(JSON.stringify({ error: "templateKey, fileName and placeholders are required" }), {
+    const hasSinglePlaceholders = !!body.placeholders && typeof body.placeholders === "object";
+    const hasItems = Array.isArray(body.items) && body.items.length > 0;
+    if (!body.templateKey || !body.fileName || (!hasSinglePlaceholders && !hasItems)) {
+      return new Response(JSON.stringify({ error: "templateKey, fileName and placeholders or items[] are required" }), {
         status: 400,
         headers: { ...headers, "Content-Type": "application/json" },
       });
@@ -76,9 +83,11 @@ Deno.serve(async (req: Request) => {
       token: googleScriptToken || undefined,
       templateKey: body.templateKey,
       templateName: body.templateName || "",
+      docType: body.docType || "",
       fileName: body.fileName,
-      placeholders: body.placeholders,
+      placeholders: hasSinglePlaceholders ? body.placeholders : {},
       photoUrl: body.photoUrl || "",
+      items: hasItems ? body.items : [],
     };
 
     const upstream = await fetch(googleScriptUrl, {
@@ -109,6 +118,8 @@ Deno.serve(async (req: Request) => {
     const fileId = String(upstreamJson.fileId || "");
     const generatedFileName = String(upstreamJson.fileName || body.fileName);
     const upstreamError = String(upstreamJson.error || "").trim();
+    const unresolvedCount = Number(upstreamJson.unresolvedCount || 0);
+    const unresolvedTokens = Array.isArray(upstreamJson.unresolvedTokens) ? upstreamJson.unresolvedTokens : [];
 
     if (upstreamError) {
       return new Response(JSON.stringify({
@@ -134,6 +145,8 @@ Deno.serve(async (req: Request) => {
       fileName: generatedFileName,
       templateKey: body.templateKey,
       templateName: body.templateName || "",
+      unresolvedCount,
+      unresolvedTokens,
     }), {
       headers: { ...headers, "Content-Type": "application/json" },
     });
