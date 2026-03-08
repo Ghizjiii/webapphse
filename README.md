@@ -1,4 +1,4 @@
-# HSE Web App
+﻿# HSE Web App
 
 React + Vite + TypeScript application for HSE questionnaire collection, participant management, and Bitrix24 sync.
 
@@ -52,6 +52,13 @@ npm run build
 - Document generation via Google Apps Script requires:
   - `GOOGLE_APPS_SCRIPT_URL` (deployed GAS Web App endpoint)
   - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
+- HR days-to-words webhook function requires:
+  - `BITRIX_WEBHOOK_URL`
+  - `BITRIX_OUTGOING_TOKEN`
+  - optional overrides:
+    - `BITRIX_HR_ENTITY_TYPE_ID` (default `1050`)
+    - `BITRIX_HR_DAYS_NUMBER_FIELD` (default `ufCrm10_1772124949853`)
+    - `BITRIX_HR_DAYS_WORDS_FIELD` (default `ufCrm10_1772131937986`)
 
 ## Google Docs generation flow
 
@@ -64,4 +71,9 @@ npm run build
    - `photoUrl` (optional)
 3. GAS creates Google Doc from template and returns `fileUrl`.
 4. Frontend stores generated file metadata in `generated_documents` and updates related `certificates.document_url`.
-5. Coordinator marks rows as `Напечатан` in tab `Распечатанные документы`, then syncs this flag to Bitrix24.
+5. Coordinator marks rows as printed in tab `Printed documents`, then syncs this flag to Bitrix24.
+
+## HR vacation days text sync
+
+- Function: `bitrix-hr-days-spell`
+- Setup guide: `docs/bitrix-hr-days-spell-setup.md`
