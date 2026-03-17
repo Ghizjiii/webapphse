@@ -49,9 +49,15 @@ npm run build
   - `ADMIN_API_TOKEN` secret
   - `Authorization: Bearer <ADMIN_API_TOKEN>` header
 - `ALLOWED_ORIGIN` is required in edge-function secrets (functions fail closed if missing).
+  - Supports comma-separated values.
+  - Supports wildcard host rules: `https://*.vercel.app` and `*.vercel.app`.
+  - Example:
+    - `ALLOWED_ORIGIN=http://localhost:5173,https://your-prod-domain.vercel.app,https://*.vercel.app`
 - Document generation via Google Apps Script requires:
   - `GOOGLE_APPS_SCRIPT_URL` (deployed GAS Web App endpoint)
   - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
+- Optional Bitrix deal mapping for payment order (used in questionnaire sync):
+  - `VITE_BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
 - HR days-to-words webhook function requires:
   - `BITRIX_WEBHOOK_URL`
   - `BITRIX_OUTGOING_TOKEN`
@@ -77,3 +83,15 @@ npm run build
 
 - Function: `bitrix-hr-days-spell`
 - Setup guide: `docs/bitrix-hr-days-spell-setup.md`
+
+## Company directory sync (Bitrix24)
+
+- New reference tab: `Справочник компаний`
+- Sync source:
+  - Bitrix companies (`crm.company.list`)
+  - Smart process contracts (`entityTypeId=1060` by default)
+- Public form flow:
+  - BIN/IIN lookup in local `ref_company_directory`
+  - Auto-fill company info + contract snapshot
+  - If no active contract, user can confirm `Нет договора` and fill manually
+  - Optional payment-order file can be attached

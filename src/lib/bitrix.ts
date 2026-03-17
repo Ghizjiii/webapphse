@@ -1,4 +1,4 @@
-import { logger } from './logger';
+﻿import { logger } from './logger';
 
 const WEBHOOK = import.meta.env.VITE_BITRIX_WEBHOOK as string;
 const ENTITY_TYPE_ID = 1;
@@ -24,6 +24,7 @@ export const BITRIX_FIELDS = {
   MANAGER: 'ufCrm12_1772561434',
   IS_PRINTED: 'ufCrm12_1772561447',
   EMPLOYEE_STATUS: 'ufCrm12_1772561489',
+  PRICE: 'ufCrm12_1773257578',
 };
 
 export const BITRIX_FIELDS_RAW = {
@@ -34,6 +35,7 @@ export const BITRIX_FIELDS_RAW = {
   CATEGORY: 'UF_CRM_12_1772560781',
   COURSE_NAME: 'UF_CRM_12_1772560835',
   PHOTO: 'UF_CRM_12_1772578817',
+  PRICE: 'UF_CRM_12_1773257578',
 };
 
 export const PHOTO_FIELD_KEY = 'ufCrm12_1772578817';
@@ -59,16 +61,27 @@ const PHOTO_FIELD_CANDIDATES = [
   'ufCrm12_1772578817',
 ];
 
+function ufCamelFromUpper(code: string): string | null {
+  const normalized = String(code || '').trim().toUpperCase();
+  const smart = normalized.match(/^UF_CRM_(\d+)_(\d+)$/);
+  if (smart) return `ufCrm${smart[1]}_${smart[2]}`;
+
+  const company = normalized.match(/^UF_CRM_(\d+)$/);
+  if (company) return `ufCrm${company[1]}`;
+
+  return null;
+}
+
 function companyUfCamelFromUpper(code: string): string | null {
-  const m = String(code || '').match(/^UF_CRM_(\d+)$/i);
-  if (!m) return null;
-  return `ufCrm${m[1]}`;
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!/^UF_CRM_\d+$/.test(normalized)) return null;
+  return ufCamelFromUpper(normalized);
 }
 
 function smartUfCamelFromUpper(code: string): string | null {
-  const m = String(code || '').match(/^UF_CRM_12_(\d+)$/i);
-  if (!m) return null;
-  return `ufCrm12_${m[1]}`;
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!/^UF_CRM_\d+_\d+$/.test(normalized)) return null;
+  return ufCamelFromUpper(normalized);
 }
 
 function buildCompanyBinFields(binIin: string, fieldCodes: string[]): Record<string, string> {
@@ -171,7 +184,7 @@ export async function findSmartProcessEntityTypeId(): Promise<number> {
     const types = result?.types || [];
     const found = types.find((t: { title?: string; entityTypeId?: number }) => {
       const title = (t.title || '').toLowerCase();
-      return title.includes('РЎС“Р Т‘Р С•РЎРѓРЎвЂљР С•Р Р†Р ВµРЎР‚Р ВµР Р…') || title.includes('РЎРѓР ВµРЎР‚РЎвЂљР С‘РЎвЂћР С‘Р С”Р В°РЎвЂљ');
+      return title.includes('удостоверения и сертификаты') || title.includes('сертификаты');
     });
     if (found) return found.entityTypeId;
     return SMART_PROCESS_ENTITY_TYPE_ID;
@@ -298,11 +311,11 @@ async function resolvePhotoFieldKeys(entityTypeId: number): Promise<string[]> {
 }
 
 const COMPANY_FIELD_TITLE_ALIASES: Record<string, string[]> = {
-  COMPANY_BITRIX_ID: ['id РєРѕРјРїР°РЅРёРё', 'id РєРѕРјРїР°РЅРёРё РІ Р±РёС‚СЂРёРєСЃ', 'РєРѕРјРїР°РЅРёСЏ id'],
-  COMPANY_NAME: ['РЅР°Р·РІР°РЅРёРµ РєРѕРјРїР°РЅРёРё', 'РєРѕРјРїР°РЅРёСЏ РЅР°Р·РІР°РЅРёРµ'],
-  COMPANY_PHONE: ['РЅРѕРјРµСЂ С‚РµР»РµС„РѕРЅР° РєРѕРјРїР°РЅРёРё', 'С‚РµР»РµС„РѕРЅ РєРѕРјРїР°РЅРёРё'],
-  COMPANY_EMAIL: ['СЌР»РµРєС‚СЂРѕРЅРЅР°СЏ РїРѕС‡С‚Р° РєРѕРјРїР°РЅРёРё', 'email РєРѕРјРїР°РЅРёРё', 'e-mail РєРѕРјРїР°РЅРёРё'],
-  COMPANY_BIN_IIN: ['Р±РёРЅ/РёРёРЅ РєРѕРјРїР°РЅРёРё', 'Р±РёРЅ РєРѕРјРїР°РЅРёРё', 'РёРёРЅ РєРѕРјРїР°РЅРёРё'],
+  COMPANY_BITRIX_ID: ['id компании', 'id компании в битрикс', 'компания id'],
+  COMPANY_NAME: ['название компании', 'компания название'],
+  COMPANY_PHONE: ['номер телефона компании', 'телефон компании'],
+  COMPANY_EMAIL: ['электронная почта компании', 'email компании', 'e-mail компании'],
+  COMPANY_BIN_IIN: ['бин/иин компании', 'бин компании', 'иин компании'],
 };
 
 export async function resolveSmartProcessCompanyFieldMap(entityTypeId: number): Promise<Record<string, string>> {
@@ -414,9 +427,9 @@ export async function fetchCategoryFromFields(entityTypeId: number): Promise<str
     const values = await fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.CATEGORY, `CRM_SPA_12_${entityTypeId}`);
     if (values.length > 0) return values;
 
-    return ['Р ВР СћР В ', 'Р С›Р В±РЎвЂ№РЎвЂЎР Р…РЎвЂ№Р в„–'];
+    return ['ИТР', 'Обычный'];
   } catch {
-    return ['Р ВР СћР В ', 'Р С›Р В±РЎвЂ№РЎвЂЎР Р…РЎвЂ№Р в„–'];
+    return ['ИТР', 'Обычный'];
   }
 }
 
@@ -425,7 +438,7 @@ export async function fetchCategoryValues(): Promise<string[]> {
     const entityTypeId = await findSmartProcessEntityTypeId();
     return await fetchCategoryFromFields(entityTypeId);
   } catch {
-    return ['Р ВР СћР В ', 'Р С›Р В±РЎвЂ№РЎвЂЎР Р…РЎвЂ№Р в„–'];
+    return ['ИТР', 'Обычный'];
   }
 }
 
@@ -693,6 +706,7 @@ export async function createDeal(dealData: {
   title: string;
   companyId: string;
   city?: string;
+  paymentOrderUrl?: string;
 }): Promise<string> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
@@ -703,6 +717,10 @@ export async function createDeal(dealData: {
     fields['UF_CRM_1772560175'] = dealData.city;
     fields['UF_CRM_CITY'] = dealData.city;
   }
+  const paymentFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FIELD || '').trim();
+  if (paymentFieldCode && dealData.paymentOrderUrl) {
+    fields[paymentFieldCode] = dealData.paymentOrderUrl;
+  }
   const result = await callBitrix('crm.deal.add', { fields });
   return String(result);
 }
@@ -711,6 +729,7 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   title: string;
   companyId: string;
   city?: string;
+  paymentOrderUrl?: string;
 }): Promise<void> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
@@ -719,6 +738,10 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   if (dealData.city) {
     fields['UF_CRM_1772560175'] = dealData.city;
     fields['UF_CRM_CITY'] = dealData.city;
+  }
+  const paymentFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FIELD || '').trim();
+  if (paymentFieldCode && dealData.paymentOrderUrl) {
+    fields[paymentFieldCode] = dealData.paymentOrderUrl;
   }
   await callBitrix('crm.deal.update', { id: bitrixDealId, fields });
 }
@@ -1103,7 +1126,386 @@ export async function listSmartProcessItemIdsForDeal(params: {
 
   return [];
 }
+
+export interface CompanyDirectorySyncRow {
+  bitrix_company_id: string;
+  name: string;
+  bin_iin: string;
+  bin_iin_digits: string;
+  phone: string;
+  email: string;
+  city: string;
+  has_contract: boolean;
+  contract_count: number;
+  contract_bitrix_id: string;
+  contract_title: string;
+  contract_number: string;
+  contract_date: string | null;
+  contract_start: string | null;
+  contract_end: string | null;
+  contract_status: string;
+  contract_is_active: boolean;
+}
+
+const CONTRACT_ENTITY_TYPE_ID = Number(import.meta.env.VITE_BITRIX_CONTRACT_ENTITY_TYPE_ID || '1060');
+
+function normalizeDigits(value: unknown): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function normalizePlain(value: unknown): string {
+  return String(value || '').trim();
+}
+
+function normalizeDateValue(value: unknown): string | null {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const datePart = raw.includes('T') ? raw.split('T')[0] : raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+
+  const m = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return null;
+}
+
+function fieldKeyVariants(code: string): string[] {
+  const base = String(code || '').trim();
+  if (!base) return [];
+
+  const variants = new Set<string>([base]);
+  const upper = base.toUpperCase();
+  variants.add(upper);
+  variants.add(base.toLowerCase());
+
+  const camel = ufCamelFromUpper(upper);
+  if (camel) variants.add(camel);
+
+  return Array.from(variants);
+}
+
+function getBitrixFieldValue(item: Record<string, unknown>, code: string): unknown {
+  for (const key of fieldKeyVariants(code)) {
+    if (Object.prototype.hasOwnProperty.call(item, key)) return item[key];
+  }
+  return undefined;
+}
+
+function firstNonEmptyBitrixFieldValue(item: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    const value = getBitrixFieldValue(item, key);
+    const plain = normalizePlain(value);
+    if (plain) return value;
+  }
+  return undefined;
+}
+
+function pickFirstNonEmpty(obj: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const val = normalizePlain(obj[key]);
+    if (val) return val;
+  }
+  return '';
+}
+
+function isContractStatusActive(status: string): boolean {
+  const value = status.trim().toLowerCase();
+  if (!value) return false;
+  return /(действ|актив|active|valid|в работе)/i.test(value);
+}
+
+function extractListRows(payload: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(payload)) return payload as Array<Record<string, unknown>>;
+  const wrapped = payload as Record<string, unknown>;
+  if (Array.isArray(wrapped?.items)) return wrapped.items as Array<Record<string, unknown>>;
+  if (Array.isArray(wrapped?.result)) return wrapped.result as Array<Record<string, unknown>>;
+  return [];
+}
+
+async function listAllBitrixCompanies(): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = [];
+  const batchSize = 50;
+  const maxPages = 120;
+
+  for (let page = 0; page < maxPages; page++) {
+    const start = page * batchSize;
+    const chunk = await callBitrix('crm.company.list', {
+      order: { ID: 'ASC' },
+      start,
+      select: ['ID', 'TITLE', 'PHONE', 'EMAIL', 'UF_*'],
+    });
+    const rows = extractListRows(chunk);
+    if (rows.length === 0) break;
+    out.push(...rows);
+    if (rows.length < batchSize) break;
+  }
+  return out;
+}
+
+async function listAllBitrixSmartItems(entityTypeId: number): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = [];
+  const batchSize = 50;
+  const maxPages = 120;
+
+  for (let page = 0; page < maxPages; page++) {
+    const start = page * batchSize;
+    const chunk = await callBitrix('crm.item.list', {
+      entityTypeId,
+      order: { id: 'ASC' },
+      start,
+      select: ['id', 'title', 'companyId', 'COMPANY_ID', '*', 'uf*'],
+    });
+    const rows = extractListRows(chunk);
+    if (rows.length === 0) break;
+    out.push(...rows);
+    if (rows.length < batchSize) break;
+  }
+  return out;
+}
+
+async function resolveContractFieldMap(entityTypeId: number): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  try {
+    const raw = await callBitrix('crm.item.fields', { entityTypeId });
+    const fields: Record<string, unknown> = raw?.fields || raw || {};
+
+    const entries = Object.entries(fields).map(([key, val]) => {
+      const field = (val || {}) as Record<string, unknown>;
+      const rawTitle = String(field.title || field.formLabel || field.LIST_LABEL || '');
+      const upperName = String(field.upperName || field.FIELD_NAME || key || '').trim();
+      const keyProbe = `${key} ${upperName}`.toLowerCase();
+      const isUserField = /^uf_/i.test(key) || /^uf_/i.test(upperName);
+      return {
+        key,
+        upperName,
+        title: decodeUnicodeEscapes(rawTitle).toLowerCase().trim(),
+        keyProbe,
+        isUserField,
+      };
+    });
+
+    const findByTitleOrKey = (
+      titlePatterns: RegExp[],
+      keyPatterns: RegExp[],
+      opts?: { preferUserFields?: boolean; disallowSystemFallback?: boolean }
+    ): string => {
+      const userEntries = entries.filter(e => e.isUserField);
+      const allEntries = opts?.preferUserFields
+        ? [...userEntries, ...entries.filter(e => !e.isUserField)]
+        : entries;
+      const source = opts?.disallowSystemFallback ? userEntries : allEntries;
+
+      const byTitle = source.find(entry => titlePatterns.some(p => p.test(entry.title)));
+      if (byTitle) return byTitle.upperName || byTitle.key || '';
+
+      const byKey = source.find(entry => keyPatterns.some(p => p.test(entry.keyProbe)));
+      if (byKey) return byKey.upperName || byKey.key || '';
+      return '';
+    };
+
+    map.company = findByTitleOrKey(
+      [/компан/, /клиент/, /client/, /company/],
+      [/(^|_)company(_id)?($|_)/, /client/]
+    );
+    map.number = findByTitleOrKey(
+      [/номер.*договор/, /^договор\s*№?/, /contract.*number/],
+      [/(contract|dogovor).*(number|num|nomer)/, /(number|num|nomer).*(contract|dogovor)/]
+    );
+    map.contractDate = findByTitleOrKey(
+      [/дата.*договор/, /contract.*date/],
+      [/(contract|dogovor).*(date|data)/],
+      { preferUserFields: true, disallowSystemFallback: true }
+    );
+    map.startDate = findByTitleOrKey(
+      [/дата.*нач/, /действ.*с/, /date.*start/, /start.*date/],
+      [/(start|begin|from|date_start|date_begin)/],
+      { preferUserFields: true, disallowSystemFallback: true }
+    );
+    map.endDate = findByTitleOrKey(
+      [/дата.*оконч/, /действ.*по/, /date.*end/, /end.*date/],
+      [/(end|finish|to|expire|close|date_end|date_close)/],
+      { preferUserFields: true, disallowSystemFallback: true }
+    );
+    map.status = findByTitleOrKey(
+      [/^статус$/, /contract.*status/, /состояние/],
+      [/(^|_)(status|stage)(_|$)/]
+    );
+
+    if (!map.company) map.company = 'companyId';
+    if (!map.status) map.status = 'stageId';
+  } catch {
+    // best effort, caller handles empty map
+  }
+  return map;
+}
+function extractPhone(value: unknown): string {
+  if (Array.isArray(value) && value.length > 0) {
+    const first = value[0] as Record<string, unknown>;
+    return normalizePlain(first?.VALUE || first?.value || first?.VALUE_NUMBER);
+  }
+  return normalizePlain(value);
+}
+
+function extractEmail(value: unknown): string {
+  if (Array.isArray(value) && value.length > 0) {
+    const first = value[0] as Record<string, unknown>;
+    return normalizePlain(first?.VALUE || first?.value);
+  }
+  return normalizePlain(value);
+}
+
+type ContractSnapshot = {
+  id: string;
+  title: string;
+  number: string;
+  contractDate: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  status: string;
+  isActive: boolean;
+};
+
+function choosePrimaryContract(contracts: ContractSnapshot[]): ContractSnapshot | null {
+  if (contracts.length === 0) return null;
+
+  const sorted = [...contracts].sort((a, b) => {
+    const activeCmp = Number(b.isActive) - Number(a.isActive);
+    if (activeCmp !== 0) return activeCmp;
+    const aDate = a.endDate || a.startDate || a.contractDate || '';
+    const bDate = b.endDate || b.startDate || b.contractDate || '';
+    return bDate.localeCompare(aDate);
+  });
+  return sorted[0];
+}
+
+export async function fetchCompanyDirectorySnapshotFromBitrix(): Promise<{
+  rows: CompanyDirectorySyncRow[];
+  companiesCount: number;
+  contractsCount: number;
+}> {
+  const [companiesRaw, contractsRaw, binFieldCodes, contractFieldMap] = await Promise.all([
+    listAllBitrixCompanies(),
+    listAllBitrixSmartItems(CONTRACT_ENTITY_TYPE_ID),
+    resolveCompanyBinFieldCodes(),
+    resolveContractFieldMap(CONTRACT_ENTITY_TYPE_ID),
+  ]);
+
+  const companyById = new Map<string, CompanyDirectorySyncRow>();
+  for (const row of companiesRaw) {
+    const bitrixId = normalizePlain(row.ID || row.id);
+    if (!bitrixId) continue;
+
+    const binValue = pickFirstNonEmpty(row, binFieldCodes);
+    const binDigits = normalizeDigits(binValue);
+
+    companyById.set(bitrixId, {
+      bitrix_company_id: bitrixId,
+      name: normalizePlain(row.TITLE || row.title),
+      bin_iin: normalizePlain(binValue),
+      bin_iin_digits: binDigits,
+      phone: extractPhone(row.PHONE || row.phone),
+      email: extractEmail(row.EMAIL || row.email),
+      city: normalizePlain(row.CITY || row.UF_CRM_CITY || row.UF_CRM_1772560175),
+      has_contract: false,
+      contract_count: 0,
+      contract_bitrix_id: '',
+      contract_title: '',
+      contract_number: '',
+      contract_date: null,
+      contract_start: null,
+      contract_end: null,
+      contract_status: '',
+      contract_is_active: false,
+    });
+  }
+
+  const contractsByCompanyId = new Map<string, ContractSnapshot[]>();
+  for (const item of contractsRaw) {
+    const contractId = normalizePlain(item.id || item.ID);
+    const title = normalizePlain(item.title || item.TITLE);
+    const companyId = normalizePlain(
+      item.companyId ||
+      item.COMPANY_ID ||
+      (contractFieldMap.company ? getBitrixFieldValue(item, contractFieldMap.company) : '')
+    );
+    if (!contractId || !companyId) continue;
+
+    const number = normalizePlain(
+      (contractFieldMap.number ? getBitrixFieldValue(item, contractFieldMap.number) : '') ||
+      firstNonEmptyBitrixFieldValue(item, ['number', 'contractNumber', 'contract_number']) ||
+      title
+    );
+    // Important: for smart-process contracts we should trust only mapped date fields.
+    // Generic fallback keys may resolve to unrelated system fields and produce
+    // identical fake date ranges for many companies.
+    const contractDate = normalizeDateValue(
+      contractFieldMap.contractDate ? getBitrixFieldValue(item, contractFieldMap.contractDate) : null
+    );
+    const startDate = normalizeDateValue(
+      contractFieldMap.startDate ? getBitrixFieldValue(item, contractFieldMap.startDate) : null
+    );
+    const endDate = normalizeDateValue(
+      contractFieldMap.endDate ? getBitrixFieldValue(item, contractFieldMap.endDate) : null
+    );
+    const status = normalizePlain(
+      (contractFieldMap.status ? getBitrixFieldValue(item, contractFieldMap.status) : '') ||
+      firstNonEmptyBitrixFieldValue(item, ['status', 'stageId'])
+    ) || '';
+
+    const isActiveByDate = Boolean(
+      startDate &&
+      endDate &&
+      startDate <= endDate &&
+      startDate <= new Date().toISOString().slice(0, 10) &&
+      endDate >= new Date().toISOString().slice(0, 10)
+    );
+    const isActive = isContractStatusActive(status) || isActiveByDate;
+
+    const contract: ContractSnapshot = {
+      id: contractId,
+      title,
+      number,
+      contractDate,
+      startDate,
+      endDate,
+      status,
+      isActive,
+    };
+
+    const list = contractsByCompanyId.get(companyId) || [];
+    list.push(contract);
+    contractsByCompanyId.set(companyId, list);
+  }
+
+  for (const [companyId, contracts] of contractsByCompanyId.entries()) {
+    const target = companyById.get(companyId);
+    if (!target) continue;
+    const primary = choosePrimaryContract(contracts);
+
+    target.has_contract = contracts.length > 0;
+    target.contract_count = contracts.length;
+    if (primary) {
+      target.contract_bitrix_id = primary.id;
+      target.contract_title = primary.title;
+      target.contract_number = primary.number;
+      target.contract_date = primary.contractDate;
+      target.contract_start = primary.startDate;
+      target.contract_end = primary.endDate;
+      target.contract_status = primary.status;
+      target.contract_is_active = primary.isActive;
+    }
+  }
+
+  const rows = Array.from(companyById.values());
+  return {
+    rows,
+    companiesCount: companiesRaw.length,
+    contractsCount: contractsRaw.length,
+  };
+}
+
 export { SMART_PROCESS_ENTITY_TYPE_ID, ENTITY_TYPE_ID, callBitrix };
+
+
 
 
 

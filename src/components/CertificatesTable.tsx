@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { Plus, Trash2, CheckCircle, XCircle, FileOutput } from 'lucide-react';
-import SortableHeader from './SortableHeader';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { Plus, Trash2, CheckCircle, XCircle, FileOutput, Settings2, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
 import {
@@ -45,6 +45,7 @@ const TEXT_FIELDS: { key: keyof Certificate; label: string }[] = [
   { key: 'qualification', label: 'Квалификация' },
   { key: 'manager', label: 'Руководитель' },
   { key: 'employee_status', label: 'Статус сотр.' },
+  { key: 'price', label: 'Цена' },
 ];
 
 const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = [
@@ -56,7 +57,48 @@ const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = 
   { key: 'commission_members', label: 'Все члены комиссии' },
   { key: 'qualification', label: 'Квалификация' },
   { key: 'manager', label: 'Руководитель' },
+  { key: 'price', label: 'Цена' },
 ];
+
+const AUX_COLUMN_LABELS: Record<string, string> = {
+  start_date: 'Нач. курса',
+  expiry_date: 'Срок документа',
+  is_printed: 'Напечатан',
+};
+
+const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
+  last_name: 130,
+  first_name: 120,
+  middle_name: 130,
+  position: 130,
+  category: 95,
+  course_name: 240,
+  document_number: 125,
+  protocol_number: 110,
+  commission_chair: 140,
+  commission_member_1: 120,
+  commission_member_2: 120,
+  commission_member_3: 120,
+  commission_member_4: 120,
+  commission_members: 130,
+  qualification: 130,
+  manager: 130,
+  employee_status: 90,
+  price: 110,
+  start_date: 125,
+  expiry_date: 145,
+  is_printed: 105,
+  actions: 56,
+};
+
+const AUX_COLUMN_KEYS = ['start_date', 'expiry_date', 'is_printed'] as const;
+type AuxColumnKey = typeof AUX_COLUMN_KEYS[number];
+type ColumnKey = keyof Certificate | AuxColumnKey;
+const ALL_COLUMN_KEYS: ColumnKey[] = [
+  ...TEXT_FIELDS.map(f => f.key),
+  ...AUX_COLUMN_KEYS,
+];
+
 
 interface EditCell {
   certId: string;
@@ -110,8 +152,26 @@ export default function CertificatesTable({
   const [syncingBitrix, setSyncingBitrix] = useState(false);
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [courseFilter, setCourseFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [bulkStartDate, setBulkStartDate] = useState<string>('');
   const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const columnsMenuRef = useRef<HTMLDivElement>(null);
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    const base: Record<string, boolean> = {};
+    for (const f of TEXT_FIELDS) base[String(f.key)] = true;
+    base.start_date = true;
+    base.expiry_date = true;
+    base.is_printed = true;
+    return base;
+  });
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => ({ ...DEFAULT_COLUMN_WIDTHS }));
+  const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => [...ALL_COLUMN_KEYS]);
+  const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
+  const orderedVisibleColumnKeys = useMemo(
+    () => columnOrder.filter(k => visibleColumns[String(k)] !== false),
+    [columnOrder, visibleColumns]
+  );
   const [generationProgress, setGenerationProgress] = useState<{
     total: number;
     processed: number;
@@ -120,16 +180,45 @@ export default function CertificatesTable({
     failed: number;
   } | null>(null);
 
+  const activeColumnCount = orderedVisibleColumnKeys.length + 1;
+  const tableMinWidth = useMemo(() => {
+    const mainWidth = orderedVisibleColumnKeys.reduce((sum, k) => sum + (columnWidths[String(k)] || 100), 0);
+    const full = mainWidth + (columnWidths.actions || 56);
+    return Math.max(1600, full);
+  }, [columnWidths, orderedVisibleColumnKeys]);
+
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (!columnsMenuRef.current) return;
+      if (!columnsMenuRef.current.contains(e.target as Node)) {
+        setColumnsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, []);
+
   const sorted = useMemo(() => sortCerts(certificates, sortConfig), [certificates, sortConfig]);
   const courseOptions = useMemo(
     () => Array.from(new Set(certificates.map(c => String(c.course_name || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
     [certificates]
   );
-  const visibleRows = useMemo(
-    () => sorted.filter(c => (courseFilter === 'all' ? true : c.course_name === courseFilter)),
-    [sorted, courseFilter]
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(certificates.map(c => String(c.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
+    [certificates]
   );
-  const targetRowsInfo = courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`;
+  const visibleRows = useMemo(
+    () => sorted.filter(c => {
+      if (courseFilter !== 'all' && c.course_name !== courseFilter) return false;
+      if (categoryFilter !== 'all' && c.category !== categoryFilter) return false;
+      return true;
+    }),
+    [sorted, courseFilter, categoryFilter]
+  );
+  const targetRowsInfo = [
+    courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`,
+    categoryFilter === 'all' ? 'все категории' : `категория: ${categoryFilter}`,
+  ].join(', ');
   const hasBitrixRows = useMemo(
     () => certificates.some(c => String(c.bitrix_item_id || '').trim().length > 0 || c.sync_status === 'synced'),
     [certificates]
@@ -149,6 +238,66 @@ export default function CertificatesTable({
         ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
         : { key, direction: 'asc' }
     );
+  }
+
+  function toggleColumn(key: string) {
+    setVisibleColumns(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      const visibleCount = Object.values(next).filter(Boolean).length;
+      return visibleCount === 0 ? prev : next;
+    });
+  }
+
+  function resetColumns() {
+    const nextVisible: Record<string, boolean> = {};
+    for (const f of TEXT_FIELDS) nextVisible[String(f.key)] = true;
+    nextVisible.start_date = true;
+    nextVisible.expiry_date = true;
+    nextVisible.is_printed = true;
+    setVisibleColumns(nextVisible);
+    setColumnOrder([...ALL_COLUMN_KEYS]);
+    setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS });
+  }
+
+  function beginResizeColumn(columnKey: string, event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidths[columnKey] || 120;
+
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(70, startWidth + (ev.clientX - startX));
+      setColumnWidths(prev => ({ ...prev, [columnKey]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function moveColumn(sourceKey: string, targetKey: string) {
+    if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+    setColumnOrder(prev => {
+      const srcIndex = prev.findIndex(k => String(k) === sourceKey);
+      const dstIndex = prev.findIndex(k => String(k) === targetKey);
+      if (srcIndex < 0 || dstIndex < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(srcIndex, 1);
+      next.splice(dstIndex, 0, moved);
+      return next;
+    });
+  }
+
+
+  function SortIcon({ keyName }: { keyName: string }) {
+    const isActive = sortConfig?.key === keyName;
+    if (!isActive) return <ChevronsUpDown size={13} className="text-gray-300" />;
+    return sortConfig?.direction === 'asc'
+      ? <ChevronUp size={13} className="text-blue-600" />
+      : <ChevronDown size={13} className="text-blue-600" />;
   }
 
   async function addCertificate() {
@@ -184,7 +333,21 @@ export default function CertificatesTable({
     if (!editCell) return;
     setSaving(true);
     try {
-      const val = editCell.field.includes('date') ? (editValue ? editValue : null) : editValue;
+      let val: string | number | null = editCell.field.includes('date') ? (editValue ? editValue : null) : editValue;
+      if (editCell.field === 'price') {
+        const normalized = String(editValue || '').replace(',', '.').trim();
+        if (!normalized) {
+          val = null;
+        } else {
+          const parsed = Number(normalized);
+          if (!Number.isFinite(parsed)) {
+            showToast('error', 'Цена должна быть числом');
+            setSaving(false);
+            return;
+          }
+          val = parsed;
+        }
+      }
       const { error } = await supabase
         .from('certificates')
         .update({ [editCell.field]: val, updated_at: new Date().toISOString() })
@@ -280,6 +443,33 @@ export default function CertificatesTable({
       visibleRows.map(row => ({
         id: row.id,
         patch: { [field]: value } as Partial<Certificate>,
+      }))
+    );
+  }
+
+  async function bulkFillPrice() {
+    if (bulkSaving) return;
+    const value = window.prompt(`Значение для "Цена" (${targetRowsInfo}):`, '');
+    if (value === null) return;
+    const normalized = String(value).replace(',', '.').trim();
+    if (!normalized) {
+      await runBulk(
+        visibleRows.map(row => ({
+          id: row.id,
+          patch: { price: null } as Partial<Certificate>,
+        }))
+      );
+      return;
+    }
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) {
+      showToast('error', 'Цена должна быть числом');
+      return;
+    }
+    await runBulk(
+      visibleRows.map(row => ({
+        id: row.id,
+        patch: { price: parsed } as Partial<Certificate>,
       }))
     );
   }
@@ -505,6 +695,7 @@ export default function CertificatesTable({
             [BITRIX_FIELDS.MANAGER]: cert.manager || '',
             [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? '1' : '0',
             [BITRIX_FIELDS.EMPLOYEE_STATUS]: cert.employee_status || '',
+            [BITRIX_FIELDS.PRICE]: cert.price ?? '',
           };
 
           const existingItemId = String(cert.bitrix_item_id || '').trim();
@@ -632,6 +823,19 @@ export default function CertificatesTable({
             ))}
           </select>
         </label>
+        <label className="text-xs text-gray-600 flex items-center gap-2">
+          <span>Категория:</span>
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+            className="px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+          >
+            <option value="all">Все категории</option>
+            {categoryOptions.map(category => (
+              <option key={category} value={category}>{category}</option>
+            ))}
+          </select>
+        </label>
         <span className="text-xs text-gray-500">
           Массовое заполнение применяется к: <b>{targetRowsInfo}</b> ({visibleRows.length} строк)
         </span>
@@ -650,6 +854,44 @@ export default function CertificatesTable({
         >
           {syncingBitrix ? 'Синхронизация...' : (hasBitrixRows ? 'Обновить данные в Bitrix' : 'Отправить в Bitrix')}
         </button>
+        <div className="relative" ref={columnsMenuRef}>
+          <button
+            onClick={() => setColumnsMenuOpen(v => !v)}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5"
+            title="Настройка столбцов"
+          >
+            <Settings2 size={13} />
+            Колонки
+          </button>
+          {columnsMenuOpen && (
+            <div className="absolute right-0 mt-1.5 z-20 w-72 rounded-lg border border-gray-200 bg-white shadow-lg p-3">
+              <div className="text-xs font-semibold text-gray-700 mb-2">Видимость столбцов</div>
+              <div className="max-h-72 overflow-auto space-y-1.5 pr-1">
+                {ALL_COLUMN_KEYS.map(colKey => {
+                  const key = String(colKey);
+                  const textField = TEXT_FIELDS.find(v => v.key === colKey);
+                  const label = textField?.label || AUX_COLUMN_LABELS[key] || key;
+                  return (
+                    <label key={key} className="flex items-center gap-2 text-xs text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns[key] !== false}
+                        onChange={() => toggleColumn(key)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <button
+                onClick={resetColumns}
+                className="mt-3 w-full px-2 py-1.5 text-xs border border-gray-300 rounded hover:bg-gray-50"
+              >
+                Сбросить настройки
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       {generationProgress && (
         <div className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
@@ -672,113 +914,185 @@ export default function CertificatesTable({
         </div>
       )}
 
-      <ResizableTableContainer>
-        <table className="w-full text-sm" style={{ minWidth: '1600px' }}>
+      <ResizableTableContainer className="bg-white">
+        <table className="w-full text-sm bg-white" style={{ minWidth: `${tableMinWidth}px` }}>
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-200">
-              {TEXT_FIELDS.map(f => (
-                <SortableHeader key={f.key} label={f.label} sortKey={f.key} sortConfig={sortConfig} onSort={handleSort} />
-              ))}
-              <SortableHeader label="Нач. курса" sortKey="start_date" sortConfig={sortConfig} onSort={handleSort} />
-              <SortableHeader label="Срок документа" sortKey="expiry_date" sortConfig={sortConfig} onSort={handleSort} />
-              <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider whitespace-nowrap">Напечатан</th>
+              {orderedVisibleColumnKeys.map((colKey) => {
+                const key = String(colKey);
+                const textField = TEXT_FIELDS.find(f => f.key === colKey);
+                const label = textField?.label || AUX_COLUMN_LABELS[key] || key;
+                const isSortable = key !== 'is_printed';
+                return (
+                  <th
+                    key={key}
+                    draggable
+                    className="relative text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider cursor-pointer select-none hover:text-gray-900 hover:bg-gray-100/60 transition-colors whitespace-nowrap"
+                    onClick={() => { if (isSortable) handleSort(key); }}
+                    onDragStart={(e) => {
+                      setDraggingColumn(key);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', key);
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const source = e.dataTransfer.getData('text/plain') || draggingColumn || '';
+                      moveColumn(source, key);
+                      setDraggingColumn(null);
+                    }}
+                    onDragEnd={() => setDraggingColumn(null)}
+                    style={{ width: columnWidths[key], minWidth: columnWidths[key], opacity: draggingColumn === key ? 0.45 : 1 }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {label}
+                      {isSortable ? <SortIcon keyName={key} /> : null}
+                    </div>
+                    <div
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize z-30 hover:bg-blue-200/50"
+                      onMouseDown={(e) => beginResizeColumn(key, e)}
+                      onClick={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
+                    />
+                  </th>
+                );
+              })}
               <th className="px-4 py-3.5 w-10" />
             </tr>
             <tr className="bg-white border-b border-gray-100">
-              {TEXT_FIELDS.map(f => (
-                <th key={`${f.key}-bulk`} className="px-2 py-2 text-left">
-                  {f.key === 'document_number' && (
-                    <button
-                      onClick={() => void bulkFillNumber('document_number', 'Номер документа')}
-                      disabled={bulkSaving}
-                      className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
-                    >
-                      Заполнить
-                    </button>
-                  )}
-                  {f.key === 'protocol_number' && (
-                    <button
-                      onClick={() => void bulkFillProtocolWithMode()}
-                      disabled={bulkSaving}
-                      className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
-                    >
-                      Заполнить
-                    </button>
-                  )}
-                  {BULK_TEXT_FILL_FIELDS.some(i => i.key === f.key) && (
-                    <button
-                      onClick={() => {
-                        const field = BULK_TEXT_FILL_FIELDS.find(i => i.key === f.key);
-                        if (!field) return;
-                        void bulkFillText(field.key, field.label);
-                      }}
-                      disabled={bulkSaving}
-                      className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
-                    >
-                      Заполнить
-                    </button>
-                  )}
-                </th>
-              ))}
-              <th className="px-2 py-2 text-left">
-                <div className="flex items-center gap-1">
-                  <input
-                    type="date"
-                    value={bulkStartDate}
-                    onChange={e => setBulkStartDate(e.target.value)}
-                    className="px-1.5 py-1 text-[11px] border border-gray-300 rounded bg-white"
-                    disabled={bulkSaving}
-                  />
-                  <button
-                    onClick={() => void bulkFillDate('start_date', bulkStartDate)}
-                    disabled={bulkSaving}
-                    className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+              {orderedVisibleColumnKeys.map((colKey) => {
+                const key = String(colKey);
+                const textField = TEXT_FIELDS.find(f => f.key === colKey);
+                return (
+                  <th
+                    key={`${key}-bulk`}
+                    className="px-2 py-2 text-left"
+                    style={{ width: columnWidths[key], minWidth: columnWidths[key] }}
                   >
-                    Заполнить
-                  </button>
-                </div>
-              </th>
-              <th className="px-2 py-2 text-left">
-                <div className="flex items-center gap-1">
-                  <input
-                    type="date"
-                    value={bulkExpiryDate}
-                    onChange={e => setBulkExpiryDate(e.target.value)}
-                    className="px-1.5 py-1 text-[11px] border border-gray-300 rounded bg-white"
-                    disabled={bulkSaving}
-                  />
-                  <button
-                    onClick={() => void bulkFillDate('expiry_date', bulkExpiryDate)}
-                    disabled={bulkSaving}
-                    className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
-                  >
-                    Заполнить
-                  </button>
-                </div>
-              </th>
-              <th />
+                    {key === 'document_number' && (
+                      <button
+                        onClick={() => void bulkFillNumber('document_number', 'Номер документа')}
+                        disabled={bulkSaving}
+                        className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                      >
+                        Заполнить
+                      </button>
+                    )}
+                    {key === 'protocol_number' && (
+                      <button
+                        onClick={() => void bulkFillProtocolWithMode()}
+                        disabled={bulkSaving}
+                        className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                      >
+                        Заполнить
+                      </button>
+                    )}
+                    {textField && BULK_TEXT_FILL_FIELDS.some(i => i.key === textField.key) && (
+                      <button
+                        onClick={() => {
+                          if (textField.key === 'price') {
+                            void bulkFillPrice();
+                            return;
+                          }
+                          const field = BULK_TEXT_FILL_FIELDS.find(i => i.key === textField.key);
+                          if (!field) return;
+                          void bulkFillText(field.key, field.label);
+                        }}
+                        disabled={bulkSaving}
+                        className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                      >
+                        Заполнить
+                      </button>
+                    )}
+                    {key === 'start_date' && (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="date"
+                          value={bulkStartDate}
+                          onChange={e => setBulkStartDate(e.target.value)}
+                          className="px-1.5 py-1 text-[11px] border border-gray-300 rounded bg-white"
+                          disabled={bulkSaving}
+                        />
+                        <button
+                          onClick={() => void bulkFillDate('start_date', bulkStartDate)}
+                          disabled={bulkSaving}
+                          className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                        >
+                          Заполнить
+                        </button>
+                      </div>
+                    )}
+                    {key === 'expiry_date' && (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="date"
+                          value={bulkExpiryDate}
+                          onChange={e => setBulkExpiryDate(e.target.value)}
+                          className="px-1.5 py-1 text-[11px] border border-gray-300 rounded bg-white"
+                          disabled={bulkSaving}
+                        />
+                        <button
+                          onClick={() => void bulkFillDate('expiry_date', bulkExpiryDate)}
+                          disabled={bulkSaving}
+                          className="px-2 py-1 text-[11px] border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                        >
+                          Заполнить
+                        </button>
+                      </div>
+                    )}
+                  </th>
+                );
+              })}
               <th />
             </tr>
           </thead>
           <tbody>
             {visibleRows.map(cert => (
               <tr key={cert.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                {TEXT_FIELDS.map(f => (
-                  <td key={f.key} className="px-4 py-2">
-                    <EditableCell certId={cert.id} field={f.key} value={String(cert[f.key] ?? '')} />
-                  </td>
-                ))}
-                <td className="px-4 py-2">
-                  <EditableDateCell certId={cert.id} field="start_date" value={cert.start_date} />
-                </td>
-                <td className="px-4 py-2">
-                  <EditableDateCell certId={cert.id} field="expiry_date" value={cert.expiry_date} />
-                </td>
-                <td className="px-4 py-2">
-                  <span className={`inline-flex items-center gap-1 text-xs font-medium ${cert.is_printed ? 'text-green-600' : 'text-gray-400'}`}>
-                    {cert.is_printed ? <><CheckCircle size={13} /> Да</> : <><XCircle size={13} /> Нет</>}
-                  </span>
-                </td>
+                {orderedVisibleColumnKeys.map((colKey) => {
+                  const key = String(colKey);
+                  const textField = TEXT_FIELDS.find(f => f.key === colKey);
+
+                  if (textField) {
+                    return (
+                      <td
+                        key={key}
+                        className="px-4 py-2"
+                        style={{ width: columnWidths[key], minWidth: columnWidths[key] }}
+                      >
+                        <EditableCell certId={cert.id} field={textField.key} value={String(cert[textField.key] ?? '')} />
+                      </td>
+                    );
+                  }
+
+                  if (key === 'start_date') {
+                    return (
+                      <td key={key} className="px-4 py-2" style={{ width: columnWidths.start_date, minWidth: columnWidths.start_date }}>
+                        <EditableDateCell certId={cert.id} field="start_date" value={cert.start_date} />
+                      </td>
+                    );
+                  }
+
+                  if (key === 'expiry_date') {
+                    return (
+                      <td key={key} className="px-4 py-2" style={{ width: columnWidths.expiry_date, minWidth: columnWidths.expiry_date }}>
+                        <EditableDateCell certId={cert.id} field="expiry_date" value={cert.expiry_date} />
+                      </td>
+                    );
+                  }
+
+                  if (key === 'is_printed') {
+                    return (
+                      <td key={key} className="px-4 py-2" style={{ width: columnWidths.is_printed, minWidth: columnWidths.is_printed }}>
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium ${cert.is_printed ? 'text-green-600' : 'text-gray-400'}`}>
+                          {cert.is_printed ? <><CheckCircle size={13} /> Да</> : <><XCircle size={13} /> Нет</>}
+                        </span>
+                      </td>
+                    );
+                  }
+
+                  return null;
+                })}
                 <td className="px-4 py-2">
                   <button
                     onClick={() => void deleteCertificate(cert.id)}
@@ -791,7 +1105,7 @@ export default function CertificatesTable({
             ))}
             {visibleRows.length === 0 && (
               <tr>
-                <td colSpan={TEXT_FIELDS.length + 4} className="px-4 py-8 text-center text-gray-400 text-sm">
+                <td colSpan={activeColumnCount} className="px-4 py-8 text-center text-gray-400 text-sm">
                   Нет записей. Добавьте документ или выполните синхронизацию с Bitrix24.
                 </td>
               </tr>
@@ -809,5 +1123,9 @@ export default function CertificatesTable({
     </div>
   );
 }
+
+
+
+
 
 

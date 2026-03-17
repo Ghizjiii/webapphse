@@ -91,7 +91,12 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
         setProgress({ step: '\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u0441\u0434\u0435\u043b\u043a\u0443...', current: 2, total: 4, status: 'running' });
         bitrixDealId = existingDeal.bitrix_deal_id;
-        await updateDeal(bitrixDealId, { title: dealTitle, companyId: bitrixCompanyId, city: company.city });
+        await updateDeal(bitrixDealId, {
+          title: dealTitle,
+          companyId: bitrixCompanyId,
+          city: company.city,
+          paymentOrderUrl: String(company.payment_order_url || ''),
+        });
 
         await supabase.from('deals').update({
           deal_title: dealTitle,
@@ -139,7 +144,12 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         await supabase.from('companies').update({ bitrix_company_id: bitrixCompanyId }).eq('id', company.id);
 
         setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u0441\u0434\u0435\u043b\u043a\u0443...', current: 2, total: 4, status: 'running' });
-        bitrixDealId = await createDeal({ title: dealTitle, companyId: bitrixCompanyId, city: company.city });
+        bitrixDealId = await createDeal({
+          title: dealTitle,
+          companyId: bitrixCompanyId,
+          city: company.city,
+          paymentOrderUrl: String(company.payment_order_url || ''),
+        });
         const dealUrl = `https://hsecompany.bitrix24.kz/crm/deal/details/${bitrixDealId}/`;
 
         if (dealId) {

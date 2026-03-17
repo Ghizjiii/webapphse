@@ -22,6 +22,48 @@ export interface Company {
   address: string;
   city: string;
   bitrix_company_id: string;
+  source_ref_company_id?: string | null;
+  has_contract?: boolean;
+  contract_bitrix_id?: string;
+  contract_title?: string;
+  contract_number?: string;
+  contract_date?: string | null;
+  contract_start?: string | null;
+  contract_end?: string | null;
+  contract_status?: string;
+  contract_is_active?: boolean;
+  no_contract_confirmed?: boolean;
+  payment_order_url?: string;
+  payment_order_name?: string;
+  payment_order_uploaded_at?: string | null;
+  payment_order_number?: string;
+  payment_order_date?: string | null;
+  payment_order_amount?: number | null;
+  payment_order_storage_bucket?: string;
+  payment_order_storage_path?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RefCompanyDirectory {
+  id: string;
+  bitrix_company_id: string;
+  name: string;
+  bin_iin: string;
+  bin_iin_digits: string;
+  phone: string;
+  email: string;
+  city: string;
+  has_contract: boolean;
+  contract_count: number;
+  contract_bitrix_id: string;
+  contract_title: string;
+  contract_number: string;
+  contract_date: string | null;
+  contract_start: string | null;
+  contract_end: string | null;
+  contract_status: string;
+  contract_is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -93,6 +135,7 @@ export interface Certificate {
   manager: string;
   is_printed: boolean;
   employee_status: string;
+  price: number | null;
   document_url: string;
   sync_status: 'pending' | 'synced' | 'error';
   sync_error: string;

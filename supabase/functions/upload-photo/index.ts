@@ -1,16 +1,43 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+﻿import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
-const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN") || "";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": allowedOrigin,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+const allowedOriginEnv = Deno.env.get("ALLOWED_ORIGIN") || "";
+const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const paymentOrdersBucket = Deno.env.get("PAYMENT_ORDERS_BUCKET") || "payment-orders";
 
 const CLOUD_NAME = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
 const API_KEY = Deno.env.get("CLOUDINARY_API_KEY") || "";
 const API_SECRET = Deno.env.get("CLOUDINARY_API_SECRET") || "";
+
+function normalizeOriginRule(value: string): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "*") return "*";
+  return trimmed.replace(/\/+$/, "");
+}
+
+function resolveAllowedOrigin(requestOrigin: string): string {
+  const request = normalizeOriginRule(requestOrigin);
+  const configured = String(allowedOriginEnv || "")
+    .split(",")
+    .map(v => normalizeOriginRule(v))
+    .filter(Boolean);
+
+  if (configured.length === 0) return request || "*";
+  if (configured.includes("*")) return request || "*";
+  if (request && configured.includes(request)) return request;
+  return configured[0] || "*";
+}
+
+function corsHeadersFor(req: Request): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": resolveAllowedOrigin(req.headers.get("origin") || ""),
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+    "Vary": "Origin",
+  };
+}
 
 async function sha1Hex(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
@@ -19,11 +46,47 @@ async function sha1Hex(message: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+function isBucketNotFoundError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return m.includes("bucket not found") || m.includes("not found");
+}
+
+function isSupportedPaymentOrderFile(contentType: string, fileName: string): boolean {
+  const ct = String(contentType || "").toLowerCase();
+  const name = String(fileName || "").toLowerCase();
+  const isPdf = ct === "application/pdf" || name.endsWith(".pdf");
+  const isImage =
+    ct.startsWith("image/") ||
+    name.endsWith(".jpg") ||
+    name.endsWith(".jpeg") ||
+    name.endsWith(".png") ||
+    name.endsWith(".webp") ||
+    name.endsWith(".bmp") ||
+    name.endsWith(".tif") ||
+    name.endsWith(".tiff");
+  return isPdf || isImage;
+}
+
+function resolvePaymentOrderContentType(contentType: string, fileName: string): string {
+  const ct = String(contentType || "").toLowerCase();
+  const name = String(fileName || "").toLowerCase();
+  if (ct) return ct;
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".bmp")) return "image/bmp";
+  if (name.endsWith(".tif") || name.endsWith(".tiff")) return "image/tiff";
+  return "application/octet-stream";
+}
+
 Deno.serve(async (req: Request) => {
-  if (!allowedOrigin) {
+  const corsHeaders = corsHeadersFor(req);
+
+  if (!allowedOriginEnv) {
     return new Response(JSON.stringify({ error: "ALLOWED_ORIGIN is not configured" }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
@@ -32,6 +95,105 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
+    const folder = String(formData.get("folder") || "hse-participants").trim();
+    const mode = String(formData.get("mode") || "").trim().toLowerCase();
+
+    if (!file) {
+      return new Response(JSON.stringify({ error: "No file provided" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const fileName = String(file.name || "").toLowerCase();
+    const contentType = String(file.type || "").toLowerCase();
+    const isPdf = contentType === "application/pdf" || fileName.endsWith(".pdf");
+    const isPaymentOrderUpload = mode === "payment_order" || folder === "hse-payment-orders";
+
+    if (isPaymentOrderUpload) {
+      if (!supabaseUrl || !supabaseServiceRoleKey) {
+        return new Response(JSON.stringify({ error: "Supabase env vars are not configured for payment orders" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      if (!isSupportedPaymentOrderFile(contentType, fileName)) {
+        return new Response(JSON.stringify({ error: "Платежное поручение принимается только в форматах PDF/JPG/PNG" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const uploadContentType = resolvePaymentOrderContentType(contentType, fileName);
+
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}_${safeName}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+
+      const sb = createClient(supabaseUrl, supabaseServiceRoleKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      let { error: uploadError } = await sb.storage.from(paymentOrdersBucket).upload(objectPath, bytes, {
+        contentType: uploadContentType,
+        upsert: false,
+      });
+
+      // First run convenience: create missing bucket automatically.
+      if (uploadError && isBucketNotFoundError(uploadError.message || "")) {
+        const { error: createBucketError } = await sb.storage.createBucket(paymentOrdersBucket, {
+          public: false,
+          fileSizeLimit: "20MB",
+          allowedMimeTypes: [
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/bmp",
+            "image/tiff",
+          ],
+        });
+
+        if (!createBucketError) {
+          const retry = await sb.storage.from(paymentOrdersBucket).upload(objectPath, bytes, {
+            contentType: uploadContentType,
+            upsert: false,
+          });
+          uploadError = retry.error;
+        }
+      }
+
+      if (uploadError) {
+        return new Response(JSON.stringify({
+          error: uploadError.message || "Storage upload failed",
+          bucket: paymentOrdersBucket,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { data: signed, error: signedError } = await sb.storage.from(paymentOrdersBucket).createSignedUrl(objectPath, 60 * 60 * 24 * 14);
+
+      if (signedError) {
+        return new Response(JSON.stringify({ error: signedError.message || "Failed to create signed URL" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        secure_url: signed?.signedUrl || "",
+        storage_bucket: paymentOrdersBucket,
+        storage_path: objectPath,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     if (!CLOUD_NAME || !API_KEY || !API_SECRET) {
       return new Response(JSON.stringify({ error: "Cloudinary env vars are not configured" }), {
         status: 500,
@@ -39,12 +201,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    const folder = (formData.get("folder") as string) || "hse-participants";
-
-    if (!file) {
-      return new Response(JSON.stringify({ error: "No file provided" }), {
+    if (isPdf) {
+      return new Response(JSON.stringify({
+        error: "PDF не загружается в Cloudinary. Используйте mode=payment_order (Supabase Storage).",
+      }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -61,9 +221,12 @@ Deno.serve(async (req: Request) => {
     uploadForm.append("api_key", API_KEY);
     uploadForm.append("signature", signature);
 
+    const isImage = contentType.startsWith("image/");
+    const resourceType = isImage ? "image" : "raw";
+
     const response = await fetch(
-      `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
-      { method: "POST", body: uploadForm }
+      `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`,
+      { method: "POST", body: uploadForm },
     );
 
     const data = await response.json();

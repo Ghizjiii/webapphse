@@ -4,16 +4,56 @@ const allowedOriginEnv = Deno.env.get("ALLOWED_ORIGIN") || "";
 const googleScriptUrl = Deno.env.get("GOOGLE_APPS_SCRIPT_URL") || "";
 const googleScriptToken = Deno.env.get("GOOGLE_APPS_SCRIPT_TOKEN") || "";
 
+function normalizeOriginRule(value: string): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "*") return "*";
+  return trimmed.replace(/\/+$/, "");
+}
+
+function isOriginRuleMatch(requestOrigin: string, rule: string): boolean {
+  const normalizedRequestOrigin = normalizeOriginRule(requestOrigin);
+  const normalizedRule = normalizeOriginRule(rule);
+
+  if (!normalizedRequestOrigin || !normalizedRule) return false;
+  if (normalizedRule === "*") return true;
+  if (normalizedRule === normalizedRequestOrigin) return true;
+
+  // Supports wildcard host rules, for example:
+  // - https://*.vercel.app
+  // - *.vercel.app
+  if (!normalizedRule.includes("*")) return false;
+
+  try {
+    const req = new URL(normalizedRequestOrigin);
+    const hasScheme = normalizedRule.includes("://");
+    const protocolPrefix = hasScheme ? `${req.protocol}//` : "";
+    const hostPattern = hasScheme ? normalizedRule.split("://")[1] : normalizedRule;
+    const normalizedHostPattern = hostPattern.startsWith("*.") ? hostPattern.slice(2) : hostPattern;
+
+    if (!normalizedHostPattern) return false;
+    if (hasScheme && !normalizedRule.startsWith(protocolPrefix)) return false;
+
+    return req.hostname === normalizedHostPattern || req.hostname.endsWith(`.${normalizedHostPattern}`);
+  } catch {
+    return false;
+  }
+}
+
+function fallbackAllowedOrigin(configured: string[]): string {
+  const firstExact = configured.find(v => v && !v.includes("*"));
+  return firstExact || "*";
+}
+
 function resolveAllowedOrigin(requestOrigin: string): string {
   const configured = allowedOriginEnv
     .split(",")
-    .map(v => v.trim())
+    .map(v => normalizeOriginRule(v))
     .filter(Boolean);
 
   if (configured.length === 0) return requestOrigin || "*";
-  if (configured.includes("*")) return requestOrigin || "*";
-  if (requestOrigin && configured.includes(requestOrigin)) return requestOrigin;
-  return configured[0];
+  if (requestOrigin && configured.some(rule => isOriginRuleMatch(requestOrigin, rule))) return requestOrigin;
+  return fallbackAllowedOrigin(configured);
 }
 
 function corsHeaders(req: Request): Record<string, string> {

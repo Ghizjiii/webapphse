@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+﻿import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
@@ -420,6 +420,26 @@ export default function QuestionnairePage() {
                   )}
                 </div>
               ))}
+              <div>
+                <div className="text-xs text-gray-500 mb-1">Платежное поручение</div>
+                {String(company.payment_order_url || '').trim() ? (
+                  <div className="space-y-1">
+                    <a
+                      href={String(company.payment_order_url || '')}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      {String(company.payment_order_name || 'Открыть файл')}
+                    </a>
+                    <div className="text-xs text-gray-600">
+                      № {String(company.payment_order_number || '—')} · {String(company.payment_order_date || '—')} · {company.payment_order_amount ?? '—'}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm font-medium text-gray-900">?</div>
+                )}
+              </div>
               {deal?.bitrix_deal_id && (
                 <div>
                   <div className="text-xs text-gray-500 mb-1">ID сделки в Битрикс</div>
@@ -520,3 +540,4 @@ export default function QuestionnairePage() {
     </DashboardLayout>
   );
 }
+
