@@ -707,6 +707,8 @@ export async function createDeal(dealData: {
   companyId: string;
   city?: string;
   paymentOrderUrl?: string;
+  paymentOrderName?: string;
+  paymentIsPaid?: boolean;
 }): Promise<string> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
@@ -721,8 +723,25 @@ export async function createDeal(dealData: {
   if (paymentFieldCode && dealData.paymentOrderUrl) {
     fields[paymentFieldCode] = dealData.paymentOrderUrl;
   }
+  const paymentStatusFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD || '').trim();
+  if (paymentStatusFieldCode && typeof dealData.paymentIsPaid === 'boolean') {
+    fields[paymentStatusFieldCode] = dealData.paymentIsPaid ? 'Y' : 'N';
+  }
+
   const result = await callBitrix('crm.deal.add', { fields });
-  return String(result);
+  const dealId = String(result);
+
+  const paymentFileFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD || '').trim();
+  if (paymentFileFieldCode && dealData.paymentOrderUrl) {
+    await attachPaymentFileToDeal({
+      bitrixDealId: dealId,
+      paymentFieldCode: paymentFileFieldCode,
+      paymentOrderUrl: dealData.paymentOrderUrl,
+      paymentOrderName: dealData.paymentOrderName || '',
+    });
+  }
+
+  return dealId;
 }
 
 export async function updateDeal(bitrixDealId: string, dealData: {
@@ -730,6 +749,8 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   companyId: string;
   city?: string;
   paymentOrderUrl?: string;
+  paymentOrderName?: string;
+  paymentIsPaid?: boolean;
 }): Promise<void> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
@@ -743,7 +764,21 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   if (paymentFieldCode && dealData.paymentOrderUrl) {
     fields[paymentFieldCode] = dealData.paymentOrderUrl;
   }
+  const paymentStatusFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD || '').trim();
+  if (paymentStatusFieldCode && typeof dealData.paymentIsPaid === 'boolean') {
+    fields[paymentStatusFieldCode] = dealData.paymentIsPaid ? 'Y' : 'N';
+  }
   await callBitrix('crm.deal.update', { id: bitrixDealId, fields });
+
+  const paymentFileFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD || '').trim();
+  if (paymentFileFieldCode && dealData.paymentOrderUrl) {
+    await attachPaymentFileToDeal({
+      bitrixDealId,
+      paymentFieldCode: paymentFileFieldCode,
+      paymentOrderUrl: dealData.paymentOrderUrl,
+      paymentOrderName: dealData.paymentOrderName || '',
+    });
+  }
 }
 
 async function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
@@ -782,6 +817,232 @@ async function blobToDataUri(blob: Blob): Promise<string> {
     reader.onerror = () => reject(new Error('Failed to read image as base64'));
     reader.readAsDataURL(blob);
   });
+}
+
+function sanitizeFileName(name: string): string {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/[\\/:*?"<>|]+/g, '_');
+}
+
+function extensionFromContentType(contentType: string): string {
+  const ct = String(contentType || '').toLowerCase();
+  if (ct.includes('pdf')) return 'pdf';
+  if (ct.includes('jpeg') || ct.includes('jpg')) return 'jpg';
+  if (ct.includes('png')) return 'png';
+  if (ct.includes('webp')) return 'webp';
+  if (ct.includes('gif')) return 'gif';
+  if (ct.includes('excel') || ct.includes('spreadsheetml') || ct.includes('sheet')) return 'xlsx';
+  if (ct.includes('csv')) return 'csv';
+  return '';
+}
+
+function fileNameFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const fromPath = decodeURIComponent(u.pathname.split('/').pop() || '').trim();
+    return sanitizeFileName(fromPath);
+  } catch {
+    return '';
+  }
+}
+
+async function preparePaymentFileForBitrix(params: {
+  paymentOrderUrl: string;
+  paymentOrderName?: string;
+}): Promise<{ fileName: string; base64: string }> {
+  const response = await fetch(params.paymentOrderUrl, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch payment file: HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const dataUri = await blobToDataUri(blob);
+  const base64 = dataUri.includes(',') ? dataUri.split(',')[1] || '' : dataUri;
+
+  let fileName = sanitizeFileName(params.paymentOrderName || '');
+  if (!fileName) fileName = fileNameFromUrl(params.paymentOrderUrl);
+  if (!fileName) {
+    const ext = extensionFromContentType(response.headers.get('content-type') || '');
+    fileName = `payment_order${ext ? `.${ext}` : ''}`;
+  }
+  if (!/\.[a-z0-9]{2,6}$/i.test(fileName)) {
+    const ext = extensionFromContentType(response.headers.get('content-type') || '');
+    if (ext) fileName = `${fileName}.${ext}`;
+  }
+
+  if (!base64) {
+    throw new Error('Failed to encode payment file as base64');
+  }
+
+  return { fileName, base64 };
+}
+
+async function attachPaymentFileToDeal(params: {
+  bitrixDealId: string;
+  paymentFieldCode: string;
+  paymentOrderUrl: string;
+  paymentOrderName?: string;
+}): Promise<void> {
+  const prepared = await preparePaymentFileForBitrix({
+    paymentOrderUrl: params.paymentOrderUrl,
+    paymentOrderName: params.paymentOrderName,
+  });
+
+  const fileData: [string, string] = [prepared.fileName, prepared.base64];
+  const beforeSignature = await readDealFileFieldSignature(params.bitrixDealId, params.paymentFieldCode);
+  const variants: unknown[] = [
+    fileData,
+    [fileData],
+    { fileData },
+    [{ fileData }],
+    { n0: fileData },
+    { n0: { fileData } },
+    [{ id: '', fileData }],
+  ];
+
+  const errors: string[] = [];
+  for (const variant of variants) {
+    try {
+      await callBitrix('crm.deal.update', {
+        id: params.bitrixDealId,
+        fields: {
+          [params.paymentFieldCode]: variant,
+        },
+      });
+
+      const attached = await verifyDealFileAttached({
+        bitrixDealId: params.bitrixDealId,
+        paymentFieldCode: params.paymentFieldCode,
+        expectedFileName: prepared.fileName,
+        beforeSignature,
+      });
+
+      if (attached) return;
+      errors.push(`accepted but not persisted: ${safeJson(variant)}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e || 'unknown error');
+      errors.push(`${safeJson(variant)} -> ${msg}`);
+    }
+  }
+
+  throw new Error(`Не удалось прикрепить платежное поручение в сделку Bitrix (поле ${params.paymentFieldCode}): ${errors.join(' | ')}`);
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function dealFieldKeyVariants(code: string): string[] {
+  const base = String(code || '').trim();
+  if (!base) return [];
+
+  const variants = new Set<string>([base]);
+  const upper = base.toUpperCase();
+  variants.add(upper);
+  variants.add(base.toLowerCase());
+
+  const camel = ufCamelFromUpper(upper);
+  if (camel) variants.add(camel);
+
+  return Array.from(variants);
+}
+
+function fileFieldSignature(value: unknown): string {
+  if (value == null) return '';
+
+  if (Array.isArray(value)) {
+    return value.map(fileFieldSignature).filter(Boolean).join('|');
+  }
+
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const atoms = [
+      obj.id,
+      obj.ID,
+      obj.fileId,
+      obj.FILE_ID,
+      obj.name,
+      obj.NAME,
+      obj.originalName,
+      obj.ORIGINAL_NAME,
+      obj.url,
+      obj.URL,
+      obj.src,
+      obj.SRC,
+      obj.downloadUrl,
+      obj.DOWNLOAD_URL,
+      obj.value,
+      obj.VALUE,
+    ]
+      .map(v => String(v || '').trim())
+      .filter(Boolean);
+
+    if (atoms.length > 0) return atoms.join('|');
+
+    return Object.keys(obj)
+      .sort()
+      .map(k => `${k}:${fileFieldSignature(obj[k])}`)
+      .join('|');
+  }
+
+  return String(value || '').trim();
+}
+
+async function fetchDealFieldValue(bitrixDealId: string, paymentFieldCode: string): Promise<unknown> {
+  const raw = await callBitrix('crm.deal.get', { id: bitrixDealId });
+  const deal = (raw || {}) as Record<string, unknown>;
+
+  for (const key of dealFieldKeyVariants(paymentFieldCode)) {
+    if (Object.prototype.hasOwnProperty.call(deal, key)) return deal[key];
+  }
+
+  return undefined;
+}
+
+async function readDealFileFieldSignature(bitrixDealId: string, paymentFieldCode: string): Promise<string> {
+  try {
+    const value = await fetchDealFieldValue(bitrixDealId, paymentFieldCode);
+    return fileFieldSignature(value);
+  } catch {
+    return '';
+  }
+}
+
+async function verifyDealFileAttached(params: {
+  bitrixDealId: string;
+  paymentFieldCode: string;
+  expectedFileName: string;
+  beforeSignature?: string;
+}): Promise<boolean> {
+  const expectedFileNameNorm = String(params.expectedFileName || '').trim().toLowerCase();
+  const tries = 3;
+
+  for (let i = 0; i < tries; i++) {
+    try {
+      const value = await fetchDealFieldValue(params.bitrixDealId, params.paymentFieldCode);
+      if (hasPersistedFileValue(value)) {
+        const signature = fileFieldSignature(value);
+        if (expectedFileNameNorm && signature.toLowerCase().includes(expectedFileNameNorm)) return true;
+
+        const before = String(params.beforeSignature || '').trim();
+        if (before && signature && signature !== before) return true;
+        if (!before && signature) return true;
+      }
+    } catch {
+      // best effort probe
+    }
+
+    if (i < tries - 1) {
+      await new Promise(resolve => setTimeout(resolve, 220));
+    }
+  }
+
+  return false;
 }
 
 async function preparePhotoForBitrix(photoUrl: string, participantName: string): Promise<{ fileName: string; dataUri: string; base64: string; }> {

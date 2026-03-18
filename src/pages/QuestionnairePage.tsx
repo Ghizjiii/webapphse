@@ -35,6 +35,7 @@ export default function QuestionnairePage() {
   const [companyEditing, setCompanyEditing] = useState(false);
   const [companyDraft, setCompanyDraft] = useState<Partial<Company>>({});
   const [savingCompany, setSavingCompany] = useState(false);
+  const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
 
@@ -153,6 +154,28 @@ export default function QuestionnairePage() {
       return;
     }
     loadData();
+  }
+
+  async function togglePaymentStatus(nextValue: boolean) {
+    if (!company) return;
+    setSavingPaymentStatus(true);
+    const { error } = await supabase
+      .from('companies')
+      .update({
+        payment_is_paid: nextValue,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', company.id);
+
+    if (error) {
+      showToast('error', 'Не удалось обновить статус оплаты');
+      setSavingPaymentStatus(false);
+      return;
+    }
+
+    setCompany(prev => (prev ? { ...prev, payment_is_paid: nextValue } : prev));
+    showToast('success', nextValue ? 'Статус оплаты: оплачено' : 'Статус оплаты: не оплачено');
+    setSavingPaymentStatus(false);
   }
 
   async function toggleActive() {
@@ -438,6 +461,24 @@ export default function QuestionnairePage() {
                   </div>
                 ) : (
                   <div className="text-sm font-medium text-gray-900">?</div>
+                )}
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 mb-1">Статус оплаты</div>
+                <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                  company.payment_is_paid ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700'
+                }`}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    checked={Boolean(company.payment_is_paid)}
+                    onChange={(e) => void togglePaymentStatus(e.target.checked)}
+                    disabled={savingPaymentStatus || !String(company.payment_order_url || '').trim()}
+                  />
+                  <span>{company.payment_is_paid ? 'Оплачено' : 'Не оплачено'}</span>
+                </label>
+                {!String(company.payment_order_url || '').trim() && (
+                  <div className="text-xs text-gray-500 mt-1">Сначала дождитесь загрузки платежного поручения.</div>
                 )}
               </div>
               {deal?.bitrix_deal_id && (

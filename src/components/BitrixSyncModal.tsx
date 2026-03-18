@@ -96,6 +96,8 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           companyId: bitrixCompanyId,
           city: company.city,
           paymentOrderUrl: String(company.payment_order_url || ''),
+          paymentOrderName: String(company.payment_order_name || ''),
+          paymentIsPaid: Boolean(company.payment_is_paid),
         });
 
         await supabase.from('deals').update({
@@ -149,6 +151,8 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           companyId: bitrixCompanyId,
           city: company.city,
           paymentOrderUrl: String(company.payment_order_url || ''),
+          paymentOrderName: String(company.payment_order_name || ''),
+          paymentIsPaid: Boolean(company.payment_is_paid),
         });
         const dealUrl = `https://hsecompany.bitrix24.kz/crm/deal/details/${bitrixDealId}/`;
 

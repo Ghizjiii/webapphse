@@ -58,6 +58,8 @@ npm run build
   - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
 - Optional Bitrix deal mapping for payment order (used in questionnaire sync):
   - `VITE_BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
+  - `VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD` (UF field in deal with type `Файл`, for payment-order file)
+  - `VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD` (UF field in deal with type `Да/Нет`, value maps from coordinator checkbox)
 - HR days-to-words webhook function requires:
   - `BITRIX_WEBHOOK_URL`
   - `BITRIX_OUTGOING_TOKEN`

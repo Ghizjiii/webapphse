@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/extract-payment-order",
+      "destination": "/api/extract-payment-order"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

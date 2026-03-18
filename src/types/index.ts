@@ -41,6 +41,7 @@ export interface Company {
   payment_order_amount?: number | null;
   payment_order_storage_bucket?: string;
   payment_order_storage_path?: string;
+  payment_is_paid?: boolean;
   created_at: string;
   updated_at: string;
 }
