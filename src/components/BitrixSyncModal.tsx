@@ -73,7 +73,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         setProgress({ step: '\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044e \u0432 \u0411\u0438\u0442\u0440\u0438\u043a\u044124...', current: 1, total: 4, status: 'running' });
         bitrixCompanyId = existingDeal.bitrix_company_id;
         if (bitrixCompanyId) {
-          await updateCompany(bitrixCompanyId, {
+          bitrixCompanyId = await updateCompany(bitrixCompanyId, {
             name: company.name,
             phone: company.phone,
             email: company.email,
@@ -86,8 +86,8 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
             email: company.email,
             bin_iin: company.bin_iin,
           });
-          await supabase.from('companies').update({ bitrix_company_id: bitrixCompanyId }).eq('id', company.id);
         }
+        await supabase.from('companies').update({ bitrix_company_id: bitrixCompanyId }).eq('id', company.id);
 
         setProgress({ step: '\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u043c \u0441\u0434\u0435\u043b\u043a\u0443...', current: 2, total: 4, status: 'running' });
         bitrixDealId = existingDeal.bitrix_deal_id;
@@ -102,6 +102,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
         await supabase.from('deals').update({
           deal_title: dealTitle,
+          bitrix_company_id: bitrixCompanyId,
           sync_status: 'in_progress',
           updated_at: new Date().toISOString(),
         }).eq('id', existingDeal.id);

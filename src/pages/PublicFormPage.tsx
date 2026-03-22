@@ -128,6 +128,27 @@ export default function PublicFormPage() {
     return Math.round(num * 100) / 100;
   }
 
+  function parseIsoDate(value: string | null | undefined): Date | null {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const date = new Date(`${raw}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return null;
+    return date;
+  }
+
+  function isContractActiveByDates(startRaw: string | null | undefined, endRaw: string | null | undefined): boolean | null {
+    const start = parseIsoDate(startRaw);
+    const end = parseIsoDate(endRaw);
+    if (!start && !end) return null;
+
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    if (start && todayStart < start) return false;
+    if (end && todayStart > end) return false;
+    return true;
+  }
+
   async function checkPaymentOrderDuplicate(params: {
     companyBinDigits: string;
     paymentOrderNumber: string;
@@ -211,10 +232,15 @@ export default function PublicFormPage() {
     }
   }
 
-  const hasActiveContract = Boolean(directoryMatch?.has_contract && directoryMatch?.contract_is_active);
+  const contractActiveByDates = isContractActiveByDates(directoryMatch?.contract_start, directoryMatch?.contract_end);
+  const hasActiveContract = Boolean(
+    directoryMatch?.has_contract &&
+      (contractActiveByDates !== null ? contractActiveByDates : directoryMatch?.contract_is_active)
+  );
+  const canConfirmNoContract = !hasActiveContract && Boolean(directoryMatch || companyCreateMode);
   const canFillParticipants = directoryMatch
     ? (hasActiveContract || noContractConfirmed)
-    : companyCreateMode;
+    : (companyCreateMode && noContractConfirmed);
   const lockCompanyFields = Boolean(directoryMatch) || !companyCreateMode;
   const paymentOrderAmountParsed = parsePaymentOrderAmount(paymentOrderAmount);
   const paymentOrderMetaReady = Boolean(
@@ -244,6 +270,12 @@ export default function PublicFormPage() {
           : paymentOrderStage === 'error'
             ? 'Не удалось загрузить или распознать документ.'
             : '';
+
+  useEffect(() => {
+    if (hasActiveContract && noContractConfirmed) {
+      setNoContractConfirmed(false);
+    }
+  }, [hasActiveContract, noContractConfirmed]);
 
   useEffect(() => {
     async function checkToken() {
@@ -866,7 +898,7 @@ export default function PublicFormPage() {
                     <div>Номер: <b>{directoryMatch.contract_number || '—'}</b></div>
                     <div>Дата договора: <b>{directoryMatch.contract_date || '—'}</b></div>
                     <div>Срок: <b>{directoryMatch.contract_start || '—'} — {directoryMatch.contract_end || '—'}</b></div>
-                    <div className="md:col-span-3">Статус: <b>{directoryMatch.contract_status || (directoryMatch.contract_is_active ? 'Действует' : 'Не действует')}</b></div>
+                    <div className="md:col-span-3">Статус: <b>{directoryMatch.contract_status || (hasActiveContract ? 'Действует' : 'Не действует')}</b></div>
                   </div>
                 ) : (
                   <div className="text-xs text-gray-500">Договор по найденной компании отсутствует.</div>
@@ -876,12 +908,15 @@ export default function PublicFormPage() {
                     type="checkbox"
                     checked={noContractConfirmed}
                     onChange={e => setNoContractConfirmed(e.target.checked)}
-                    disabled={hasActiveContract || !directoryMatch}
+                    disabled={!canConfirmNoContract}
                   />
                   Нет договора (заполнить вручную)
                 </label>
                 {hasActiveContract && (
                   <p className="text-xs text-green-600 mt-1">Активный договор найден. Подтверждение не требуется.</p>
+                )}
+                {!hasActiveContract && !canConfirmNoContract && (
+                  <p className="text-xs text-gray-500 mt-1">Подтверждение "Нет договора" станет доступно после поиска БИН/ИИН или выбора "Создать компанию".</p>
                 )}
                 {errors.contract && <p className="text-xs text-red-500 mt-1">{errors.contract}</p>}
               </div>

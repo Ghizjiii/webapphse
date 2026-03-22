@@ -589,6 +589,17 @@ export async function createCompany(companyData: {
   const dynamicBinFields = await resolveCompanyBinFieldCodes();
   const allBinFields = Array.from(new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...dynamicBinFields]));
 
+  const existingCompanyId = await findExistingCompanyIdByBin({
+    binIin: companyData.bin_iin,
+    companyName: companyData.name,
+    fieldCodes: allBinFields,
+  });
+
+  if (existingCompanyId) {
+    await updateCompany(existingCompanyId, companyData);
+    return existingCompanyId;
+  }
+
   const fields: Record<string, unknown> = {
     TITLE: companyData.name,
     PHONE: [{ VALUE: companyData.phone, VALUE_TYPE: 'WORK' }],
@@ -613,9 +624,17 @@ export async function updateCompany(bitrixCompanyId: string, companyData: {
   phone: string;
   email: string;
   bin_iin: string;
-}): Promise<void> {
+}): Promise<string> {
   const dynamicBinFields = await resolveCompanyBinFieldCodes();
   const allBinFields = Array.from(new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...dynamicBinFields]));
+
+  let targetCompanyId = String(bitrixCompanyId || '').trim();
+  const matchedByBin = await findExistingCompanyIdByBin({
+    binIin: companyData.bin_iin,
+    companyName: companyData.name,
+    fieldCodes: allBinFields,
+  });
+  if (matchedByBin) targetCompanyId = matchedByBin;
 
   const fields: Record<string, unknown> = {
     TITLE: companyData.name,
@@ -626,15 +645,128 @@ export async function updateCompany(bitrixCompanyId: string, companyData: {
   };
 
   await callBitrix('crm.company.update', {
-    id: bitrixCompanyId,
+    id: targetCompanyId,
     fields,
   });
 
   await fillCompanyBinWithRetries({
-    companyId: bitrixCompanyId,
+    companyId: targetCompanyId,
     binIin: companyData.bin_iin,
     fieldCodes: allBinFields,
   });
+
+  return targetCompanyId;
+}
+
+async function findExistingCompanyIdByBin(params: {
+  binIin: string;
+  companyName?: string;
+  fieldCodes: string[];
+}): Promise<string | null> {
+  const binDigits = normalizeDigits(params.binIin);
+  if (!binDigits) return null;
+
+  const fieldCodes = Array.from(new Set(params.fieldCodes.filter(Boolean)));
+  const searchValues = Array.from(new Set<string>([
+    String(params.binIin || '').trim(),
+    binDigits,
+    binDigits.replace(/^0+/, ''),
+  ].filter(Boolean)));
+
+  const candidates = new Map<string, Record<string, unknown>>();
+  const collect = (row: Record<string, unknown>) => {
+    const id = normalizePlain(row.ID || row.id);
+    if (!id) return;
+    candidates.set(id, row);
+  };
+
+  for (const code of fieldCodes) {
+    for (const value of searchValues) {
+      try {
+        const raw = await callBitrix('crm.company.list', {
+          filter: { [code]: value },
+          order: { ID: 'ASC' },
+          select: ['ID', 'TITLE', 'UF_*'],
+        });
+        const rows = Array.isArray(raw)
+          ? raw as Array<Record<string, unknown>>
+          : (Array.isArray(raw?.items) ? raw.items as Array<Record<string, unknown>> : []);
+        for (const row of rows) collect(row);
+      } catch {
+        // try next field/value pair
+      }
+    }
+  }
+
+  if (candidates.size === 0) {
+    try {
+      const allCompanies = await listAllBitrixCompanies();
+      for (const row of allCompanies) {
+        if (rowHasBinDigits(row, binDigits, fieldCodes)) collect(row);
+      }
+    } catch {
+      // best effort
+    }
+  }
+
+  if (candidates.size === 0) return null;
+
+  const companyNameNorm = normalizePlain(params.companyName).toLowerCase();
+  const rows = Array.from(candidates.values()).filter(row => rowHasBinDigits(row, binDigits, fieldCodes));
+  if (rows.length === 0) return null;
+
+  rows.sort((a, b) => {
+    const aTitle = normalizePlain(a.TITLE || a.title).toLowerCase();
+    const bTitle = normalizePlain(b.TITLE || b.title).toLowerCase();
+
+    const aExact = Number(companyNameNorm !== '' && aTitle === companyNameNorm);
+    const bExact = Number(companyNameNorm !== '' && bTitle === companyNameNorm);
+    if (aExact !== bExact) return bExact - aExact;
+
+    const aContains = Number(companyNameNorm !== '' && aTitle.includes(companyNameNorm));
+    const bContains = Number(companyNameNorm !== '' && bTitle.includes(companyNameNorm));
+    if (aContains !== bContains) return bContains - aContains;
+
+    const aId = Number(normalizePlain(a.ID || a.id) || '0');
+    const bId = Number(normalizePlain(b.ID || b.id) || '0');
+    return aId - bId;
+  });
+
+  const best = rows[0];
+  return normalizePlain(best.ID || best.id) || null;
+}
+
+function rowHasBinDigits(row: Record<string, unknown>, expectedDigits: string, fieldCodes: string[]): boolean {
+  const expectedNoZero = expectedDigits.replace(/^0+/, '');
+  const keys = new Set<string>([...COMPANY_BIN_FIELD_CANDIDATES, ...fieldCodes]);
+  for (const k of Array.from(keys)) {
+    const upper = String(k).toUpperCase();
+    if (upper.startsWith('UF_CRM_')) {
+      keys.add(upper);
+      keys.add(upper.toLowerCase());
+      const camel = companyUfCamelFromUpper(upper);
+      if (camel) keys.add(camel);
+    }
+  }
+
+  const extractValues = (value: unknown): string[] => {
+    if (value == null) return [];
+    if (typeof value === 'string' || typeof value === 'number') return [String(value)];
+    if (Array.isArray(value)) return value.flatMap(v => extractValues(v));
+    if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(v => extractValues(v));
+    return [];
+  };
+
+  for (const key of keys) {
+    for (const raw of extractValues(row[key])) {
+      const digits = String(raw || '').replace(/\D/g, '');
+      if (!digits) continue;
+      const noZero = digits.replace(/^0+/, '');
+      if (digits === expectedDigits || noZero === expectedNoZero) return true;
+    }
+  }
+
+  return false;
 }
 async function verifyCompanyBinFilled(bitrixCompanyId: string, expected: string, fieldCodes: string[] = []): Promise<boolean> {
   const expectedNorm = String(expected || '').replace(/\D/g, '');
