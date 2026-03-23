@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Plus, Trash2, CheckCircle, XCircle, FileOutput, Settings2, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import ResizableTableContainer from './ResizableTableContainer';
@@ -10,7 +10,7 @@ import {
   findSmartProcessEntityTypeId,
   resolveSmartProcessEnumId,
   updateSmartProcessItem,
-} from '../lib/bitrix';
+} from '../lib/bitrixApi';
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate } from '../lib/documentGeneration';
 import { useToast } from '../context/ToastContext';
 import type { Certificate, Participant, SortConfig } from '../types';

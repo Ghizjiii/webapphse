@@ -3,7 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { ExternalLink, CheckCircle, XCircle, RefreshCw, Settings2 } from 'lucide-react';
 import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
-import { BITRIX_FIELDS, findSmartProcessEntityTypeId, updateSmartProcessItem } from '../lib/bitrix';
+import { BITRIX_FIELDS, findSmartProcessEntityTypeId, updateSmartProcessItem } from '../lib/bitrixApi';
 import { useToast } from '../context/ToastContext';
 import type { Certificate, GeneratedDocument } from '../types';
 

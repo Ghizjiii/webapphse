@@ -1,10 +1,10 @@
-﻿import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Plus, Trash2, Upload, X, CheckCircle2, Shield, Users, Building2, ChevronDown, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { uploadPhoto, uploadPaymentOrder } from '../lib/cloudinary';
 import { extractPaymentOrderFields } from '../lib/paymentOcr';
-import { fetchCoursesList } from '../lib/bitrix';
+import { fetchCoursesList } from '../lib/bitrixApi';
 import { logger } from '../lib/logger';
 import ResizableTableContainer from '../components/ResizableTableContainer';
 import type { Company, Participant, RefCompanyDirectory } from '../types';

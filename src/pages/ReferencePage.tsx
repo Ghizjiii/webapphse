@@ -1,8 +1,8 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { supabase } from '../lib/supabase';
-import { fetchCompanyDirectorySnapshotFromBitrix, fetchCoursesFromFields, fetchCategoryValues, findSmartProcessEntityTypeId } from '../lib/bitrix';
+import { fetchCompanyDirectorySnapshotFromBitrix, fetchCoursesFromFields, fetchCategoryValues, findSmartProcessEntityTypeId } from '../lib/bitrixApi';
 import { useToast } from '../context/ToastContext';
 import type { RefCompanyDirectory } from '../types';
 

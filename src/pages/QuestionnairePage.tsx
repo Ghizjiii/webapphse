@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
@@ -8,7 +8,7 @@ import PrintedDocumentsTable from '../components/PrintedDocumentsTable';
 import BitrixSyncModal from '../components/BitrixSyncModal';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../context/ToastContext';
-import { fetchCoursesList } from '../lib/bitrix';
+import { fetchCoursesList } from '../lib/bitrixApi';
 import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument } from '../types';
 
 type Tab = 'participants' | 'certificates' | 'printed_documents';

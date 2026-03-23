@@ -1,4 +1,4 @@
-﻿# HSE Web App
+# HSE Web App
 
 React + Vite + TypeScript application for HSE questionnaire collection, participant management, and Bitrix24 sync.
 
@@ -23,7 +23,7 @@ npm ci
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
-- `VITE_BITRIX_WEBHOOK`
+- `VITE_PAYMENT_OCR_API_URL`
 
 3. Run dev server:
 
@@ -56,10 +56,11 @@ npm run build
 - Document generation via Google Apps Script requires:
   - `GOOGLE_APPS_SCRIPT_URL` (deployed GAS Web App endpoint)
   - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
-- Optional Bitrix deal mapping for payment order (used in questionnaire sync):
-  - `VITE_BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
-  - `VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD` (UF field in deal with type `Файл`, for payment-order file)
-  - `VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD` (UF field in deal with type `Да/Нет`, value maps from coordinator checkbox)
+- Bitrix integration secrets now live only in Supabase Edge Functions:
+ - `BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
+ - `BITRIX_DEAL_PAYMENT_FILE_FIELD` (UF field in deal with type `Файл`, for payment-order file)
+ - `BITRIX_DEAL_PAYMENT_STATUS_FIELD` (UF field in deal with type `Да/Нет`, value maps from coordinator checkbox)
+ - `BITRIX_CONTRACT_ENTITY_TYPE_ID` (optional, default `1060`)
 - HR days-to-words webhook function requires:
   - `BITRIX_WEBHOOK_URL`
   - `BITRIX_OUTGOING_TOKEN`
