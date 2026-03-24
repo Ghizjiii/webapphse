@@ -2,6 +2,13 @@ import { callBitrix } from './client';
 import { sanitizeFileName, extensionFromContentType, fileNameFromUrl, safeJson } from './utils';
 import { dealFieldKeyVariants, getBitrixFieldValue, resolvePhotoFieldKeys, smartUfCamelFromUpper } from './fields';
 
+type PreparedPhoto = { fileName: string; dataUri: string; base64: string };
+type PhotoPayloadKind = 'tuple' | 'wrapped' | 'wrappedWithId' | 'tupleArray';
+type PhotoContract = { fieldKey: string; payloadKind: PhotoPayloadKind };
+
+const preparedPhotoCache = new Map<string, Promise<PreparedPhoto>>();
+const photoContractCache = new Map<number, PhotoContract>();
+
 export async function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
@@ -133,7 +140,7 @@ export function buildCloudinaryJpgCandidates(photoUrl: string): string[] {
   return Array.from(out);
 }
 
-export async function preparePhotoForBitrix(photoUrl: string, participantName: string): Promise<{ fileName: string; dataUri: string; base64: string; }> {
+export async function preparePhotoForBitrix(photoUrl: string, participantName: string): Promise<PreparedPhoto> {
   let response: Response | null = null;
   let fetchError: unknown = null;
 
@@ -199,6 +206,19 @@ export async function preparePhotoForBitrix(photoUrl: string, participantName: s
   const fileName = `${safeBase}.jpg`;
 
   return { fileName, dataUri, base64 };
+}
+
+export function getPreparedPhotoForBitrix(photoUrl: string, participantName: string): Promise<PreparedPhoto> {
+  const cacheKey = `${String(photoUrl || '').trim()}::${String(participantName || '').trim()}`;
+  const cached = preparedPhotoCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = preparePhotoForBitrix(photoUrl, participantName).catch(error => {
+    preparedPhotoCache.delete(cacheKey);
+    throw error;
+  });
+  preparedPhotoCache.set(cacheKey, pending);
+  return pending;
 }
 
 export async function preparePaymentFileForBitrix(params: {
@@ -339,9 +359,10 @@ export async function verifyPhotoAttached(params: {
   entityTypeId: number;
   itemId: string;
   fieldKeys: string[];
+  maxTries?: number;
 }): Promise<boolean> {
   const keys = Array.from(new Set(params.fieldKeys.filter(Boolean)));
-  const tries = 5;
+  const tries = Math.max(1, params.maxTries || 3);
 
   for (let i = 0; i < tries; i++) {
     try {
@@ -378,15 +399,31 @@ export async function attachPhotoToSmartItem(params: {
 }): Promise<void> {
   const photoFieldKeys = await resolvePhotoFieldKeys(params.entityTypeId);
 
-  let prepared: { fileName: string; dataUri: string; base64: string; } | null = null;
+  let prepared: PreparedPhoto | null = null;
   let prepareError: unknown = null;
   try {
-    prepared = await preparePhotoForBitrix(params.photoUrl, params.participantName);
+    prepared = await getPreparedPhotoForBitrix(params.photoUrl, params.participantName);
   } catch (e) {
     prepareError = e;
   }
 
   let lastError: unknown = prepareError;
+  const fileData = prepared ? [prepared.fileName, prepared.base64] as [string, string] : null;
+  const cachedContract = photoContractCache.get(params.entityTypeId);
+
+  const buildPhotoPayload = (fieldKey: string, payloadKind: PhotoPayloadKind): Record<string, unknown> => {
+    if (!fileData) return { [fieldKey]: null };
+    switch (payloadKind) {
+      case 'tuple':
+        return { [fieldKey]: fileData };
+      case 'wrapped':
+        return { [fieldKey]: { fileData } };
+      case 'wrappedWithId':
+        return { [fieldKey]: { id: '', fileData } };
+      case 'tupleArray':
+        return { [fieldKey]: [fileData] };
+    }
+  };
 
   for (const fieldKeyRaw of photoFieldKeys) {
     const variants = new Set<string>([fieldKeyRaw]);
@@ -396,24 +433,29 @@ export async function attachPhotoToSmartItem(params: {
     if (camel) variants.add(camel);
 
     for (const fieldKey of variants) {
-      const payloads: Array<Record<string, unknown>> = [];
+      const payloadKinds: PhotoPayloadKind[] = ['tuple', 'wrapped', 'wrappedWithId', 'tupleArray'];
+      const attempts: Array<{ fieldKey: string; payloadKind: PhotoPayloadKind; isCached: boolean }> = [];
 
-      if (prepared) {
-        const fileData: [string, string] = [prepared.fileName, prepared.base64];
-        payloads.push(
-          // Bitrix file fields are inconsistent across entity types, so try the common shapes.
-          { [fieldKey]: fileData },
-          { [fieldKey]: [fileData] },
-          { [fieldKey]: { fileData } },
-          { [fieldKey]: [{ fileData }] },
-          { [fieldKey]: { n0: fileData } },
-          { [fieldKey]: { n0: { fileData } } },
-          { [fieldKey]: { id: '', fileData } },
-          { [fieldKey]: [{ id: '', fileData }] },
-        );
+      if (cachedContract && cachedContract.fieldKey === fieldKey) {
+        attempts.push({
+          fieldKey,
+          payloadKind: cachedContract.payloadKind,
+          isCached: true,
+        });
       }
 
-      for (const photoFieldPayload of payloads) {
+      for (const payloadKind of payloadKinds) {
+        if (cachedContract && cachedContract.fieldKey === fieldKey && cachedContract.payloadKind === payloadKind) continue;
+        attempts.push({
+          fieldKey,
+          payloadKind,
+          isCached: false,
+        });
+      }
+
+      for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+        const attempt = attempts[attemptIndex];
+        const photoFieldPayload = buildPhotoPayload(attempt.fieldKey, attempt.payloadKind);
         try {
           await callBitrix('crm.item.update', {
             entityTypeId: params.entityTypeId,
@@ -421,9 +463,9 @@ export async function attachPhotoToSmartItem(params: {
             fields: photoFieldPayload,
           });
 
-          const probeKeys = [fieldKey];
-          const upperProbe = String(fieldKey).toUpperCase();
-          if (upperProbe !== fieldKey) probeKeys.push(upperProbe);
+          const probeKeys = [attempt.fieldKey];
+          const upperProbe = String(attempt.fieldKey).toUpperCase();
+          if (upperProbe !== attempt.fieldKey) probeKeys.push(upperProbe);
           const camelProbe = smartUfCamelFromUpper(upperProbe);
           if (camelProbe) probeKeys.push(camelProbe);
 
@@ -431,11 +473,16 @@ export async function attachPhotoToSmartItem(params: {
             entityTypeId: params.entityTypeId,
             itemId: params.itemId,
             fieldKeys: probeKeys,
+            maxTries: attempt.isCached ? 1 : (attemptIndex === 0 ? 3 : 1),
           })) {
+            photoContractCache.set(params.entityTypeId, {
+              fieldKey: attempt.fieldKey,
+              payloadKind: attempt.payloadKind,
+            });
             return;
           }
 
-          lastError = new Error(`Bitrix accepted update but photo field stayed empty (${fieldKey})`);
+          lastError = new Error(`Bitrix accepted update but photo field stayed empty (${attempt.fieldKey})`);
         } catch (e) {
           lastError = e;
         }

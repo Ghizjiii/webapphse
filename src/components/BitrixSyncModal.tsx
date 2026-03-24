@@ -27,6 +27,15 @@ interface Props {
   onDone: () => void;
 }
 
+const BITRIX_DELETE_CONCURRENCY = 5;
+const BITRIX_SYNC_CONCURRENCY = 3;
+const SUPABASE_DELETE_BATCH_SIZE = 200;
+
+type SyncTask = {
+  participant: Participant;
+  courseName: string;
+};
+
 function decodeUnicodeEscapes(input: string): string {
   return input.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 }
@@ -37,6 +46,20 @@ function prettifySyncError(msg: string): string {
     .replace(/UF_CRM_BIN_IIN/g, '\u0411\u0418\u041d/\u0418\u0418\u041d \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438')
     .replace(/custom field/gi, '\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u043e\u0435 \u043f\u043e\u043b\u0435')
     .replace(/company card/gi, '\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438');
+}
+
+async function runInChunks<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
+  for (let i = 0; i < items.length; i += concurrency) {
+    await Promise.all(items.slice(i, i + concurrency).map(worker));
+  }
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 export default function BitrixSyncModal({ questionnaireId, company, participants, dealId, existingDeal, onClose, onDone }: Props) {
@@ -120,21 +143,25 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
             .filter(id => /^\d+$/.test(id))
         ));
 
-        for (const itemId of deleteIds) {
-          try {
-            await deleteSmartProcessItem({ entityTypeId, itemId });
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e || '');
-            // Missing item is expected in resync scenarios.
-            if (!/NOT_FOUND|Элемент не найден/i.test(msg)) {
-              // ignore other delete errors too, but keep them visible in console for diagnostics
-              console.warn('[BitrixSyncModal] deleteSmartProcessItem failed', itemId, msg);
+        if (deleteIds.length > 0) {
+          await runInChunks(deleteIds, BITRIX_DELETE_CONCURRENCY, async itemId => {
+            try {
+              await deleteSmartProcessItem({ entityTypeId, itemId });
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e || '');
+              // Missing item is expected in resync scenarios.
+              if (!/NOT_FOUND|Элемент не найден/i.test(msg)) {
+                // ignore other delete errors too, but keep them visible in console for diagnostics
+                console.warn('[BitrixSyncModal] deleteSmartProcessItem failed', itemId, msg);
+              }
             }
-          }
+          });
         }
 
-        for (const cert of oldCerts || []) {
-          await supabase.from('certificates').delete().eq('id', cert.id);
+        const oldCertIds = (oldCerts || []).map(cert => cert.id).filter(Boolean);
+        for (const certIdChunk of chunkArray(oldCertIds, SUPABASE_DELETE_BATCH_SIZE)) {
+          const { error } = await supabase.from('certificates').delete().in('id', certIdChunk);
+          if (error) throw error;
         }
       } else {
         setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044e \u0432 \u0411\u0438\u0442\u0440\u0438\u043a\u044124...', current: 1, total: 4, status: 'running' });
@@ -180,32 +207,55 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       }
 
       const dealUrl = `https://hsecompany.bitrix24.kz/crm/deal/details/${bitrixDealId}/`;
-      const totalItems = participants.reduce((s, p) => s + Math.max(1, (p.courses || []).length), 0);
+      const syncTasks: SyncTask[] = participants.flatMap(participant => {
+        const courses = participant.courses && participant.courses.length > 0
+          ? participant.courses.map(course => course.course_name || '')
+          : [''];
+        return courses.map(courseName => ({ participant, courseName }));
+      });
+      const totalItems = syncTasks.length;
+      const uniqueCategories = Array.from(new Set(participants.map(p => String(p.category || '').trim()).filter(Boolean)));
+      const uniqueCourseNames = Array.from(new Set(syncTasks.map(task => String(task.courseName || '').trim()).filter(Boolean)));
+      const categoryValueMap = new Map<string, unknown>();
+      const courseValueMap = new Map<string, unknown>();
+
+      for (const category of uniqueCategories) {
+        const resolved = await resolveSmartProcessEnumId({
+          entityTypeId,
+          fieldRawName: BITRIX_FIELDS_RAW.CATEGORY,
+          fieldCamelName: BITRIX_FIELDS.CATEGORY,
+          value: category,
+        });
+        categoryValueMap.set(category, resolved || category);
+      }
+
+      for (const courseName of uniqueCourseNames) {
+        const resolved = await resolveSmartProcessEnumId({
+          entityTypeId,
+          fieldRawName: BITRIX_FIELDS_RAW.COURSE_NAME,
+          fieldCamelName: BITRIX_FIELDS.COURSE_NAME,
+          value: courseName,
+        });
+        courseValueMap.set(courseName, resolved || courseName);
+      }
+
       let created = 0;
       let photoFailures = 0;
       const photoFailureSamples: string[] = [];
+      const certificateRows: Array<Record<string, unknown>> = [];
 
       setProgress({ step: '\u0421\u043e\u0437\u0434\u0430\u0451\u043c \u0437\u0430\u043f\u0438\u0441\u0438 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432...', current: 3, total: 3 + totalItems, status: 'running' });
 
-      for (const p of participants) {
-        const courses = p.courses && p.courses.length > 0 ? p.courses : [{ course_name: '' }];
-        for (const course of courses) {
-          const categoryValue = (await resolveSmartProcessEnumId({
-            entityTypeId,
-            fieldRawName: BITRIX_FIELDS_RAW.CATEGORY,
-            fieldCamelName: BITRIX_FIELDS.CATEGORY,
-            value: p.category || '',
-          })) || p.category;
-
-          const courseValue = (await resolveSmartProcessEnumId({
-            entityTypeId,
-            fieldRawName: BITRIX_FIELDS_RAW.COURSE_NAME,
-            fieldCamelName: BITRIX_FIELDS.COURSE_NAME,
-            value: course.course_name || '',
-          })) || course.course_name;
+      await runInChunks(syncTasks, BITRIX_SYNC_CONCURRENCY, async task => {
+        const p = task.participant;
+        const courseName = task.courseName;
+        const normalizedCategory = String(p.category || '').trim();
+        const normalizedCourseName = String(courseName || '').trim();
+        const categoryValue = normalizedCategory ? (categoryValueMap.get(normalizedCategory) || normalizedCategory) : p.category;
+        const courseValue = normalizedCourseName ? (courseValueMap.get(normalizedCourseName) || normalizedCourseName) : courseName;
 
           const fields: Record<string, unknown> = {
-            TITLE: `${p.last_name} ${p.first_name} - ${course.course_name}`,
+            TITLE: `${p.last_name} ${p.first_name} - ${courseName}`,
             [BITRIX_FIELDS.LAST_NAME]: p.last_name,
             [BITRIX_FIELDS_RAW.LAST_NAME]: p.last_name,
             [BITRIX_FIELDS.FIRST_NAME]: p.first_name,
@@ -220,55 +270,58 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
             [BITRIX_FIELDS_RAW.COURSE_NAME]: courseValue,
           };
 
-          const bitrixItemId = await createSmartProcessItem({
-            entityTypeId,
-            dealId: bitrixDealId,
-            companyId: bitrixCompanyId,
-            fields,
-          });
+        const bitrixItemId = await createSmartProcessItem({
+          entityTypeId,
+          dealId: bitrixDealId,
+          companyId: bitrixCompanyId,
+          fields,
+        });
 
-          if (p.photo_url) {
-            const fullName = [p.last_name, p.first_name, p.patronymic].filter(Boolean).join(' ');
-            try {
-              await attachPhotoToSmartItem({
-                entityTypeId,
-                itemId: bitrixItemId,
-                photoUrl: p.photo_url,
-                participantName: fullName,
-              });
-            } catch (err) {
-              // Keep main sync successful even if photo attachment fails for some rows.
-              photoFailures++;
-              if (photoFailureSamples.length < 3) {
-                const reason = err instanceof Error ? err.message : String(err || 'Unknown photo error');
-                const who = fullName || `${p.last_name} ${p.first_name}`.trim() || p.id;
-                photoFailureSamples.push(`${who}: ${reason}`);
-              }
+        if (p.photo_url) {
+          const fullName = [p.last_name, p.first_name, p.patronymic].filter(Boolean).join(' ');
+          try {
+            await attachPhotoToSmartItem({
+              entityTypeId,
+              itemId: bitrixItemId,
+              photoUrl: p.photo_url,
+              participantName: fullName,
+            });
+          } catch (err) {
+            // Keep main sync successful even if photo attachment fails for some rows.
+            photoFailures++;
+            if (photoFailureSamples.length < 3) {
+              const reason = err instanceof Error ? err.message : String(err || 'Unknown photo error');
+              const who = fullName || `${p.last_name} ${p.first_name}`.trim() || p.id;
+              photoFailureSamples.push(`${who}: ${reason}`);
             }
           }
-
-          await supabase.from('certificates').insert({
-            questionnaire_id: questionnaireId,
-            company_id: company.id,
-            participant_id: p.id,
-            bitrix_item_id: bitrixItemId,
-            last_name: p.last_name,
-            first_name: p.first_name,
-            middle_name: p.patronymic,
-            position: p.position,
-            category: p.category,
-            course_name: course.course_name,
-            sync_status: 'synced',
-          });
-
-          created++;
-          setProgress({
-            step: `\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u043f\u0438\u0441\u0435\u0439 (${created}/${totalItems})...`,
-            current: 3 + created,
-            total: 3 + totalItems,
-            status: 'running',
-          });
         }
+
+        certificateRows.push({
+          questionnaire_id: questionnaireId,
+          company_id: company.id,
+          participant_id: p.id,
+          bitrix_item_id: bitrixItemId,
+          last_name: p.last_name,
+          first_name: p.first_name,
+          middle_name: p.patronymic,
+          position: p.position,
+          category: p.category,
+          course_name: courseName,
+          sync_status: 'synced',
+        });
+
+        created++;
+        setProgress({
+          step: `\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u043f\u0438\u0441\u0435\u0439 (${created}/${totalItems})...`,
+          current: 3 + created,
+          total: 3 + totalItems,
+          status: 'running',
+        });
+      });
+
+      if (certificateRows.length > 0) {
+        await supabase.from('certificates').insert(certificateRows);
       }
 
       await supabase.from('deals').update({
