@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared/cors.ts";
 
 const BITRIX_WEBHOOK_URL = Deno.env.get("BITRIX_WEBHOOK_URL") || Deno.env.get("BITRIX_WEBHOOK") || "";
 const OUTGOING_TOKEN = Deno.env.get("BITRIX_OUTGOING_TOKEN") || "";
@@ -8,13 +9,6 @@ const DAYS_NUMBER_FIELD = Deno.env.get("BITRIX_HR_DAYS_NUMBER_FIELD") || "ufCrm1
 const DAYS_WORDS_FIELD = Deno.env.get("BITRIX_HR_DAYS_WORDS_FIELD") || "ufCrm10_1772131937986";
 
 type PlainObject = Record<string, unknown>;
-
-function jsonResponse(status: number, payload: PlainObject): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 function bitrixMethodUrl(base: string, method: string): string {
   return `${base.replace(/\/+$/, "")}/${method}.json`;
@@ -270,15 +264,20 @@ async function parseRequestPayload(req: Request): Promise<PlainObject> {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200 });
+    return preflightResponse(req);
+  }
+
+  const corsError = validateCorsRequest(req);
+  if (corsError) {
+    return corsError;
   }
 
   if (req.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
+    return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
   if (!BITRIX_WEBHOOK_URL) {
-    return jsonResponse(500, { error: "BITRIX_WEBHOOK_URL is not configured" });
+    return jsonResponse(req, 500, { error: "BITRIX_WEBHOOK_URL is not configured" });
   }
 
   try {
@@ -301,7 +300,7 @@ Deno.serve(async (req: Request) => {
     const providedToken = tokenFromQuery || tokenFromHeader || tokenFromBearer || tokenFromBody;
 
     if (OUTGOING_TOKEN && providedToken !== OUTGOING_TOKEN) {
-      return jsonResponse(401, { error: "Unauthorized" });
+      return jsonResponse(req, 401, { error: "Unauthorized" });
     }
 
     const itemId = parseItemId(
@@ -316,7 +315,7 @@ Deno.serve(async (req: Request) => {
     );
 
     if (!itemId) {
-      return jsonResponse(400, { error: "itemId is required" });
+      return jsonResponse(req, 400, { error: "itemId is required" });
     }
 
     const entityTypeId =
@@ -331,7 +330,7 @@ Deno.serve(async (req: Request) => {
       ) ?? TARGET_ENTITY_TYPE_ID;
 
     if (entityTypeId !== TARGET_ENTITY_TYPE_ID) {
-      return jsonResponse(200, {
+      return jsonResponse(req, 200, {
         ok: true,
         ignored: true,
         reason: `Entity type ${entityTypeId} is not target ${TARGET_ENTITY_TYPE_ID}`,
@@ -353,7 +352,7 @@ Deno.serve(async (req: Request) => {
 
     const days = parseNumberValue(inputDays);
     if (days === null) {
-      return jsonResponse(400, {
+      return jsonResponse(req, 400, {
         error: "Cannot read vacation days number",
         field: DAYS_NUMBER_FIELD,
       });
@@ -362,7 +361,7 @@ Deno.serve(async (req: Request) => {
     const daysWords = numberToWordsRu(days);
     const currentWords = String(findFieldValue(item, DAYS_WORDS_FIELD) || "").trim().toLowerCase();
     if (currentWords === daysWords.toLowerCase()) {
-      return jsonResponse(200, {
+      return jsonResponse(req, 200, {
         ok: true,
         updated: false,
         itemId,
@@ -378,7 +377,7 @@ Deno.serve(async (req: Request) => {
       fields: { [updateFieldKey]: daysWords },
     });
 
-    return jsonResponse(200, {
+    return jsonResponse(req, 200, {
       ok: true,
       updated: true,
       itemId,
@@ -389,6 +388,6 @@ Deno.serve(async (req: Request) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return jsonResponse(500, { error: msg });
+    return jsonResponse(req, 500, { error: msg });
   }
 });

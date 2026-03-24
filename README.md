@@ -56,6 +56,10 @@ npm run build
 - Document generation via Google Apps Script requires:
   - `GOOGLE_APPS_SCRIPT_URL` (deployed GAS Web App endpoint)
   - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
+- Vercel OCR proxy `api/extract-payment-order` requires server-side env vars:
+  - `ALLOWED_ORIGIN` (same allowlist format as Supabase edge functions)
+  - `PAYMENT_OCR_UPSTREAM_URL` (URL of PaddlePDF OCR service)
+  - `PAYMENT_OCR_UPSTREAM_TOKEN` (optional but recommended; must match OCR service env)
 - Optional Bitrix deal mapping for payment order (used in questionnaire sync):
   - `VITE_BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
   - `VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD` (UF field in deal with type `Файл`, for payment-order file)

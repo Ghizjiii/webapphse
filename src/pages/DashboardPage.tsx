@@ -15,6 +15,15 @@ interface QuestionnaireRow {
   participantCount: number;
 }
 
+type ParticipantQuestionnaireRef = {
+  questionnaire_id: string | null;
+};
+
+type DealQuestionnaireSyncRef = {
+  questionnaire_id: string;
+  sync_status: 'pending' | 'in_progress' | 'success' | 'error' | null;
+};
+
 const STATUS_CONFIG = {
   active: { label: 'Активна', icon: <Power size={12} />, className: 'bg-green-50 text-green-700 border-green-200' },
   submitted: { label: 'Заполнена', icon: <CheckCircle2 size={12} />, className: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -22,6 +31,21 @@ const STATUS_CONFIG = {
   synced: { label: 'В Битрикс', icon: <RefreshCw size={12} />, className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   expired: { label: 'Истекла', icon: <Clock size={12} />, className: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
+
+function hasMeaningfulCompanyData(company: Company): boolean {
+  return Boolean(
+    (company.name || '').trim() ||
+    (company.phone || '').trim() ||
+    (company.email || '').trim() ||
+    (company.bin_iin || '').trim() ||
+    (company.city || '').trim() ||
+    (company.bitrix_company_id || '').trim()
+  );
+}
+
+function resolveCompanyRecord(companies: Company[]): Company | null {
+  return companies.find(hasMeaningfulCompanyData) || companies[0] || null;
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -39,26 +63,81 @@ export default function DashboardPage() {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) { showToast('error', 'Ошибка загрузки данных'); setLoading(false); return; }
+    if (error) {
+      showToast('error', 'Ошибка загрузки данных');
+      setLoading(false);
+      return;
+    }
 
-    const result: QuestionnaireRow[] = [];
-    for (const q of (questionnaires || [])) {
-      const isExpired = q.expires_at && new Date(q.expires_at) < new Date();
-      const status = isExpired && q.status === 'active' ? 'expired' : q.status;
+    const questionnaireList = questionnaires || [];
+    if (questionnaireList.length === 0) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
 
-      const { data: companies } = await supabase
+    const questionnaireIds = questionnaireList.map(q => q.id);
+    const [companiesRes, participantsRes, dealsRes] = await Promise.all([
+      supabase
         .from('companies')
         .select('*')
-        .eq('questionnaire_id', q.id)
-        .maybeSingle();
-
-      const { count } = await supabase
+        .in('questionnaire_id', questionnaireIds)
+        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false }),
+      supabase
         .from('participants')
-        .select('*', { count: 'exact', head: true })
-        .eq('questionnaire_id', q.id);
+        .select('questionnaire_id')
+        .in('questionnaire_id', questionnaireIds),
+      supabase
+        .from('deals')
+        .select('questionnaire_id, sync_status')
+        .in('questionnaire_id', questionnaireIds),
+    ]);
 
-      result.push({ questionnaire: { ...q, status }, company: companies, participantCount: count || 0 });
+    if (companiesRes.error || participantsRes.error || dealsRes.error) {
+      showToast('error', 'Ошибка загрузки связанных данных');
+      setLoading(false);
+      return;
     }
+
+    const companiesByQuestionnaire = new Map<string, Company[]>();
+    for (const company of (companiesRes.data || []) as Company[]) {
+      const list = companiesByQuestionnaire.get(company.questionnaire_id) || [];
+      list.push(company);
+      companiesByQuestionnaire.set(company.questionnaire_id, list);
+    }
+
+    const participantCountByQuestionnaire = new Map<string, number>();
+    for (const participant of (participantsRes.data || []) as ParticipantQuestionnaireRef[]) {
+      if (!participant.questionnaire_id) continue;
+      participantCountByQuestionnaire.set(
+        participant.questionnaire_id,
+        (participantCountByQuestionnaire.get(participant.questionnaire_id) || 0) + 1
+      );
+    }
+
+    const dealSyncStatusByQuestionnaire = new Map<string, DealQuestionnaireSyncRef['sync_status']>();
+    for (const deal of (dealsRes.data || []) as DealQuestionnaireSyncRef[]) {
+      if (!deal.questionnaire_id) continue;
+      dealSyncStatusByQuestionnaire.set(deal.questionnaire_id, deal.sync_status);
+    }
+
+    const result: QuestionnaireRow[] = questionnaireList.map(q => {
+      const isExpired = q.expires_at && new Date(q.expires_at) < new Date();
+      const syncStatus = dealSyncStatusByQuestionnaire.get(q.id);
+      const status = isExpired && q.status === 'active'
+        ? 'expired'
+        : q.status === 'submitted' && syncStatus === 'success'
+          ? 'synced'
+          : q.status;
+
+      return {
+        questionnaire: { ...q, status },
+        company: resolveCompanyRecord(companiesByQuestionnaire.get(q.id) || []),
+        participantCount: participantCountByQuestionnaire.get(q.id) || 0,
+      };
+    });
+
     setRows(result);
     setLoading(false);
   }, [showToast]);

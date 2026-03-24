@@ -279,8 +279,6 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         bitrix_company_id: bitrixCompanyId,
       }).eq('questionnaire_id', questionnaireId);
 
-      await supabase.from('questionnaires').update({ status: 'synced' }).eq('id', questionnaireId);
-
       setProgress({ step: '\u0413\u043e\u0442\u043e\u0432\u043e!', current: 3 + totalItems, total: 3 + totalItems, status: 'done' });
       if (photoFailures > 0) {
         const suffix = photoFailureSamples.length > 0 ? ` Примеры: ${photoFailureSamples.join(' | ')}` : '';
