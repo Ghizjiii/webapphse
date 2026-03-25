@@ -10,8 +10,9 @@ import {
  updateSmartProcessItem,
 } from '../../lib/bitrix';
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate } from '../../lib/documentGeneration';
+import { resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { useToast } from '../../context/ToastContext';
-import type { Certificate, Participant, SortConfig } from '../../types';
+import type { Certificate, Participant, RefDocumentValidityRule, SortConfig } from '../../types';
 import {
  ALL_COLUMN_KEYS,
  AUX_COLUMN_LABELS,
@@ -50,6 +51,7 @@ export function useCertificatesTableController({
 }: CertificatesTableProps) {
  const { showToast } = useToast();
  const [localCertificates, setLocalCertificates] = useState<Certificate[]>(certificates);
+ const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
 
  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
  const [editCell, setEditCell] = useState<EditCell | null>(null);
@@ -86,6 +88,18 @@ export function useCertificatesTableController({
  useEffect(() => {
  setLocalCertificates(certificates);
  }, [certificates]);
+
+ useEffect(() => {
+ void supabase
+ .from('ref_document_validity_rules')
+ .select('*')
+ .order('sort_order')
+ .order('course_name')
+ .order('category')
+ .then(({ data }) => {
+ setDocumentValidityRules(data || []);
+ });
+ }, []);
 
  const orderedVisibleColumnKeys = useMemo(
  () => columnOrder.filter(key => visibleColumns[String(key)] !== false),
@@ -143,6 +157,56 @@ export function useCertificatesTableController({
  }
  return map;
  }, [participants]);
+
+ function autoExpiryPatchForCertificate(cert: Certificate, patch: Partial<Certificate>) {
+ const shouldRecalculate =
+ Object.prototype.hasOwnProperty.call(patch, 'start_date') ||
+ Object.prototype.hasOwnProperty.call(patch, 'course_name') ||
+ Object.prototype.hasOwnProperty.call(patch, 'category');
+
+ if (!shouldRecalculate) {
+ return { patch, missingRule: false };
+ }
+
+ const nextStartDate = Object.prototype.hasOwnProperty.call(patch, 'start_date')
+ ? patch.start_date ?? null
+ : cert.start_date;
+ const nextCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name')
+ ? String(patch.course_name || '')
+ : cert.course_name;
+ const nextCategory = Object.prototype.hasOwnProperty.call(patch, 'category')
+ ? String(patch.category || '')
+ : cert.category;
+
+ if (!nextStartDate) {
+ return {
+ patch: { ...patch, expiry_date: null },
+ missingRule: false,
+ };
+ }
+
+ const { expiryDate } = resolveDocumentExpiryFromRule({
+ rules: documentValidityRules,
+ courseName: nextCourseName,
+ category: nextCategory,
+ startDate: nextStartDate,
+ });
+
+ if (expiryDate) {
+ return {
+ patch: { ...patch, expiry_date: expiryDate },
+ missingRule: false,
+ };
+ }
+
+ return { patch, missingRule: true };
+ }
+
+ function missingRuleMessage(cert: Pick<Certificate, 'course_name' | 'category'>) {
+ const courseName = String(cert.course_name || '').trim() || 'Без курса';
+ const category = String(cert.category || '').trim() || 'Без категории';
+ return `Не найдено правило срока документа для курса "${courseName}" и категории "${category}"`;
+ }
 
  function handleSort(key: string) {
  setSortConfig(prev =>
@@ -236,6 +300,12 @@ export function useCertificatesTableController({
  if (!editCell) return;
  setSaving(true);
  try {
+ const currentCertificate = localCertificates.find(cert => cert.id === editCell.certId);
+ if (!currentCertificate) {
+ setSaving(false);
+ return;
+ }
+
  let valueToSave: string | number | null = editCell.field.includes('date') ? (editValue ? editValue : null) : editValue;
  if (editCell.field === 'price') {
  const normalized = String(editValue || '').replace(',', '.').trim();
@@ -252,16 +322,24 @@ export function useCertificatesTableController({
  }
  }
 
+ const basePatch = { [editCell.field]: valueToSave } as Partial<Certificate>;
+ const { patch, missingRule } = autoExpiryPatchForCertificate(currentCertificate, basePatch);
  const { error } = await supabase
  .from('certificates')
- .update({ [editCell.field]: valueToSave, updated_at: new Date().toISOString() })
+ .update({ ...patch, updated_at: new Date().toISOString() })
  .eq('id', editCell.certId);
  if (error) throw error;
  setLocalCertificates(current => current.map(cert => (
  cert.id === editCell.certId
- ? { ...cert, [editCell.field]: valueToSave } as Certificate
+ ? { ...cert, ...patch } as Certificate
  : cert
  )));
+ if (missingRule) {
+ showToast('warning', missingRuleMessage({
+ course_name: String(basePatch.course_name ?? currentCertificate.course_name),
+ category: String(basePatch.category ?? currentCertificate.category),
+ }));
+ }
  setEditCell(null);
  onRefresh();
  } catch {
@@ -406,12 +484,34 @@ export function useCertificatesTableController({
  return;
  }
 
- await runBulk(
- visibleRows.map(row => ({
+ const missingRules: string[] = [];
+ const updates = visibleRows.map(row => {
+ const basePatch = { [field]: normalized || null } as Partial<Certificate>;
+ if (field === 'start_date') {
+ const next = autoExpiryPatchForCertificate(row, basePatch);
+ if (next.missingRule) {
+ missingRules.push(`${row.course_name || 'Без курса'} / ${row.category || 'Без категории'}`);
+ }
+ return {
  id: row.id,
- patch: { [field]: normalized || null } as Partial<Certificate>,
- }))
+ patch: next.patch,
+ };
+ }
+
+ return {
+ id: row.id,
+ patch: basePatch,
+ };
+ });
+
+ await runBulk(
+ updates
  );
+
+ if (field === 'start_date' && missingRules.length > 0) {
+ const preview = Array.from(new Set(missingRules)).slice(0, 3).join('; ');
+ showToast('warning', `Для части строк срок документа не рассчитан автоматически. ${preview}`);
+ }
  }
 
  async function generateDocuments() {
@@ -514,6 +614,9 @@ export function useCertificatesTableController({
  template_name: group.template.name,
  file_name: fileName,
  file_url: fileUrl,
+ course_name: row.cert.course_name || '',
+ category: row.cert.category || '',
+ employees_count: group.rows.length,
  generated_at: new Date().toISOString(),
  }))
  );
@@ -596,6 +699,54 @@ export function useCertificatesTableController({
  value: cert.course_name || '',
  })) || cert.course_name;
 
+ const markerPassValue = String(cert.marker_pass || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.MARKER_PASS,
+ fieldCamelName: BITRIX_FIELDS.MARKER_PASS,
+ value: cert.marker_pass || '',
+ })
+ : '';
+ if (String(cert.marker_pass || '').trim() && !markerPassValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Отметка о проверке знаний": ${cert.marker_pass}`);
+ }
+
+ const typeLearnValue = String(cert.type_learn || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.TYPE_LEARN,
+ fieldCamelName: BITRIX_FIELDS.TYPE_LEARN,
+ value: cert.type_learn || '',
+ })
+ : '';
+ if (String(cert.type_learn || '').trim() && !typeLearnValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Вид проверки знаний / тип обучения / Причина обучения": ${cert.type_learn}`);
+ }
+
+ const commisConclValue = String(cert.commis_concl || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.COMMIS_CONCL,
+ fieldCamelName: BITRIX_FIELDS.COMMIS_CONCL,
+ value: cert.commis_concl || '',
+ })
+ : '';
+ if (String(cert.commis_concl || '').trim() && !commisConclValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Заключение комиссии": ${cert.commis_concl}`);
+ }
+
+ const gradeValue = String(cert.grade || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.GRADE,
+ fieldCamelName: BITRIX_FIELDS.GRADE,
+ value: cert.grade || '',
+ })
+ : '';
+ if (String(cert.grade || '').trim() && !gradeValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Оценка за квалиф. экзамен": ${cert.grade}`);
+ }
+
  const fields: Record<string, unknown> = {
  TITLE: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - '),
  [BITRIX_FIELDS.LAST_NAME]: cert.last_name || '',
@@ -615,6 +766,11 @@ export function useCertificatesTableController({
  [BITRIX_FIELDS.COMMISSION_MEMBER_4]: cert.commission_member_4 || '',
  [BITRIX_FIELDS.COMMISSION_MEMBERS]: cert.commission_members || '',
  [BITRIX_FIELDS.QUALIFICATION]: cert.qualification || '',
+ [BITRIX_FIELDS.LEVEL]: cert.level || '',
+ [BITRIX_FIELDS.MARKER_PASS]: markerPassValue || '',
+ [BITRIX_FIELDS.TYPE_LEARN]: typeLearnValue || '',
+ [BITRIX_FIELDS.COMMIS_CONCL]: commisConclValue || '',
+ [BITRIX_FIELDS.GRADE]: gradeValue || '',
  [BITRIX_FIELDS.MANAGER]: cert.manager || '',
  [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? '1' : '0',
  [BITRIX_FIELDS.EMPLOYEE_STATUS]: cert.employee_status || '',

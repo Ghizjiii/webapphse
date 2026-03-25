@@ -10,11 +10,14 @@ import {
  applyDirectoryMatchToCompany,
  createLocalParticipant,
  DUPLICATE_PAYMENT_ORDER_ERROR,
+ getParticipantMissingFields,
  isContractActiveByDates,
+ isParticipantRowStarted,
  isPaymentOrderDuplicateError,
  normalizeDigits,
  normalizePaymentOrderNumber,
  parsePaymentOrderAmount,
+ PARTICIPANT_REQUIRED_FIELD_LABELS,
  type LinkStatus,
  type LocalParticipant,
  type PaymentOrderStage,
@@ -365,8 +368,28 @@ export function usePublicFormController(token: string | undefined) {
  if (paymentOrderDuplicate) nextErrors.payment_order = DUPLICATE_PAYMENT_ORDER_ERROR;
  }
 
- const hasEmpty = participants.some(participant => !participant.last_name.trim() && !participant.first_name.trim());
- if (canEditParticipants && hasEmpty) nextErrors.participants = 'Заполните хотя бы имя или фамилию для каждого сотрудника';
+ const startedParticipants = participants.filter(isParticipantRowStarted);
+ const incompleteParticipants = startedParticipants
+ .map(participant => ({
+ participant,
+ index: participants.findIndex(item => item.id === participant.id),
+ missing: getParticipantMissingFields(participant),
+ }))
+ .filter(item => item.missing.length > 0);
+
+ if (canEditParticipants && startedParticipants.length === 0) {
+ nextErrors.participants = 'Добавьте хотя бы одного сотрудника и заполните все его данные.';
+ } else if (canEditParticipants && incompleteParticipants.length > 0) {
+ const preview = incompleteParticipants
+ .slice(0, 2)
+ .map(item => {
+ const rowNumber = item.index + 1;
+ const labels = item.missing.map(field => PARTICIPANT_REQUIRED_FIELD_LABELS[field]).join(', ');
+ return `строка ${rowNumber}: ${labels}`;
+ })
+ .join('; ');
+ nextErrors.participants = `Если строка сотрудника заполнена хотя бы частично, нужно заполнить все поля. Проверьте ${preview}.`;
+ }
 
  setErrors(nextErrors);
  return Object.keys(nextErrors).length === 0;
@@ -519,6 +542,8 @@ export function usePublicFormController(token: string | undefined) {
  }
  }
 
+ const participantsToSubmit = participants.filter(isParticipantRowStarted);
+
  let companyId = existingCompany?.id;
  if (existingCompany) {
  await supabase.from('companies').update({
@@ -581,8 +606,8 @@ export function usePublicFormController(token: string | undefined) {
  companyId = newCompany?.id;
  }
 
- for (let index = 0; index < participants.length; index++) {
- const participant = participants[index];
+ for (let index = 0; index < participantsToSubmit.length; index++) {
+ const participant = participantsToSubmit[index];
 
  let photoUrl = participant.photo_url;
  if (participant.photoFile) {

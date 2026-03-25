@@ -29,6 +29,7 @@ type GroupedDocument = {
   certificates: Certificate[];
   courses: string[];
   categories: string[];
+  employeesCount: number;
 };
 
 type ColumnKey =
@@ -131,11 +132,13 @@ export default function PrintedDocumentsTable({
           certificates: [],
           courses: [],
           categories: [],
+          employeesCount: Number(doc.employees_count || 0),
         });
         continue;
       }
 
       existing.documents.push(doc);
+      existing.employeesCount = Math.max(existing.employeesCount, Number(doc.employees_count || 0));
       if (new Date(doc.generated_at).getTime() > new Date(existing.generatedAt).getTime()) {
         existing.generatedAt = doc.generated_at;
       }
@@ -147,6 +150,12 @@ export default function PrintedDocumentsTable({
       const categorySet = new Set<string>();
 
       for (const doc of group.documents) {
+        const docCourse = String(doc.course_name || '').trim();
+        if (docCourse) courseSet.add(docCourse);
+
+        const docCategory = String(doc.category || '').trim();
+        if (docCategory) categorySet.add(docCategory);
+
         if (!doc.certificate_id) continue;
         const cert = certById.get(doc.certificate_id);
         if (!cert) continue;
@@ -162,6 +171,7 @@ export default function PrintedDocumentsTable({
       group.certificates = certs;
       group.courses = Array.from(courseSet).sort((a, b) => a.localeCompare(b, 'ru'));
       group.categories = Array.from(categorySet).sort((a, b) => a.localeCompare(b, 'ru'));
+      group.employeesCount = Math.max(group.employeesCount, certs.length);
     }
 
     return Array.from(groups.values()).sort(
@@ -351,7 +361,7 @@ export default function PrintedDocumentsTable({
     if (key === 'file_name') return group.fileName || '-';
     if (key === 'courses') return group.courses.join(', ') || '-';
     if (key === 'categories') return group.categories.join(', ') || '-';
-    if (key === 'employees') return certCount;
+    if (key === 'employees') return group.employeesCount || certCount || 0;
     if (key === 'generated_at') return formatDateTime(group.generatedAt);
     if (key === 'file_url') {
       return (

@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import { ChevronDown, Plus, Trash2, Upload, Users, X } from 'lucide-react';
 import ResizableTableContainer from '../../components/ResizableTableContainer';
-import type { LocalParticipant, ValidationErrors } from './model';
+import { getParticipantMissingFields, isParticipantRowStarted, type LocalParticipant, type ValidationErrors } from './model';
 
 interface ParticipantsSectionProps {
   participants: LocalParticipant[];
@@ -120,9 +120,13 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
           <tbody>
             {pagedParticipants.map(participant => {
               const index = participants.findIndex(item => item.id === participant.id);
+              const missingFields = errors.participants && isParticipantRowStarted(participant)
+                ? getParticipantMissingFields(participant)
+                : [];
+              const hasMissing = missingFields.length > 0;
 
               return (
-                <tr key={participant.id} className="border-b border-gray-50">
+                <tr key={participant.id} className={`border-b border-gray-50 ${hasMissing ? 'bg-red-50/40' : ''}`}>
                   <td className="px-6 py-3">
                     <div className="relative w-12 h-14 flex-shrink-0">
                       {participant.photoPreview || participant.photo_url ? (
@@ -150,7 +154,9 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                         type="button"
                         onClick={() => fileInputRefs.current[participant.id]?.click()}
                         disabled={participant.uploading || !canEditParticipants}
-                        className="absolute -bottom-1 -right-1 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors"
+                        className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center transition-colors ${
+                          missingFields.includes('photo') ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
                       >
                         {participant.uploading
                           ? <div className="w-2.5 h-2.5 border border-white border-t-transparent rounded-full animate-spin" />
@@ -165,7 +171,9 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                       <input
                         value={participant[field]}
                         onChange={event => onParticipantFieldChange(participant.id, field, event.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all hover:border-gray-300"
+                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all hover:border-gray-300 ${
+                          missingFields.includes(field) ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                        }`}
                         placeholder="—"
                         disabled={!canEditParticipants}
                       />
@@ -177,7 +185,9 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                       <select
                         value={participant.category}
                         onChange={event => onParticipantFieldChange(participant.id, 'category', event.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 appearance-none pr-8 bg-white"
+                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 appearance-none pr-8 bg-white ${
+                          missingFields.includes('category') ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                        }`}
                         disabled={!canEditParticipants}
                       >
                         <option value="">—</option>
@@ -190,7 +200,9 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                   <td className="px-4 py-3">
                     <div className="relative" onClick={event => event.stopPropagation()}>
                       <div
-                        className="flex flex-wrap gap-1 min-h-[36px] p-1 border border-gray-200 rounded-lg hover:border-blue-300 transition-colors cursor-pointer"
+                        className={`flex flex-wrap gap-1 min-h-[36px] p-1 border rounded-lg hover:border-blue-300 transition-colors cursor-pointer ${
+                          missingFields.includes('courses') ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                        }`}
                         onClick={() => {
                           if (!canEditParticipants) return;
                           onOpenCourseSelectChange(openCourseSelect === participant.id ? null : participant.id);

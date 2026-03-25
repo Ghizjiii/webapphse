@@ -175,10 +175,9 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
                 </div>
                 <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all duration-300 ${
-                      progress.status === 'error' ? 'bg-red-500' :
-                      progress.status === 'done' ? 'bg-green-500' : 'bg-blue-600'
-                    }`}
+                    className={`h-full rounded-full transition-all duration-300 ${progress.status === 'error' ? 'bg-red-500' :
+                        progress.status === 'done' ? 'bg-green-500' : 'bg-blue-600'
+                      }`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -188,7 +187,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
                 <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-100">
                   <RefreshCw size={18} className="text-blue-600 animate-spin" />
                   <span className="text-sm text-blue-900">
-                    Серверная функция выполняет синхронизацию. Браузер больше не ходит в Bitrix напрямую.
+                    Выполняется синхронизация c Bitrix.
                   </span>
                 </div>
               )}
