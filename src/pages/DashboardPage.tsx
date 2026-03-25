@@ -172,10 +172,11 @@ export default function DashboardPage() {
     return new Date(str).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 
-  async function handleCreate(data: { title: string; expires_at: string | null }) {
+  async function handleCreate(data: { title: string; expires_at: string | null; payment_order_optional: boolean }) {
     const { error } = await supabase.from('questionnaires').insert({
       title: data.title,
       expires_at: data.expires_at,
+      payment_order_optional: data.payment_order_optional,
       is_active: true,
       status: 'active',
       created_by: user?.id,

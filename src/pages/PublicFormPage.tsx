@@ -58,6 +58,7 @@ export default function PublicFormPage() {
 
         <form onSubmit={controller.handleSubmit} className="space-y-6">
           <CompanySection
+            paymentOrderOptional={controller.paymentOrderOptional}
             companyName={controller.companyName}
             companyPhone={controller.companyPhone}
             companyEmail={controller.companyEmail}

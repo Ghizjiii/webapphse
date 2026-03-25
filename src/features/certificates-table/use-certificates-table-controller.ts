@@ -49,6 +49,7 @@ export function useCertificatesTableController({
  onRefresh,
 }: CertificatesTableProps) {
  const { showToast } = useToast();
+ const [localCertificates, setLocalCertificates] = useState<Certificate[]>(certificates);
 
  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
  const [editCell, setEditCell] = useState<EditCell | null>(null);
@@ -82,6 +83,10 @@ export function useCertificatesTableController({
  failed: number;
  } | null>(null);
 
+ useEffect(() => {
+ setLocalCertificates(certificates);
+ }, [certificates]);
+
  const orderedVisibleColumnKeys = useMemo(
  () => columnOrder.filter(key => visibleColumns[String(key)] !== false),
  [columnOrder, visibleColumns]
@@ -105,14 +110,14 @@ export function useCertificatesTableController({
  return () => document.removeEventListener('mousedown', onDocMouseDown);
  }, []);
 
- const sorted = useMemo(() => sortCerts(certificates, sortConfig), [certificates, sortConfig]);
+ const sorted = useMemo(() => sortCerts(localCertificates, sortConfig), [localCertificates, sortConfig]);
  const courseOptions = useMemo(
- () => Array.from(new Set(certificates.map(cert => String(cert.course_name || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
- [certificates]
+ () => Array.from(new Set(localCertificates.map(cert => String(cert.course_name || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
+ [localCertificates]
  );
  const categoryOptions = useMemo(
- () => Array.from(new Set(certificates.map(cert => String(cert.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
- [certificates]
+ () => Array.from(new Set(localCertificates.map(cert => String(cert.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
+ [localCertificates]
  );
  const visibleRows = useMemo(
  () => sorted.filter(cert => {
@@ -127,8 +132,8 @@ export function useCertificatesTableController({
  categoryFilter === 'all' ? 'все категории' : `категория: ${categoryFilter}`,
  ].join(', ');
  const hasBitrixRows = useMemo(
- () => certificates.some(cert => String(cert.bitrix_item_id || '').trim().length > 0 || cert.sync_status === 'synced'),
- [certificates]
+ () => localCertificates.some(cert => String(cert.bitrix_item_id || '').trim().length > 0 || cert.sync_status === 'synced'),
+ [localCertificates]
  );
  const participantPhotoById = useMemo(() => {
  const map = new Map<string, string>();
@@ -252,6 +257,11 @@ export function useCertificatesTableController({
  .update({ [editCell.field]: valueToSave, updated_at: new Date().toISOString() })
  .eq('id', editCell.certId);
  if (error) throw error;
+ setLocalCertificates(current => current.map(cert => (
+ cert.id === editCell.certId
+ ? { ...cert, [editCell.field]: valueToSave } as Certificate
+ : cert
+ )));
  setEditCell(null);
  onRefresh();
  } catch {
@@ -280,6 +290,18 @@ export function useCertificatesTableController({
  );
 
  const errorCount = results.filter(result => result.error).length;
+ const successIds = new Set(
+ updates
+ .filter((_, index) => !results[index]?.error)
+ .map(item => item.id)
+ );
+ if (successIds.size > 0) {
+ setLocalCertificates(current => current.map(cert => {
+ if (!successIds.has(cert.id)) return cert;
+ const patch = updates.find(item => item.id === cert.id)?.patch || {};
+ return { ...cert, ...patch } as Certificate;
+ }));
+ }
  if (errorCount > 0) {
  showToast('warning', `Частично заполнено: ${updates.length - errorCount} из ${updates.length}`);
  } else {

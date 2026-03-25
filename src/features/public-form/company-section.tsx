@@ -4,6 +4,7 @@ import type { RefCompanyDirectory } from '../../types';
 import type { PaymentOrderStage, ValidationErrors } from './model';
 
 interface CompanySectionProps {
+  paymentOrderOptional: boolean;
   companyName: string;
   companyPhone: string;
   companyEmail: string;
@@ -45,6 +46,7 @@ interface CompanySectionProps {
 export function CompanySection(props: CompanySectionProps) {
   const {
     companyName,
+    paymentOrderOptional,
     companyPhone,
     companyEmail,
     companyBin,
@@ -209,91 +211,93 @@ export function CompanySection(props: CompanySectionProps) {
           {errors.contract && <p className="text-xs text-red-500 mt-1">{errors.contract}</p>}
         </div>
 
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Добавить платежное поручение</label>
-          <div className="flex items-center gap-2">
-            <input
-              ref={paymentOrderInputRef as RefObject<HTMLInputElement>}
-              type="file"
-              accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-              className="hidden"
-              onChange={event => {
-                const file = event.target.files?.[0];
-                if (file) onPaymentOrderPick(file);
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => paymentOrderInputRef.current?.click()}
-              className="px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm"
-              disabled={uploadingPaymentOrder}
-            >
-              {uploadingPaymentOrder ? 'Загрузка...' : 'Выбрать файл'}
-            </button>
-            <span className="text-xs text-gray-500 truncate">{paymentOrderName || 'Файл не выбран'}</span>
-          </div>
-          {paymentOrderUrl && (
-            <a href={paymentOrderUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-blue-600 hover:underline">
-              Открыть загруженный файл
-            </a>
-          )}
-          {paymentOrderStage !== 'idle' && (
-            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-2.5">
-              <div className="flex items-center justify-between text-xs text-gray-700">
-                <span>{paymentStageLabel}</span>
-                <span>{paymentStagePercent}%</span>
+        {!paymentOrderOptional && (
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Добавить платежное поручение</label>
+            <div className="flex items-center gap-2">
+              <input
+                ref={paymentOrderInputRef as RefObject<HTMLInputElement>}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                className="hidden"
+                onChange={event => {
+                  const file = event.target.files?.[0];
+                  if (file) onPaymentOrderPick(file);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => paymentOrderInputRef.current?.click()}
+                className="px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm"
+                disabled={uploadingPaymentOrder}
+              >
+                {uploadingPaymentOrder ? 'Загрузка...' : 'Выбрать файл'}
+              </button>
+              <span className="text-xs text-gray-500 truncate">{paymentOrderName || 'Файл не выбран'}</span>
+            </div>
+            {paymentOrderUrl && (
+              <a href={paymentOrderUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-blue-600 hover:underline">
+                Открыть загруженный файл
+              </a>
+            )}
+            {paymentOrderStage !== 'idle' && (
+              <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-2.5">
+                <div className="flex items-center justify-between text-xs text-gray-700">
+                  <span>{paymentStageLabel}</span>
+                  <span>{paymentStagePercent}%</span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      paymentOrderStage === 'error' ? 'bg-red-500' : 'bg-blue-500'
+                    }`}
+                    style={{ width: `${paymentStagePercent}%` }}
+                  />
+                </div>
               </div>
-              <div className="mt-1.5 h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    paymentOrderStage === 'error' ? 'bg-red-500' : 'bg-blue-500'
+            )}
+            {paymentAutofillHint && <p className="text-xs text-gray-500 mt-1">{paymentAutofillHint}</p>}
+            {errors.payment_order && <p className="text-xs text-red-500 mt-1">{errors.payment_order}</p>}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Номер платежного поручения</label>
+                <input
+                  value={paymentOrderNumber}
+                  onChange={event => onPaymentOrderNumberChange(event.target.value)}
+                  placeholder="Например, 0256"
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                    errors.payment_order_number ? 'border-red-400 bg-red-50' : 'border-gray-300'
                   }`}
-                  style={{ width: `${paymentStagePercent}%` }}
                 />
+                {errors.payment_order_number && <p className="text-xs text-red-500 mt-1">{errors.payment_order_number}</p>}
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Дата оплаты</label>
+                <input
+                  type="date"
+                  value={paymentOrderDate}
+                  onChange={event => onPaymentOrderDateChange(event.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                    errors.payment_order_date ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                  }`}
+                />
+                {errors.payment_order_date && <p className="text-xs text-red-500 mt-1">{errors.payment_order_date}</p>}
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Сумма оплаты</label>
+                <input
+                  value={paymentOrderAmount}
+                  onChange={event => onPaymentOrderAmountChange(event.target.value)}
+                  placeholder="Например, 14232.00"
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                    errors.payment_order_amount ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                  }`}
+                />
+                {errors.payment_order_amount && <p className="text-xs text-red-500 mt-1">{errors.payment_order_amount}</p>}
               </div>
             </div>
-          )}
-          {paymentAutofillHint && <p className="text-xs text-gray-500 mt-1">{paymentAutofillHint}</p>}
-          {errors.payment_order && <p className="text-xs text-red-500 mt-1">{errors.payment_order}</p>}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Номер платежного поручения</label>
-              <input
-                value={paymentOrderNumber}
-                onChange={event => onPaymentOrderNumberChange(event.target.value)}
-                placeholder="Например, 0256"
-                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                  errors.payment_order_number ? 'border-red-400 bg-red-50' : 'border-gray-300'
-                }`}
-              />
-              {errors.payment_order_number && <p className="text-xs text-red-500 mt-1">{errors.payment_order_number}</p>}
-            </div>
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Дата оплаты</label>
-              <input
-                type="date"
-                value={paymentOrderDate}
-                onChange={event => onPaymentOrderDateChange(event.target.value)}
-                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                  errors.payment_order_date ? 'border-red-400 bg-red-50' : 'border-gray-300'
-                }`}
-              />
-              {errors.payment_order_date && <p className="text-xs text-red-500 mt-1">{errors.payment_order_date}</p>}
-            </div>
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Сумма оплаты</label>
-              <input
-                value={paymentOrderAmount}
-                onChange={event => onPaymentOrderAmountChange(event.target.value)}
-                placeholder="Например, 14232.00"
-                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                  errors.payment_order_amount ? 'border-red-400 bg-red-50' : 'border-gray-300'
-                }`}
-              />
-              {errors.payment_order_amount && <p className="text-xs text-red-500 mt-1">{errors.payment_order_amount}</p>}
-            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -25,6 +25,7 @@ export function usePublicFormController(token: string | undefined) {
  const [linkStatus, setLinkStatus] = useState<LinkStatus>('loading');
  const [questionnaireId, setQuestionnaireId] = useState<string | null>(null);
  const [existingCompany, setExistingCompany] = useState<Company | null>(null);
+ const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
 
  const [companyName, setCompanyName] = useState('');
  const [companyPhone, setCompanyPhone] = useState('');
@@ -60,6 +61,7 @@ export function usePublicFormController(token: string | undefined) {
  const [pageSize, setPageSize] = useState(20);
  const [currentPage, setCurrentPage] = useState(1);
  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+ const supabaseAnonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
  const checkPaymentOrderDuplicate = useCallback(async (params: {
  companyBinDigits: string;
@@ -140,8 +142,34 @@ export function usePublicFormController(token: string | undefined) {
  .limit(1)
  .maybeSingle();
 
- applyDirectoryMatch(data || null);
+ if (data) {
+ applyDirectoryMatch(data);
  setLookupTouched(true);
+ setCompanyCreateMode(false);
+ return;
+ }
+
+ const { data: lookupData, error: lookupError } = await supabase.functions.invoke('lookup-company-directory', {
+ headers: supabaseAnonKey ? {
+ Authorization: `Bearer ${supabaseAnonKey}`,
+ apikey: supabaseAnonKey,
+ } : undefined,
+ body: { bin: digits },
+ });
+
+ if (!lookupError && lookupData?.found && lookupData?.row) {
+ applyDirectoryMatch(lookupData.row as RefCompanyDirectory);
+ setLookupTouched(true);
+ setCompanyCreateMode(false);
+ return;
+ }
+
+ if (lookupError) {
+ logger.error('PublicFormPage', 'Bitrix directory lookup fallback failed', lookupError);
+ }
+
+ setLookupTouched(true);
+ applyDirectoryMatch(null);
  setCompanyCreateMode(false);
  } finally {
  setLookupLoading(false);
@@ -165,7 +193,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderAmountParsed !== null
  );
  const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && !paymentOrderDuplicate;
- const canEditParticipants = canFillParticipants && paymentOrderReady;
+ const canEditParticipants = canFillParticipants && (paymentOrderOptional || paymentOrderReady);
  const paymentStagePercent = paymentOrderStage === 'uploading'
  ? 35
  : paymentOrderStage === 'recognizing'
@@ -202,7 +230,7 @@ export function usePublicFormController(token: string | undefined) {
 
  const { data, error } = await supabase
  .from('questionnaires')
- .select('id, is_active, expires_at, status')
+ .select('id, is_active, expires_at, status, payment_order_optional')
  .eq('secret_token', token)
  .maybeSingle();
 
@@ -224,6 +252,7 @@ export function usePublicFormController(token: string | undefined) {
  }
 
  setQuestionnaireId(data.id);
+ setPaymentOrderOptional(Boolean(data.payment_order_optional));
 
  const { data: company } = await supabase
  .from('companies')
@@ -328,11 +357,13 @@ export function usePublicFormController(token: string | undefined) {
  if (!canFillParticipants) nextErrors.contract = 'Нет активного договора. Подтвердите Нет договора, чтобы заполнить форму вручную.';
 
  const amountParsed = parsePaymentOrderAmount(paymentOrderAmount);
+ if (!paymentOrderOptional) {
  if (!paymentOrderUrl) nextErrors.payment_order = 'Загрузите файл платежного поручения.';
  if (!normalizePaymentOrderNumber(paymentOrderNumber)) nextErrors.payment_order_number = 'Укажите номер платежного поручения.';
  if (!paymentOrderDate.trim()) nextErrors.payment_order_date = 'Укажите дату оплаты.';
  if (amountParsed === null) nextErrors.payment_order_amount = 'Укажите корректную сумму оплаты.';
  if (paymentOrderDuplicate) nextErrors.payment_order = DUPLICATE_PAYMENT_ORDER_ERROR;
+ }
 
  const hasEmpty = participants.some(participant => !participant.last_name.trim() && !participant.first_name.trim());
  if (canEditParticipants && hasEmpty) nextErrors.participants = 'Заполните хотя бы имя или фамилию для каждого сотрудника';
@@ -351,6 +382,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderAmount,
  paymentOrderDate,
  paymentOrderDuplicate,
+ paymentOrderOptional,
  paymentOrderNumber,
  paymentOrderUrl,
  ]);
@@ -781,6 +813,7 @@ export function usePublicFormController(token: string | undefined) {
 
  return {
  linkStatus,
+ paymentOrderOptional,
  submitted,
  submitting,
  errors,

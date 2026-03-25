@@ -3,6 +3,7 @@ export interface QuestionnaireLink {
   secret_token: string;
   title: string;
   is_active: boolean;
+  payment_order_optional: boolean;
   expires_at: string | null;
   created_by: string | null;
   created_at: string;

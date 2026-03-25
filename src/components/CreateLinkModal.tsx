@@ -3,13 +3,14 @@ import { X } from 'lucide-react';
 
 interface Props {
   onClose: () => void;
-  onCreate: (data: { title: string; expires_at: string | null }) => void;
+  onCreate: (data: { title: string; expires_at: string | null; payment_order_optional: boolean }) => void;
 }
 
 export default function CreateLinkModal({ onClose, onCreate }: Props) {
   const [title, setTitle] = useState('');
   const [hasExpiry, setHasExpiry] = useState(false);
   const [expiryDate, setExpiryDate] = useState('');
+  const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,7 +19,7 @@ export default function CreateLinkModal({ onClose, onCreate }: Props) {
     if (hasExpiry && expiryDate) {
       expires_at = new Date(expiryDate + 'T23:59:59').toISOString();
     }
-    onCreate({ title: title.trim(), expires_at });
+    onCreate({ title: title.trim(), expires_at, payment_order_optional: paymentOrderOptional });
   }
 
   const minDate = new Date(Date.now() + 86400000).toISOString().split('T')[0];
@@ -55,6 +56,22 @@ export default function CreateLinkModal({ onClose, onCreate }: Props) {
                 <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform ${hasExpiry ? 'translate-x-[18px]' : 'translate-x-0'}`} />
               </div>
               <span className="text-sm font-medium text-gray-700">Установить срок действия</span>
+            </label>
+          </div>
+
+          <div>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <div
+                onClick={() => setPaymentOrderOptional(p => !p)}
+                className={`w-10 h-5.5 rounded-full transition-colors flex items-center px-0.5 ${paymentOrderOptional ? 'bg-blue-600' : 'bg-gray-300'}`}
+                style={{ height: '22px', width: '40px' }}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform ${paymentOrderOptional ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+              </div>
+              <div>
+                <span className="text-sm font-medium text-gray-700">Платежка не обязательна</span>
+                <p className="text-xs text-gray-500 mt-0.5">Если включено, блок платежного поручения будет скрыт в форме и в анкете.</p>
+              </div>
             </label>
           </div>
 
