@@ -70,6 +70,20 @@ export interface RefCompanyDirectory {
   updated_at: string;
 }
 
+export type DocumentDurationUnit = 'day' | 'month' | 'year';
+
+export interface RefDocumentValidityRule {
+  id: string;
+  course_name: string;
+  category: string;
+  document_type: string;
+  duration_value: number;
+  duration_unit: DocumentDurationUnit;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Deal {
   id: string;
   questionnaire_id: string;

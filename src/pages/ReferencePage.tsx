@@ -1,12 +1,13 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { supabase } from '../lib/supabase';
 import { fetchCompanyDirectorySnapshotFromBitrix, fetchCoursesFromFields, fetchCategoryValues, findSmartProcessEntityTypeId } from '../lib/bitrix';
 import { useToast } from '../context/ToastContext';
-import type { RefCompanyDirectory } from '../types';
+import { buildDocumentValidityDefaults, formatDurationLabel } from '../lib/documentValidity';
+import type { RefCompanyDirectory, RefDocumentValidityRule } from '../types';
 
-type Tab = 'categories' | 'courses' | 'companies';
+type Tab = 'categories' | 'courses' | 'companies' | 'document-validity';
 
 interface RefItem {
   id: string;
@@ -21,23 +22,60 @@ export default function ReferencePage() {
   const [categories, setCategories] = useState<RefItem[]>([]);
   const [courses, setCourses] = useState<RefItem[]>([]);
   const [companiesDirectory, setCompaniesDirectory] = useState<RefCompanyDirectory[]>([]);
+  const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCourseName, setNewCourseName] = useState('');
   const [companySearch, setCompanySearch] = useState('');
+  const [documentRuleSearch, setDocumentRuleSearch] = useState('');
   const [saving, setSaving] = useState(false);
+
+  async function ensureDocumentValidityRules(courseItems: RefItem[], categoryItems: RefItem[], existingRules: RefDocumentValidityRule[]) {
+    const missingRules = buildDocumentValidityDefaults({
+      courseNames: courseItems.map(item => item.name),
+      categoryNames: categoryItems.map(item => item.name),
+      existingRules,
+    });
+
+    if (missingRules.length === 0) {
+      return existingRules;
+    }
+
+    const now = new Date().toISOString();
+    const payload = missingRules.map(rule => ({
+      ...rule,
+      created_at: now,
+      updated_at: now,
+    }));
+    const { data, error } = await supabase.from('ref_document_validity_rules').insert(payload).select('*');
+    if (error) throw error;
+    return [...existingRules, ...(data || [])];
+  }
 
   async function loadData() {
     setLoading(true);
-    const [catRes, courseRes, companyDirRes] = await Promise.all([
+    const [catRes, courseRes, companyDirRes, documentRuleRes] = await Promise.all([
       supabase.from('ref_categories').select('*').order('sort_order').order('name'),
       supabase.from('ref_courses').select('*').order('sort_order').order('name'),
       supabase.from('ref_company_directory').select('*').order('contract_is_active', { ascending: false }).order('name'),
+      supabase.from('ref_document_validity_rules').select('*').order('sort_order').order('course_name').order('category'),
     ]);
-    setCategories(catRes.data || []);
-    setCourses(courseRes.data || []);
+    const categoryRows = catRes.data || [];
+    const courseRows = courseRes.data || [];
+    const ensuredRules = await ensureDocumentValidityRules(courseRows, categoryRows, documentRuleRes.data || []);
+
+    setCategories(categoryRows);
+    setCourses(courseRows);
     setCompaniesDirectory(companyDirRes.data || []);
+    setDocumentValidityRules(
+      [...ensuredRules].sort((left, right) => {
+        if (left.sort_order !== right.sort_order) return left.sort_order - right.sort_order;
+        const courseCompare = left.course_name.localeCompare(right.course_name, 'ru');
+        if (courseCompare !== 0) return courseCompare;
+        return left.category.localeCompare(right.category, 'ru');
+      })
+    );
     setLoading(false);
   }
 
@@ -103,11 +141,12 @@ export default function ReferencePage() {
   }
 
   async function addCategory() {
-    if (!newCategoryName.trim()) return;
+    const categoryName = newCategoryName.trim();
+    if (!categoryName) return;
     setSaving(true);
     const { error } = await supabase.from('ref_categories').insert({
-      name: newCategoryName.trim(),
-      bitrix_value: newCategoryName.trim(),
+      name: categoryName,
+      bitrix_value: categoryName,
       sort_order: categories.length + 1,
     });
     if (error) showToast('error', 'Такая категория уже существует');
@@ -116,11 +155,12 @@ export default function ReferencePage() {
   }
 
   async function addCourse() {
-    if (!newCourseName.trim()) return;
+    const courseName = newCourseName.trim();
+    if (!courseName) return;
     setSaving(true);
     const { error } = await supabase.from('ref_courses').insert({
-      name: newCourseName.trim(),
-      bitrix_value: newCourseName.trim(),
+      name: courseName,
+      bitrix_value: courseName,
       sort_order: courses.length + 1,
     });
     if (error) showToast('error', 'Такой курс уже существует');
@@ -128,24 +168,42 @@ export default function ReferencePage() {
     setSaving(false);
   }
 
-  async function deleteCategory(id: string) {
-    await supabase.from('ref_categories').delete().eq('id', id);
-    await loadData();
-  }
-
   async function deleteCourse(id: string) {
+    const item = courses.find(course => course.id === id);
+    if (item) {
+      await supabase.from('ref_document_validity_rules').delete().eq('course_name', item.name);
+    }
     await supabase.from('ref_courses').delete().eq('id', id);
     await loadData();
   }
 
-  async function updateCategoryName(id: string, name: string) {
-    await supabase.from('ref_categories').update({ name, bitrix_value: name, updated_at: new Date().toISOString() }).eq('id', id);
-    setCategories(prev => prev.map(c => c.id === id ? { ...c, name, bitrix_value: name } : c));
+  async function deleteCategory(id: string) {
+    const item = categories.find(category => category.id === id);
+    if (item) {
+      await supabase.from('ref_document_validity_rules').delete().eq('category', item.name);
+    }
+    await supabase.from('ref_categories').delete().eq('id', id);
+    await loadData();
   }
 
   async function updateCourseName(id: string, name: string) {
-    await supabase.from('ref_courses').update({ name, bitrix_value: name, updated_at: new Date().toISOString() }).eq('id', id);
-    setCourses(prev => prev.map(c => c.id === id ? { ...c, name, bitrix_value: name } : c));
+    const nextName = name.trim();
+    const current = courses.find(course => course.id === id);
+    if (!nextName || !current) return;
+
+    await supabase.from('ref_courses').update({ name: nextName, bitrix_value: nextName, updated_at: new Date().toISOString() }).eq('id', id);
+    await supabase.from('ref_document_validity_rules').update({ course_name: nextName, updated_at: new Date().toISOString() }).eq('course_name', current.name);
+    setCourses(prev => prev.map(c => c.id === id ? { ...c, name: nextName, bitrix_value: nextName } : c));
+  }
+
+  async function updateCategoryName(id: string, name: string) {
+    const nextName = name.trim();
+    const current = categories.find(category => category.id === id);
+    if (!nextName || !current) return;
+
+    await supabase.from('ref_categories').update({ name: nextName, bitrix_value: nextName, updated_at: new Date().toISOString() }).eq('id', id);
+    await supabase.from('ref_document_validity_rules').update({ category: nextName, updated_at: new Date().toISOString() }).eq('category', current.name);
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, name: nextName, bitrix_value: nextName } : c));
   }
 
   return (
@@ -154,7 +212,7 @@ export default function ReferencePage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Справочник</h1>
-            <p className="text-sm text-gray-500 mt-1">Категории, курсы и справочник компаний/договоров из Bitrix24</p>
+            <p className="text-sm text-gray-500 mt-1">Категории, курсы, сроки документов и справочник компаний/договоров из Bitrix24</p>
           </div>
           <button
             onClick={() => {
@@ -178,6 +236,7 @@ export default function ReferencePage() {
             {([
               { key: 'categories' as Tab, label: 'Категории', icon: <Tag size={15} />, count: categories.length },
               { key: 'courses' as Tab, label: 'Названия курсов', icon: <BookOpen size={15} />, count: courses.length },
+              { key: 'document-validity' as Tab, label: 'Срок документа', icon: <Clock size={15} />, count: documentValidityRules.length },
               { key: 'companies' as Tab, label: 'Справочник компаний', icon: <Building2 size={15} />, count: companiesDirectory.length },
             ]).map(t => (
               <button
@@ -222,6 +281,12 @@ export default function ReferencePage() {
                 onUpdate={updateCourseName}
                 saving={saving}
               />
+            ) : tab === 'document-validity' ? (
+              <DocumentValidityTab
+                items={documentValidityRules}
+                search={documentRuleSearch}
+                onSearchChange={setDocumentRuleSearch}
+              />
             ) : (
               <CompanyDirectoryTab
                 rows={companiesDirectory}
@@ -244,6 +309,8 @@ interface TabProps {
   onDelete: (id: string) => void;
   onUpdate: (id: string, name: string) => void;
   saving: boolean;
+  allowAdd?: boolean;
+  allowEdit?: boolean;
 }
 
 function CategoryTab({ items, newName, setNewName, onAdd, onDelete, onUpdate, saving }: TabProps) {
@@ -256,6 +323,8 @@ function CategoryTab({ items, newName, setNewName, onAdd, onDelete, onUpdate, sa
       onDelete={onDelete}
       onUpdate={onUpdate}
       saving={saving}
+      allowAdd={false}
+      allowEdit={false}
       placeholder="Например: ИТР"
       emptyText="Нет категорий. Добавьте вручную или загрузите из Bitrix24."
     />
@@ -272,6 +341,8 @@ function CourseTab({ items, newName, setNewName, onAdd, onDelete, onUpdate, savi
       onDelete={onDelete}
       onUpdate={onUpdate}
       saving={saving}
+      allowAdd={false}
+      allowEdit={false}
       placeholder="Например: Промышленная безопасность"
       emptyText="Нет курсов. Добавьте вручную или загрузите из Bitrix24."
     />
@@ -283,7 +354,7 @@ interface ItemListProps extends TabProps {
   emptyText: string;
 }
 
-function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, saving, placeholder, emptyText }: ItemListProps) {
+function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, saving, allowAdd = true, allowEdit = true, placeholder, emptyText }: ItemListProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
@@ -299,22 +370,24 @@ function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, savin
 
   return (
     <div className="space-y-4 w-fit min-w-full">
-      <div className="flex gap-2">
-        <input
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && onAdd()}
-          placeholder={placeholder}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        />
-        <button
-          onClick={onAdd}
-          disabled={saving || !newName.trim()}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-all"
-        >
-          <Plus size={14} /> Добавить
-        </button>
-      </div>
+      {allowAdd && (
+        <div className="flex gap-2">
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && onAdd()}
+            placeholder={placeholder}
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+          <button
+            onClick={onAdd}
+            disabled={saving || !newName.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-all"
+          >
+            <Plus size={14} /> Добавить
+          </button>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="text-center py-10 text-sm text-gray-400">{emptyText}</div>
@@ -323,7 +396,7 @@ function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, savin
           {items.map((item, idx) => (
             <div key={item.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50 group transition-all">
               <span className="text-xs text-gray-400 w-5 text-right flex-shrink-0">{idx + 1}</span>
-              {editing === item.id ? (
+              {allowEdit && editing === item.id ? (
                 <input
                   autoFocus
                   value={editValue}
@@ -333,12 +406,17 @@ function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, savin
                   className="flex-1 px-2 py-1 border border-blue-400 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               ) : (
-                <span className="flex-1 text-sm text-gray-800 cursor-pointer hover:text-blue-600" onClick={() => startEdit(item)}>
+                <span
+                  className={`flex-1 text-sm text-gray-800 ${allowEdit ? 'cursor-pointer hover:text-blue-600' : ''}`}
+                  onClick={() => {
+                    if (allowEdit) startEdit(item);
+                  }}
+                >
                   {item.name}
                 </span>
               )}
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                {editing !== item.id && (
+                {allowEdit && editing !== item.id && (
                   <button onClick={() => startEdit(item)} className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all">
                     <Save size={13} />
                   </button>
@@ -349,6 +427,95 @@ function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, savin
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentValidityTab({
+  items,
+  search,
+  onSearchChange,
+}: {
+  items: RefDocumentValidityRule[];
+  search: string;
+  onSearchChange: (value: string) => void;
+}) {
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredItems = useMemo(() => {
+    if (!normalizedSearch) return items;
+    return items.filter(item =>
+      [
+        item.course_name,
+        item.category,
+        item.document_type,
+        formatDurationLabel(item.duration_value, item.duration_unit),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedSearch)
+    );
+  }, [items, normalizedSearch]);
+
+  return (
+    <div className="space-y-4 w-fit min-w-full">
+      <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm text-blue-900">
+        Курсы и категории на этой вкладке подтягиваются автоматически из вкладок `Названия курсов` и `Категории`.
+        На этой вкладке данные отображаются только для просмотра.
+      </div>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="relative w-full max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search}
+            onChange={e => onSearchChange(e.target.value)}
+            placeholder="Поиск по курсу, категории или типу документа"
+            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+        <div className="text-xs text-gray-500">
+          Найдено правил: <span className="font-medium text-gray-700">{filteredItems.length}</span>
+        </div>
+      </div>
+
+      {filteredItems.length === 0 ? (
+        <div className="text-center py-10 text-sm text-gray-400">Нет правил. Добавьте курсы и категории в соседних вкладках.</div>
+      ) : (
+        <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <div className="overflow-auto">
+            <table className="w-full min-w-[980px] text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Курс</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Категория</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Тип документа</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Срок</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map(item => {
+                  return (
+                    <tr key={item.id} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-4 py-2">
+                        <span className="text-sm text-gray-800">{item.course_name}</span>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className="text-sm text-gray-800">{item.category}</span>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className="text-sm text-gray-800">{item.document_type || '—'}</span>
+                      </td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                        {formatDurationLabel(item.duration_value, item.duration_unit) || '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

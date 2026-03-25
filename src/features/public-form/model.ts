@@ -27,6 +27,16 @@ export interface ValidationErrors {
   participants?: string;
 }
 
+export const PARTICIPANT_REQUIRED_FIELD_LABELS = {
+  photo: 'фото',
+  last_name: 'фамилия',
+  first_name: 'имя',
+  patronymic: 'отчество',
+  position: 'должность',
+  category: 'категория',
+  courses: 'курсы',
+} as const;
+
 export type LinkStatus = 'loading' | 'valid' | 'invalid' | 'expired' | 'inactive' | 'submitted';
 export type PaymentOrderStage = 'idle' | 'uploading' | 'recognizing' | 'checking' | 'done' | 'error';
 
@@ -47,6 +57,35 @@ export function createLocalParticipant(): LocalParticipant {
     courses: [],
     photo_url: '',
   };
+}
+
+export function hasParticipantPhoto(participant: LocalParticipant): boolean {
+  return Boolean(participant.photoFile || participant.photoPreview || participant.photo_url);
+}
+
+export function isParticipantRowStarted(participant: LocalParticipant): boolean {
+  return Boolean(
+    participant.isPersisted ||
+    participant.last_name.trim() ||
+    participant.first_name.trim() ||
+    participant.patronymic.trim() ||
+    participant.position.trim() ||
+    participant.category.trim() ||
+    participant.courses.length > 0 ||
+    hasParticipantPhoto(participant)
+  );
+}
+
+export function getParticipantMissingFields(participant: LocalParticipant): Array<keyof typeof PARTICIPANT_REQUIRED_FIELD_LABELS> {
+  const missing: Array<keyof typeof PARTICIPANT_REQUIRED_FIELD_LABELS> = [];
+  if (!hasParticipantPhoto(participant)) missing.push('photo');
+  if (!participant.last_name.trim()) missing.push('last_name');
+  if (!participant.first_name.trim()) missing.push('first_name');
+  if (!participant.patronymic.trim()) missing.push('patronymic');
+  if (!participant.position.trim()) missing.push('position');
+  if (!participant.category.trim()) missing.push('category');
+  if (participant.courses.length === 0) missing.push('courses');
+  return missing;
 }
 
 export function normalizeDigits(value: string): string {

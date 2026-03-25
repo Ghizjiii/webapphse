@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Building2, Search } from 'lucide-react';
+import { Building2, Loader2, Search } from 'lucide-react';
 import type { RefCompanyDirectory } from '../../types';
 import type { PaymentOrderStage, ValidationErrors } from './model';
 
@@ -111,10 +111,16 @@ export function CompanySection(props: CompanySectionProps) {
               className="px-3 py-2.5 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 text-sm inline-flex items-center gap-1.5"
               disabled={lookupLoading || !companyBin.trim()}
             >
-              <Search size={14} />
+              {lookupLoading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
               {lookupLoading ? 'Поиск...' : 'Поиск'}
             </button>
           </div>
+          {lookupLoading && (
+            <div className="mt-2 inline-flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-1.5 text-xs text-blue-700 border border-blue-100">
+              <Loader2 size={12} className="animate-spin" />
+              Идет поиск компании в справочнике...
+            </div>
+          )}
           {lookupTouched && !directoryMatch && (
             <button
               type="button"
