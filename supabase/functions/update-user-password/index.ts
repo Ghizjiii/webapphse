@@ -1,56 +1,38 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-
-const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN") || "";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": allowedOrigin,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared/cors.ts";
 
 Deno.serve(async (req: Request) => {
-  if (!allowedOrigin) {
-    return new Response(JSON.stringify({ error: "ALLOWED_ORIGIN is not configured" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+  if (req.method === "OPTIONS") {
+    return preflightResponse(req);
   }
 
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+  const corsError = validateCorsRequest(req);
+  if (corsError) {
+    return corsError;
   }
 
   try {
     const adminToken = Deno.env.get("ADMIN_API_TOKEN");
     if (!adminToken) {
-      return new Response(JSON.stringify({ error: "ADMIN_API_TOKEN is not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse(req, 500, { error: "ADMIN_API_TOKEN is not configured" });
     }
 
     const authHeader = req.headers.get("Authorization") || "";
     const providedToken = authHeader.replace(/^Bearer\s+/i, "").trim();
     if (!providedToken || providedToken !== adminToken) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse(req, 401, { error: "Unauthorized" });
     }
 
     const { email, password } = await req.json();
     if (!email || !password) {
-      return new Response(JSON.stringify({ error: "email and password are required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse(req, 400, { error: "email and password are required" });
     }
 
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
+      { auth: { autoRefreshToken: false, persistSession: false } },
     );
 
     const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -66,29 +48,18 @@ Deno.serve(async (req: Request) => {
         if (user) {
           const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, { password });
           if (updateError) {
-            return new Response(JSON.stringify({ error: updateError.message }), {
-              status: 400,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+            return jsonResponse(req, 400, { error: updateError.message });
           }
-          return new Response(JSON.stringify({ success: true, action: "updated", userId: user.id }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+
+          return jsonResponse(req, 200, { success: true, action: "updated", userId: user.id });
         }
       }
-      return new Response(JSON.stringify({ error: createError.message }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+
+      return jsonResponse(req, 400, { error: createError.message });
     }
 
-    return new Response(JSON.stringify({ success: true, action: "created", userId: created.user?.id }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse(req, 200, { success: true, action: "created", userId: created.user?.id });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse(req, 500, { error: String(e) });
   }
 });

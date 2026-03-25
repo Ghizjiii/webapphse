@@ -10,11 +10,12 @@ import cv2
 import fitz  # PyMuPDF
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from paddleocr import PaddleOCR
 
 ALLOWED_ORIGINS = [v.strip() for v in os.getenv("ALLOWED_ORIGINS", "*").split(",") if v.strip()]
+UPSTREAM_TOKEN = os.getenv("PAYMENT_OCR_UPSTREAM_TOKEN", "").strip()
 
 app = FastAPI(title="Payment OCR Service", version="1.2.0")
 app.add_middleware(
@@ -328,7 +329,13 @@ def health() -> dict[str, str]:
 
 
 @app.post("/extract-payment-order")
-async def extract_payment_order(file: UploadFile = File(...)) -> dict[str, Any]:
+async def extract_payment_order(
+    file: UploadFile = File(...),
+    x_ocr_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    if UPSTREAM_TOKEN and x_ocr_token != UPSTREAM_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")

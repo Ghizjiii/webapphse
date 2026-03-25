@@ -235,6 +235,13 @@ export default function QuestionnairePage() {
               }`}>
                 {questionnaire.is_active && !isExpired ? 'Активна' : 'Неактивна'}
               </span>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                questionnaire.payment_order_optional
+                  ? 'bg-slate-50 text-slate-700 border-slate-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200'
+              }`}>
+                {questionnaire.payment_order_optional ? 'Платежка не обязательна' : 'Платежка обязательна'}
+              </span>
               {questionnaire.expires_at && (
                 <span className={`text-xs flex items-center gap-1 ${isExpired ? 'text-red-500' : 'text-gray-500'}`}>
                   <Clock size={12} /> Срок: {new Date(questionnaire.expires_at).toLocaleDateString('ru-RU')}
@@ -443,44 +450,48 @@ export default function QuestionnairePage() {
                   )}
                 </div>
               ))}
-              <div>
-                <div className="text-xs text-gray-500 mb-1">Платежное поручение</div>
-                {String(company.payment_order_url || '').trim() ? (
-                  <div className="space-y-1">
-                    <a
-                      href={String(company.payment_order_url || '')}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:underline"
-                    >
-                      {String(company.payment_order_name || 'Открыть файл')}
-                    </a>
-                    <div className="text-xs text-gray-600">
-                      № {String(company.payment_order_number || '—')} · {String(company.payment_order_date || '—')} · {company.payment_order_amount ?? '—'}
-                    </div>
+              {!questionnaire.payment_order_optional && (
+                <>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Платежное поручение</div>
+                    {String(company.payment_order_url || '').trim() ? (
+                      <div className="space-y-1">
+                        <a
+                          href={String(company.payment_order_url || '')}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          {String(company.payment_order_name || 'Открыть файл')}
+                        </a>
+                        <div className="text-xs text-gray-600">
+                          № {String(company.payment_order_number || '—')} · {String(company.payment_order_date || '—')} · {company.payment_order_amount ?? '—'}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm font-medium text-gray-900">?</div>
+                    )}
                   </div>
-                ) : (
-                  <div className="text-sm font-medium text-gray-900">?</div>
-                )}
-              </div>
-              <div>
-                <div className="text-xs text-gray-500 mb-1">Статус оплаты</div>
-                <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                  company.payment_is_paid ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700'
-                }`}>
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    checked={Boolean(company.payment_is_paid)}
-                    onChange={(e) => void togglePaymentStatus(e.target.checked)}
-                    disabled={savingPaymentStatus || !String(company.payment_order_url || '').trim()}
-                  />
-                  <span>{company.payment_is_paid ? 'Оплачено' : 'Не оплачено'}</span>
-                </label>
-                {!String(company.payment_order_url || '').trim() && (
-                  <div className="text-xs text-gray-500 mt-1">Сначала дождитесь загрузки платежного поручения.</div>
-                )}
-              </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Статус оплаты</div>
+                    <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                      company.payment_is_paid ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        checked={Boolean(company.payment_is_paid)}
+                        onChange={(e) => void togglePaymentStatus(e.target.checked)}
+                        disabled={savingPaymentStatus || !String(company.payment_order_url || '').trim()}
+                      />
+                      <span>{company.payment_is_paid ? 'Оплачено' : 'Не оплачено'}</span>
+                    </label>
+                    {!String(company.payment_order_url || '').trim() && (
+                      <div className="text-xs text-gray-500 mt-1">Сначала дождитесь загрузки платежного поручения.</div>
+                    )}
+                  </div>
+                </>
+              )}
               {deal?.bitrix_deal_id && (
                 <div>
                   <div className="text-xs text-gray-500 mb-1">ID сделки в Битрикс</div>
