@@ -21,11 +21,15 @@ uvicorn app:app --host 0.0.0.0 --port 8001
 Notes:
 - For scanned PDFs, service does fallback OCR: renders PDF pages to images and runs PaddleOCR.
 - OCR model is configured with `lang=\"ru\"` for better RU/KZ docs.
+- Optional env for protected deployment:
+  - `ALLOWED_ORIGINS=http://localhost:5173,https://your-domain.vercel.app`
+  - `PAYMENT_OCR_UPSTREAM_TOKEN=shared-secret`
 
 ## API
 
 `POST /extract-payment-order`
 - form-data: `file`
+- header: `x-ocr-token` when `PAYMENT_OCR_UPSTREAM_TOKEN` is configured
 
 Response:
 ```json
@@ -48,4 +52,12 @@ Set OCR endpoint:
 
 ```env
 VITE_PAYMENT_OCR_API_URL=http://localhost:8001
+```
+
+For Vercel proxy deployment:
+
+```env
+ALLOWED_ORIGIN=http://localhost:5173,https://your-domain.vercel.app
+PAYMENT_OCR_UPSTREAM_URL=http://localhost:8001
+PAYMENT_OCR_UPSTREAM_TOKEN=shared-secret
 ```

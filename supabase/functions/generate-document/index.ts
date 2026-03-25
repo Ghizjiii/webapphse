@@ -1,70 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared/cors.ts";
 
-const allowedOriginEnv = Deno.env.get("ALLOWED_ORIGIN") || "";
 const googleScriptUrl = Deno.env.get("GOOGLE_APPS_SCRIPT_URL") || "";
 const googleScriptToken = Deno.env.get("GOOGLE_APPS_SCRIPT_TOKEN") || "";
-
-function normalizeOriginRule(value: string): string {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  if (trimmed === "*") return "*";
-  return trimmed.replace(/\/+$/, "");
-}
-
-function isOriginRuleMatch(requestOrigin: string, rule: string): boolean {
-  const normalizedRequestOrigin = normalizeOriginRule(requestOrigin);
-  const normalizedRule = normalizeOriginRule(rule);
-
-  if (!normalizedRequestOrigin || !normalizedRule) return false;
-  if (normalizedRule === "*") return true;
-  if (normalizedRule === normalizedRequestOrigin) return true;
-
-  // Supports wildcard host rules, for example:
-  // - https://*.vercel.app
-  // - *.vercel.app
-  if (!normalizedRule.includes("*")) return false;
-
-  try {
-    const req = new URL(normalizedRequestOrigin);
-    const hasScheme = normalizedRule.includes("://");
-    const protocolPrefix = hasScheme ? `${req.protocol}//` : "";
-    const hostPattern = hasScheme ? normalizedRule.split("://")[1] : normalizedRule;
-    const normalizedHostPattern = hostPattern.startsWith("*.") ? hostPattern.slice(2) : hostPattern;
-
-    if (!normalizedHostPattern) return false;
-    if (hasScheme && !normalizedRule.startsWith(protocolPrefix)) return false;
-
-    return req.hostname === normalizedHostPattern || req.hostname.endsWith(`.${normalizedHostPattern}`);
-  } catch {
-    return false;
-  }
-}
-
-function fallbackAllowedOrigin(configured: string[]): string {
-  const firstExact = configured.find(v => v && !v.includes("*"));
-  return firstExact || "*";
-}
-
-function resolveAllowedOrigin(requestOrigin: string): string {
-  const configured = allowedOriginEnv
-    .split(",")
-    .map(v => normalizeOriginRule(v))
-    .filter(Boolean);
-
-  if (configured.length === 0) return requestOrigin || "*";
-  if (requestOrigin && configured.some(rule => isOriginRuleMatch(requestOrigin, rule))) return requestOrigin;
-  return fallbackAllowedOrigin(configured);
-}
-
-function corsHeaders(req: Request): Record<string, string> {
-  const requestOrigin = req.headers.get("origin") || "";
-  return {
-    "Access-Control-Allow-Origin": resolveAllowedOrigin(requestOrigin),
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-    "Vary": "Origin",
-  };
-}
 
 type GenerateBody = {
   templateKey: string;
@@ -80,31 +18,21 @@ type GenerateBody = {
 };
 
 Deno.serve(async (req: Request) => {
-  const headers = corsHeaders(req);
-
-  if (!allowedOriginEnv) {
-    return new Response(JSON.stringify({ error: "ALLOWED_ORIGIN is not configured" }), {
-      status: 500,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
+  if (req.method === "OPTIONS") {
+    return preflightResponse(req);
   }
 
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers });
+  const corsError = validateCorsRequest(req);
+  if (corsError) {
+    return corsError;
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
+    return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
   if (!googleScriptUrl) {
-    return new Response(JSON.stringify({ error: "GOOGLE_APPS_SCRIPT_URL is not configured" }), {
-      status: 500,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
+    return jsonResponse(req, 500, { error: "GOOGLE_APPS_SCRIPT_URL is not configured" });
   }
 
   try {
@@ -113,9 +41,8 @@ Deno.serve(async (req: Request) => {
     const hasSinglePlaceholders = !!body.placeholders && typeof body.placeholders === "object";
     const hasItems = Array.isArray(body.items) && body.items.length > 0;
     if (!body.templateKey || !body.fileName || (!hasSinglePlaceholders && !hasItems)) {
-      return new Response(JSON.stringify({ error: "templateKey, fileName and placeholders or items[] are required" }), {
-        status: 400,
-        headers: { ...headers, "Content-Type": "application/json" },
+      return jsonResponse(req, 400, {
+        error: "templateKey, fileName and placeholders or items[] are required",
       });
     }
 
@@ -145,12 +72,9 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!upstream.ok) {
-      return new Response(JSON.stringify({
+      return jsonResponse(req, 502, {
         error: upstreamJson.error || `Google Apps Script HTTP ${upstream.status}`,
         upstream: upstreamJson,
-      }), {
-        status: 502,
-        headers: { ...headers, "Content-Type": "application/json" },
       });
     }
 
@@ -164,23 +88,20 @@ Deno.serve(async (req: Request) => {
     const photoIssues = Array.isArray(upstreamJson.photoIssues) ? upstreamJson.photoIssues : [];
 
     if (upstreamError) {
-      return new Response(JSON.stringify({
+      return jsonResponse(req, 502, {
         error: `Google Apps Script error: ${upstreamError}`,
         upstream: upstreamJson,
-      }), {
-        status: 502,
-        headers: { ...headers, "Content-Type": "application/json" },
       });
     }
 
     if (!fileUrl) {
-      return new Response(JSON.stringify({ error: "Google Apps Script did not return fileUrl", upstream: upstreamJson }), {
-        status: 502,
-        headers: { ...headers, "Content-Type": "application/json" },
+      return jsonResponse(req, 502, {
+        error: "Google Apps Script did not return fileUrl",
+        upstream: upstreamJson,
       });
     }
 
-    return new Response(JSON.stringify({
+    return jsonResponse(req, 200, {
       ok: true,
       fileUrl,
       fileId,
@@ -191,14 +112,9 @@ Deno.serve(async (req: Request) => {
       unresolvedTokens,
       photoIssueCount,
       photoIssues,
-    }), {
-      headers: { ...headers, "Content-Type": "application/json" },
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
-      headers: { ...headers, "Content-Type": "application/json" },
-    });
+    return jsonResponse(req, 500, { error: msg });
   }
 });

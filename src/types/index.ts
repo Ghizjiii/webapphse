@@ -3,6 +3,7 @@ export interface QuestionnaireLink {
   secret_token: string;
   title: string;
   is_active: boolean;
+  payment_order_optional: boolean;
   expires_at: string | null;
   created_by: string | null;
   created_at: string;
@@ -65,6 +66,20 @@ export interface RefCompanyDirectory {
   contract_end: string | null;
   contract_status: string;
   contract_is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DocumentDurationUnit = 'day' | 'month' | 'year';
+
+export interface RefDocumentValidityRule {
+  id: string;
+  course_name: string;
+  category: string;
+  document_type: string;
+  duration_value: number;
+  duration_unit: DocumentDurationUnit;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -133,6 +148,11 @@ export interface Certificate {
   commission_member_4: string;
   commission_members: string;
   qualification: string;
+  level: string;
+  marker_pass: string;
+  type_learn: string;
+  commis_concl: string;
+  grade: string;
   manager: string;
   is_printed: boolean;
   employee_status: string;
@@ -158,6 +178,9 @@ export interface GeneratedDocument {
   template_name: string;
   file_name: string;
   file_url: string;
+  course_name?: string | null;
+  category?: string | null;
+  employees_count?: number | null;
   generated_at: string;
   generated_by: string | null;
   created_at: string;
