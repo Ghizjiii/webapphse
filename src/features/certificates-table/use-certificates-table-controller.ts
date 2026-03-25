@@ -614,6 +614,9 @@ export function useCertificatesTableController({
  template_name: group.template.name,
  file_name: fileName,
  file_url: fileUrl,
+ course_name: row.cert.course_name || '',
+ category: row.cert.category || '',
+ employees_count: group.rows.length,
  generated_at: new Date().toISOString(),
  }))
  );
@@ -696,6 +699,54 @@ export function useCertificatesTableController({
  value: cert.course_name || '',
  })) || cert.course_name;
 
+ const markerPassValue = String(cert.marker_pass || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.MARKER_PASS,
+ fieldCamelName: BITRIX_FIELDS.MARKER_PASS,
+ value: cert.marker_pass || '',
+ })
+ : '';
+ if (String(cert.marker_pass || '').trim() && !markerPassValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Отметка о проверке знаний": ${cert.marker_pass}`);
+ }
+
+ const typeLearnValue = String(cert.type_learn || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.TYPE_LEARN,
+ fieldCamelName: BITRIX_FIELDS.TYPE_LEARN,
+ value: cert.type_learn || '',
+ })
+ : '';
+ if (String(cert.type_learn || '').trim() && !typeLearnValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Вид проверки знаний / тип обучения / Причина обучения": ${cert.type_learn}`);
+ }
+
+ const commisConclValue = String(cert.commis_concl || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.COMMIS_CONCL,
+ fieldCamelName: BITRIX_FIELDS.COMMIS_CONCL,
+ value: cert.commis_concl || '',
+ })
+ : '';
+ if (String(cert.commis_concl || '').trim() && !commisConclValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Заключение комиссии": ${cert.commis_concl}`);
+ }
+
+ const gradeValue = String(cert.grade || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.GRADE,
+ fieldCamelName: BITRIX_FIELDS.GRADE,
+ value: cert.grade || '',
+ })
+ : '';
+ if (String(cert.grade || '').trim() && !gradeValue) {
+ throw new Error(`Не найдено значение списка Bitrix для поля "Оценка за квалиф. экзамен": ${cert.grade}`);
+ }
+
  const fields: Record<string, unknown> = {
  TITLE: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - '),
  [BITRIX_FIELDS.LAST_NAME]: cert.last_name || '',
@@ -715,6 +766,11 @@ export function useCertificatesTableController({
  [BITRIX_FIELDS.COMMISSION_MEMBER_4]: cert.commission_member_4 || '',
  [BITRIX_FIELDS.COMMISSION_MEMBERS]: cert.commission_members || '',
  [BITRIX_FIELDS.QUALIFICATION]: cert.qualification || '',
+ [BITRIX_FIELDS.LEVEL]: cert.level || '',
+ [BITRIX_FIELDS.MARKER_PASS]: markerPassValue || '',
+ [BITRIX_FIELDS.TYPE_LEARN]: typeLearnValue || '',
+ [BITRIX_FIELDS.COMMIS_CONCL]: commisConclValue || '',
+ [BITRIX_FIELDS.GRADE]: gradeValue || '',
  [BITRIX_FIELDS.MANAGER]: cert.manager || '',
  [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? '1' : '0',
  [BITRIX_FIELDS.EMPLOYEE_STATUS]: cert.employee_status || '',
