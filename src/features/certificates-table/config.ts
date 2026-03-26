@@ -54,7 +54,7 @@ export const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   first_name: 120,
   middle_name: 130,
   position: 130,
-  category: 95,
+  category: 120,
   course_name: 240,
   document_number: 125,
   protocol_number: 110,
