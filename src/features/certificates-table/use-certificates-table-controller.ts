@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
  BITRIX_FIELDS,
  BITRIX_FIELDS_RAW,
  createSmartProcessItem,
+ fetchUserFieldEnumValues,
  findSmartProcessEntityTypeId,
  resolveSmartProcessEnumId,
  updateSmartProcessItem,
@@ -50,6 +51,113 @@ export function useCertificatesTableController({
  onRefresh,
 }: CertificatesTableProps) {
  const { showToast } = useToast();
+ const canonicalMarkerPassOptions = [
+ 'Прошел (-а)',
+ 'Не прошел (-а)',
+ 'Подлежит повторной проверке знаний',
+ ];
+ const canonicalCommisConclOptions = [
+ 'Сдал (-а)',
+ 'Не сдал (-а)',
+ ];
+ const canonicalGradeOptions = [
+ 'Плохо',
+ 'Удовлетворительно',
+ 'Хорошо',
+ 'Отлично',
+ ];
+ const canonicalEmployeeStatusOptions = [
+ 'Работает',
+ 'Уволен',
+ ];
+ const printedStatusOptions = [
+ 'Да',
+ 'Нет',
+ ];
+ const printedFilterOptions = ['Да', 'Нет'];
+
+ function normalizeMarkerPassValue(value: string): string {
+ const normalized = String(value || '').trim().toLocaleLowerCase('ru');
+ if (!normalized) return '';
+ if (normalized === 'прошел' || normalized === 'прошла' || normalized === 'прошел (-а)' || normalized === 'прошла (-а)') {
+ return 'Прошел (-а)';
+ }
+ if (normalized === 'не прошел' || normalized === 'не прошла' || normalized === 'не прошел (-а)' || normalized === 'не прошла (-а)') {
+ return 'Не прошел (-а)';
+ }
+ if (
+ normalized === 'подлежит повторной проверке знаний' ||
+ normalized === 'проверка знаний проведена'
+ ) {
+ return 'Подлежит повторной проверке знаний';
+ }
+ return String(value || '').trim();
+ }
+
+ function normalizeCommisConclValue(value: string): string {
+ const normalized = String(value || '').trim().toLocaleLowerCase('ru');
+ if (!normalized) return '';
+ if (
+ normalized === 'сдал' ||
+ normalized === 'сдала' ||
+ normalized === 'сдал (-а)' ||
+ normalized === 'сдала (-а)' ||
+ normalized === 'сдал (-a)' ||
+ normalized === 'сдала (-a)'
+ ) {
+ return 'Сдал (-а)';
+ }
+ if (
+ normalized === 'не сдал' ||
+ normalized === 'не сдала' ||
+ normalized === 'не сдал (-а)' ||
+ normalized === 'не сдала (-а)' ||
+ normalized === 'не сдал (-a)' ||
+ normalized === 'не сдала (-a)'
+ ) {
+ return 'Не сдал (-а)';
+ }
+ return String(value || '').trim();
+ }
+
+ function toBitrixCommisConclValue(value: string): string {
+ const normalized = normalizeCommisConclValue(value);
+ if (normalized === 'Сдал (-а)') return 'Сдал (-a)';
+ if (normalized === 'Не сдал (-а)') return 'Не сдал (-a)';
+ return normalized;
+ }
+
+ function normalizeTypeLearnValue(value: string): string {
+ const normalized = String(value || '').trim().toLocaleLowerCase('ru');
+ if (!normalized) return '';
+ if (normalized === 'первичный' || normalized === 'первичная') return 'первичная';
+ if (normalized === 'повторный' || normalized === 'повторная') return 'повторная';
+ if (normalized === 'периодический' || normalized === 'периодическая') return 'периодическая';
+ return String(value || '').trim();
+ }
+
+ function normalizeGradeValue(value: string): string {
+ const normalized = String(value || '').trim().toLocaleLowerCase('ru');
+ if (!normalized) return '';
+ if (normalized === 'плохо') return 'Плохо';
+ if (normalized === 'удовлетворительно') return 'Удовлетворительно';
+ if (normalized === 'хорошо') return 'Хорошо';
+ if (normalized === 'отлично') return 'Отлично';
+ return String(value || '').trim();
+ }
+
+ function normalizeEmployeeStatusValue(value: string): string {
+ const normalized = String(value || '').trim().toLocaleLowerCase('ru');
+ if (!normalized) return '';
+ if (normalized === 'работает' || normalized === 'active' || normalized === 'работающий') {
+ return 'Работает';
+ }
+ if (normalized === 'уволен' || normalized === 'inactive' || normalized === 'не работает') {
+ return 'Уволен';
+ }
+ return String(value || '').trim();
+ }
+
  const [localCertificates, setLocalCertificates] = useState<Certificate[]>(certificates);
  const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
 
@@ -62,8 +170,22 @@ export function useCertificatesTableController({
  const [generatingDocs, setGeneratingDocs] = useState(false);
  const [courseFilter, setCourseFilter] = useState<string>('all');
  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+ const [printedFilter, setPrintedFilter] = useState<string>('all');
  const [bulkStartDate, setBulkStartDate] = useState<string>('');
  const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
+ const [bulkCategory, setBulkCategory] = useState<string>('');
+ const [categoryValueOptions, setCategoryValueOptions] = useState<string[]>([]);
+ const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
+ const [markerPassOptions, setMarkerPassOptions] = useState<string[]>([]);
+ const [bulkTypeLearn, setBulkTypeLearn] = useState<string>('');
+ const [typeLearnOptions, setTypeLearnOptions] = useState<string[]>([]);
+ const [bulkCommisConcl, setBulkCommisConcl] = useState<string>('');
+ const [commisConclOptions, setCommisConclOptions] = useState<string[]>([]);
+ const [bulkGrade, setBulkGrade] = useState<string>('');
+ const [gradeOptions, setGradeOptions] = useState<string[]>([]);
+ const [bulkEmployeeStatus, setBulkEmployeeStatus] = useState<string>('');
+ const [employeeStatusOptions, setEmployeeStatusOptions] = useState<string[]>([]);
+ const [bulkPrintedStatus, setBulkPrintedStatus] = useState<string>('');
  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
  const columnsMenuRef = useRef<HTMLDivElement>(null);
  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
@@ -86,7 +208,14 @@ export function useCertificatesTableController({
  } | null>(null);
 
  useEffect(() => {
- setLocalCertificates(certificates);
+ setLocalCertificates(certificates.map(cert => ({
+ ...cert,
+ marker_pass: normalizeMarkerPassValue(cert.marker_pass),
+ type_learn: normalizeTypeLearnValue(cert.type_learn),
+ commis_concl: normalizeCommisConclValue(cert.commis_concl),
+ grade: normalizeGradeValue(cert.grade),
+ employee_status: normalizeEmployeeStatusValue(cert.employee_status),
+ })));
  }, [certificates]);
 
  useEffect(() => {
@@ -99,6 +228,57 @@ export function useCertificatesTableController({
  .then(({ data }) => {
  setDocumentValidityRules(data || []);
  });
+ }, []);
+
+ function mergeSelectOptions(...lists: string[][]): string[] {
+ const result: string[] = [];
+ const seen = new Set<string>();
+
+ for (const list of lists) {
+ for (const item of list) {
+ const normalized = String(item || '').trim();
+ if (!normalized) continue;
+ const key = normalized.toLocaleLowerCase('ru');
+ if (seen.has(key)) continue;
+ seen.add(key);
+ result.push(normalized);
+ }
+ }
+
+ return result;
+ }
+
+ useEffect(() => {
+ void (async () => {
+ const fallbackCategoryOptions = ['ИТР', 'Обычный'];
+ const fallbackTypeLearnOptions = ['первичная', 'повторная', 'периодическая'];
+
+ try {
+ const entityTypeId = await findSmartProcessEntityTypeId();
+ const entityId = `CRM_SPA_12_${entityTypeId}`;
+ const [categoryValues, typeLearnValues] = await Promise.all([
+ fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.CATEGORY, entityId),
+ fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.TYPE_LEARN, entityId),
+ ]);
+
+ setCategoryValueOptions(mergeSelectOptions(categoryValues, fallbackCategoryOptions));
+ setMarkerPassOptions(canonicalMarkerPassOptions);
+ setTypeLearnOptions(mergeSelectOptions(typeLearnValues, fallbackTypeLearnOptions));
+ setCommisConclOptions(canonicalCommisConclOptions);
+ setGradeOptions(canonicalGradeOptions);
+ setEmployeeStatusOptions(canonicalEmployeeStatusOptions);
+ return;
+ } catch {
+ // best effort
+ }
+
+ setCategoryValueOptions(fallbackCategoryOptions);
+ setMarkerPassOptions(canonicalMarkerPassOptions);
+ setTypeLearnOptions(fallbackTypeLearnOptions);
+ setCommisConclOptions(canonicalCommisConclOptions);
+ setGradeOptions(canonicalGradeOptions);
+ setEmployeeStatusOptions(canonicalEmployeeStatusOptions);
+ })();
  }, []);
 
  const orderedVisibleColumnKeys = useMemo(
@@ -137,13 +317,16 @@ export function useCertificatesTableController({
  () => sorted.filter(cert => {
  if (courseFilter !== 'all' && cert.course_name !== courseFilter) return false;
  if (categoryFilter !== 'all' && cert.category !== categoryFilter) return false;
+ if (printedFilter === 'Да' && !cert.is_printed) return false;
+ if (printedFilter === 'Нет' && cert.is_printed) return false;
  return true;
  }),
- [sorted, courseFilter, categoryFilter]
+ [sorted, courseFilter, categoryFilter, printedFilter]
  );
  const targetRowsInfo = [
  courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`,
  categoryFilter === 'all' ? 'все категории' : `категория: ${categoryFilter}`,
+ printedFilter === 'all' ? 'статус печати: все' : `статус печати: ${printedFilter}`,
  ].join(', ');
  const hasBitrixRows = useMemo(
  () => localCertificates.some(cert => String(cert.bitrix_item_id || '').trim().length > 0 || cert.sync_status === 'synced'),
@@ -203,8 +386,8 @@ export function useCertificatesTableController({
  }
 
  function missingRuleMessage(cert: Pick<Certificate, 'course_name' | 'category'>) {
- const courseName = String(cert.course_name || '').trim() || 'Без курса';
- const category = String(cert.category || '').trim() || 'Без категории';
+ const courseName = String(cert.course_name || '').trim() || 'без курса';
+ const category = String(cert.category || '').trim() || 'без категории';
  return `Не найдено правило срока документа для курса "${courseName}" и категории "${category}"`;
  }
 
@@ -296,6 +479,41 @@ export function useCertificatesTableController({
  setEditValue(value ?? '');
  }
 
+ async function saveDirectPatch(certId: string, patch: Partial<Certificate>) {
+ if (saving) return;
+ setSaving(true);
+ try {
+ const currentCertificate = localCertificates.find(cert => cert.id === certId);
+ if (!currentCertificate) return;
+
+ const { patch: normalizedPatch, missingRule } = autoExpiryPatchForCertificate(currentCertificate, { ...patch });
+ const { error } = await supabase
+ .from('certificates')
+ .update({ ...normalizedPatch, updated_at: new Date().toISOString() })
+ .eq('id', certId);
+ if (error) throw error;
+
+ setLocalCertificates(current => current.map(cert => (
+ cert.id === certId
+ ? { ...cert, ...normalizedPatch } as Certificate
+ : cert
+ )));
+
+ if (missingRule) {
+ showToast('warning', missingRuleMessage({
+ course_name: String(normalizedPatch.course_name ?? currentCertificate.course_name),
+ category: String(normalizedPatch.category ?? currentCertificate.category),
+ }));
+ }
+
+ onRefresh();
+ } catch {
+ showToast('error', 'Ошибка сохранения');
+ } finally {
+ setSaving(false);
+ }
+ }
+
  async function saveEdit() {
  if (!editCell) return;
  setSaving(true);
@@ -314,7 +532,7 @@ export function useCertificatesTableController({
  } else {
  const parsed = Number(normalized);
  if (!Number.isFinite(parsed)) {
- showToast('error', 'Цена должна быть числом');
+ showToast('error', 'Поле цены должно быть числом');
  setSaving(false);
  return;
  }
@@ -329,17 +547,20 @@ export function useCertificatesTableController({
  .update({ ...patch, updated_at: new Date().toISOString() })
  .eq('id', editCell.certId);
  if (error) throw error;
+
  setLocalCertificates(current => current.map(cert => (
  cert.id === editCell.certId
  ? { ...cert, ...patch } as Certificate
  : cert
  )));
+
  if (missingRule) {
  showToast('warning', missingRuleMessage({
  course_name: String(basePatch.course_name ?? currentCertificate.course_name),
  category: String(basePatch.category ?? currentCertificate.category),
  }));
  }
+
  setEditCell(null);
  onRefresh();
  } catch {
@@ -381,9 +602,9 @@ export function useCertificatesTableController({
  }));
  }
  if (errorCount > 0) {
- showToast('warning', `Частично заполнено: ${updates.length - errorCount} из ${updates.length}`);
+ showToast('warning', `Массовое заполнение: ${updates.length - errorCount} из ${updates.length}`);
  } else {
- showToast('success', `Заполнено ${updates.length} записей (${targetRowsInfo})`);
+ showToast('success', `Заполнено ${updates.length} строк (${targetRowsInfo})`);
  }
  onRefresh();
  } finally {
@@ -393,11 +614,11 @@ export function useCertificatesTableController({
 
  async function bulkFillNumber(field: 'document_number' | 'protocol_number', label: string) {
  if (bulkSaving) return;
- const startRaw = window.prompt(`Начальное значение для ${label} (${targetRowsInfo}):`, '1');
+ const startRaw = window.prompt(`Начальный номер для ${label} (${targetRowsInfo}):`, '1');
  if (startRaw === null) return;
  const start = Number(startRaw);
  if (!Number.isInteger(start) || start < 0) {
- showToast('error', 'Введите целое число >= 0');
+ showToast('error', 'Начальное значение должно быть >= 0');
  return;
  }
  await runBulk(
@@ -411,19 +632,19 @@ export function useCertificatesTableController({
  async function bulkFillProtocolWithMode() {
  if (bulkSaving) return;
  const modeRaw = window.prompt(
- `Режим заполнения поля Протокол (${targetRowsInfo}):\n1 - Автонумерация\n2 - Одинаковое значение`,
+ `Режим заполнения поля протокол (${targetRowsInfo}):\n1 - последовательный\n2 - одинаковое значение`,
  '1'
  );
  if (modeRaw === null) return;
 
  const mode = modeRaw.trim();
  if (mode === '1') {
- await bulkFillNumber('protocol_number', 'Протокол');
+ await bulkFillNumber('protocol_number', 'протокола');
  return;
  }
 
  if (mode === '2') {
- const value = window.prompt(`Введите значение для Протокол (${targetRowsInfo}):`, '');
+ const value = window.prompt(`Введите значение для протокола (${targetRowsInfo}):`, '');
  if (value === null) return;
  await runBulk(
  visibleRows.map(row => ({
@@ -434,12 +655,12 @@ export function useCertificatesTableController({
  return;
  }
 
- showToast('warning', 'Выберите режим: 1 или 2');
+ showToast('warning', 'Укажите режим: 1 или 2');
  }
 
  async function bulkFillText(field: keyof Certificate, label: string) {
  if (bulkSaving) return;
- const value = window.prompt(`Значение для ${label} (${targetRowsInfo}):`, '');
+ const value = window.prompt(`Введите текст для ${label} (${targetRowsInfo}):`, '');
  if (value === null) return;
  await runBulk(
  visibleRows.map(row => ({
@@ -449,9 +670,127 @@ export function useCertificatesTableController({
  );
  }
 
+ async function bulkFillMarkerPass() {
+ if (bulkSaving) return;
+ if (!bulkMarkerPass.trim()) {
+ showToast('warning', 'Выберите значение для поля "Отметка о проверке знаний"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { marker_pass: bulkMarkerPass } as Partial<Certificate>,
+ }))
+ );
+ }
+
+ async function bulkFillCategory() {
+ if (bulkSaving) return;
+ if (!bulkCategory.trim()) {
+ showToast('warning', 'Выберите значение для поля "Категория"');
+ return;
+ }
+
+ const missingRules: string[] = [];
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: (() => {
+ const next = autoExpiryPatchForCertificate(row, { category: bulkCategory });
+ if (next.missingRule) {
+ missingRules.push(`${row.course_name || 'без курса'} / ${bulkCategory}`);
+ }
+ return next.patch;
+ })(),
+ }))
+ );
+
+ if (missingRules.length > 0) {
+ const preview = Array.from(new Set(missingRules)).slice(0, 3).join('; ');
+ showToast('warning', `Для части строк срок документа не пересчитан из-за отсутствия правила. ${preview}`);
+ }
+ }
+
+ async function bulkFillTypeLearn() {
+ if (bulkSaving) return;
+ if (!bulkTypeLearn.trim()) {
+ showToast('warning', 'Выберите значение для поля "Вид проверки / тип / причина"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { type_learn: bulkTypeLearn } as Partial<Certificate>,
+ }))
+ );
+ }
+
+ async function bulkFillCommisConcl() {
+ if (bulkSaving) return;
+ if (!bulkCommisConcl.trim()) {
+ showToast('warning', 'Выберите значение для поля "Заключение комиссии"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { commis_concl: bulkCommisConcl } as Partial<Certificate>,
+ }))
+ );
+ }
+
+ async function bulkFillGrade() {
+ if (bulkSaving) return;
+ if (!bulkGrade.trim()) {
+ showToast('warning', 'Выберите значение для поля "Оценка за квалиф. экзамен"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { grade: bulkGrade } as Partial<Certificate>,
+ }))
+ );
+ }
+
+ async function bulkFillEmployeeStatus() {
+ if (bulkSaving) return;
+ if (!bulkEmployeeStatus.trim()) {
+ showToast('warning', 'Выберите значение для поля "Статус сотрудника"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { employee_status: bulkEmployeeStatus } as Partial<Certificate>,
+ }))
+ );
+ }
+
+ async function bulkFillPrintedStatus() {
+ if (bulkSaving) return;
+ if (!bulkPrintedStatus.trim()) {
+ showToast('warning', 'Выберите значение для поля "Напечатан"');
+ return;
+ }
+
+ const nextPrinted = bulkPrintedStatus === 'Да';
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { is_printed: nextPrinted } as Partial<Certificate>,
+ }))
+ );
+ }
+
  async function bulkFillPrice() {
  if (bulkSaving) return;
- const value = window.prompt(`Значение для Цена (${targetRowsInfo}):`, '');
+ const value = window.prompt(`Введите цену (${targetRowsInfo}):`, '');
  if (value === null) return;
  const normalized = String(value).replace(',', '.').trim();
  if (!normalized) {
@@ -465,7 +804,7 @@ export function useCertificatesTableController({
  }
  const parsed = Number(normalized);
  if (!Number.isFinite(parsed)) {
- showToast('error', 'Цена должна быть числом');
+ showToast('error', 'Поле цены должно быть числом');
  return;
  }
  await runBulk(
@@ -490,7 +829,7 @@ export function useCertificatesTableController({
  if (field === 'start_date') {
  const next = autoExpiryPatchForCertificate(row, basePatch);
  if (next.missingRule) {
- missingRules.push(`${row.course_name || 'Без курса'} / ${row.category || 'Без категории'}`);
+ missingRules.push(`${row.course_name || 'без курса'} / ${row.category || 'без категории'}`);
  }
  return {
  id: row.id,
@@ -510,7 +849,7 @@ export function useCertificatesTableController({
 
  if (field === 'start_date' && missingRules.length > 0) {
  const preview = Array.from(new Set(missingRules)).slice(0, 3).join('; ');
- showToast('warning', `Для части строк срок документа не рассчитан автоматически. ${preview}`);
+ showToast('warning', `Для части строк срок документа не пересчитан из-за отсутствия правила. ${preview}`);
  }
  }
 
@@ -530,6 +869,11 @@ export function useCertificatesTableController({
 
  let skipped = 0;
  for (const cert of visibleRows) {
+ if (cert.is_printed) {
+ skipped++;
+ continue;
+ }
+
  const template = resolveTemplateForCertificate(cert);
  if (!template) {
  skipped++;
@@ -552,7 +896,7 @@ export function useCertificatesTableController({
 
  const groupList = Array.from(grouped.values());
  if (groupList.length === 0) {
- showToast('warning', 'Нет подходящих шаблонов для выбранных записей');
+ showToast('warning', 'Нет поддерживаемых записей для генерации файлов');
  setGeneratingDocs(false);
  return;
  }
@@ -638,23 +982,23 @@ export function useCertificatesTableController({
  }
 
  if (generated > 0) {
- showToast('success', `Сгенерировано файлов: ${generated}. Пропущено записей: ${skipped}. Ошибок: ${failed}.`);
+ showToast('success', `Сгенерировано файлов: ${generated}. Пропущено групп: ${skipped}. Ошибок: ${failed}.`);
  if (unresolvedByFile.length > 0) {
  const preview = unresolvedByFile
  .slice(0, 2)
  .map(item => `${item.fileName}: ${item.tokens.slice(0, 4).join(', ')}`)
  .join(' | ');
- showToast('warning', `Внимание: в ${unresolvedByFile.length} файлах остались незамененные плейсхолдеры. ${preview}`);
+ showToast('warning', `В ${unresolvedByFile.length} файлах остались незаполненные плейсхолдеры. ${preview}`);
  }
  if (photoIssuesByFile.length > 0) {
  const preview = photoIssuesByFile
  .slice(0, 2)
  .map(item => `${item.fileName}: ${item.issues.slice(0, 2).join(', ')}`)
  .join(' | ');
- showToast('warning', `Проблемы с фото в ${photoIssuesByFile.length} файлах. ${preview}`);
+ showToast('warning', `Есть проблемы с фото в ${photoIssuesByFile.length} файлах. ${preview}`);
  }
  } else if (skipped > 0 && failed === 0) {
- showToast('warning', 'Нет подходящих шаблонов для выбранных записей');
+ showToast('warning', 'Нет поддерживаемых записей для генерации файлов');
  } else {
  showToast('error', 'Не удалось сгенерировать документы');
  }
@@ -669,11 +1013,11 @@ export function useCertificatesTableController({
  if (syncingBitrix) return;
 
  if (!bitrixDealId || !bitrixCompanyId) {
- showToast('error', 'Сначала выполните общую синхронизацию, чтобы получить ID сделки и компании в Bitrix24');
+ showToast('error', 'Нельзя синхронизировать, пока не заполнены ID сделки и компании в Bitrix24');
  return;
  }
  if (visibleRows.length === 0) {
- showToast('warning', 'Нет строк для отправки');
+ showToast('warning', 'Нет строк для выгрузки');
  return;
  }
 
@@ -699,54 +1043,70 @@ export function useCertificatesTableController({
  value: cert.course_name || '',
  })) || cert.course_name;
 
- const markerPassValue = String(cert.marker_pass || '').trim()
+ const normalizedMarkerPass = normalizeMarkerPassValue(cert.marker_pass || '');
+ const markerPassValue = String(normalizedMarkerPass || '').trim()
  ? await resolveSmartProcessEnumId({
  entityTypeId,
  fieldRawName: BITRIX_FIELDS_RAW.MARKER_PASS,
  fieldCamelName: BITRIX_FIELDS.MARKER_PASS,
- value: cert.marker_pass || '',
+ value: normalizedMarkerPass,
  })
  : '';
- if (String(cert.marker_pass || '').trim() && !markerPassValue) {
- throw new Error(`Не найдено значение списка Bitrix для поля "Отметка о проверке знаний": ${cert.marker_pass}`);
+ if (String(normalizedMarkerPass || '').trim() && !markerPassValue) {
+ throw new Error(`Не найден вариант Bitrix для поля "Отметка о проверке знаний": ${normalizedMarkerPass}`);
  }
 
- const typeLearnValue = String(cert.type_learn || '').trim()
+ const normalizedTypeLearn = normalizeTypeLearnValue(cert.type_learn || '');
+ const typeLearnValue = String(normalizedTypeLearn || '').trim()
  ? await resolveSmartProcessEnumId({
  entityTypeId,
  fieldRawName: BITRIX_FIELDS_RAW.TYPE_LEARN,
  fieldCamelName: BITRIX_FIELDS.TYPE_LEARN,
- value: cert.type_learn || '',
+ value: normalizedTypeLearn,
  })
  : '';
- if (String(cert.type_learn || '').trim() && !typeLearnValue) {
- throw new Error(`Не найдено значение списка Bitrix для поля "Вид проверки знаний / тип обучения / Причина обучения": ${cert.type_learn}`);
+ if (String(normalizedTypeLearn || '').trim() && !typeLearnValue) {
+ throw new Error(`Не найден вариант Bitrix для поля "Вид проверки / тип / причина": ${normalizedTypeLearn}`);
  }
 
- const commisConclValue = String(cert.commis_concl || '').trim()
+ const normalizedCommisConcl = toBitrixCommisConclValue(cert.commis_concl || '');
+ const commisConclValue = String(normalizedCommisConcl || '').trim()
  ? await resolveSmartProcessEnumId({
  entityTypeId,
  fieldRawName: BITRIX_FIELDS_RAW.COMMIS_CONCL,
  fieldCamelName: BITRIX_FIELDS.COMMIS_CONCL,
- value: cert.commis_concl || '',
+ value: normalizedCommisConcl,
  })
  : '';
- if (String(cert.commis_concl || '').trim() && !commisConclValue) {
- throw new Error(`Не найдено значение списка Bitrix для поля "Заключение комиссии": ${cert.commis_concl}`);
+ if (String(normalizedCommisConcl || '').trim() && !commisConclValue) {
+ throw new Error(`Не найден вариант Bitrix для поля "Заключение комиссии": ${normalizedCommisConcl}`);
  }
 
- const gradeValue = String(cert.grade || '').trim()
+ const normalizedGrade = normalizeGradeValue(cert.grade || '');
+ const gradeValue = String(normalizedGrade || '').trim()
  ? await resolveSmartProcessEnumId({
  entityTypeId,
  fieldRawName: BITRIX_FIELDS_RAW.GRADE,
  fieldCamelName: BITRIX_FIELDS.GRADE,
- value: cert.grade || '',
+ value: normalizedGrade,
  })
  : '';
- if (String(cert.grade || '').trim() && !gradeValue) {
- throw new Error(`Не найдено значение списка Bitrix для поля "Оценка за квалиф. экзамен": ${cert.grade}`);
+ if (String(normalizedGrade || '').trim() && !gradeValue) {
+ throw new Error(`Не найден вариант Bitrix для поля "Оценка за квалиф. экзамен": ${normalizedGrade}`);
  }
 
+ const normalizedEmployeeStatus = normalizeEmployeeStatusValue(cert.employee_status || '');
+ const employeeStatusValue = String(normalizedEmployeeStatus || '').trim()
+ ? await resolveSmartProcessEnumId({
+ entityTypeId,
+ fieldRawName: BITRIX_FIELDS_RAW.EMPLOYEE_STATUS,
+ fieldCamelName: BITRIX_FIELDS.EMPLOYEE_STATUS,
+ value: normalizedEmployeeStatus,
+ })
+ : '';
+ if (String(normalizedEmployeeStatus || '').trim() && !employeeStatusValue) {
+ throw new Error(`Не найден вариант Bitrix для поля "Статус сотрудника": ${normalizedEmployeeStatus}`);
+ }
  const fields: Record<string, unknown> = {
  TITLE: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - '),
  [BITRIX_FIELDS.LAST_NAME]: cert.last_name || '',
@@ -772,8 +1132,8 @@ export function useCertificatesTableController({
  [BITRIX_FIELDS.COMMIS_CONCL]: commisConclValue || '',
  [BITRIX_FIELDS.GRADE]: gradeValue || '',
  [BITRIX_FIELDS.MANAGER]: cert.manager || '',
- [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? '1' : '0',
- [BITRIX_FIELDS.EMPLOYEE_STATUS]: cert.employee_status || '',
+ [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? 'Y' : 'N',
+ [BITRIX_FIELDS.EMPLOYEE_STATUS]: employeeStatusValue || '',
  [BITRIX_FIELDS.PRICE]: cert.price ?? '',
  };
 
@@ -815,9 +1175,9 @@ export function useCertificatesTableController({
  }
 
  if (failed > 0) {
- showToast('warning', `Синхронизация завершена частично: ${success} успешно, ${failed} с ошибкой`);
+ showToast('warning', `Синхронизация сертификатов: ${success} успешно, ${failed} с ошибкой`);
  } else {
- showToast('success', `Успешно отправлено в Bitrix: ${success} записей`);
+ showToast('success', `Данные отправлены в Bitrix: ${success} строк`);
  }
  onRefresh();
  } catch (error) {
@@ -841,8 +1201,24 @@ export function useCertificatesTableController({
  generatingDocs,
  courseFilter,
  categoryFilter,
+ printedFilter,
  bulkStartDate,
  bulkExpiryDate,
+ bulkCategory,
+ categoryValueOptions,
+ bulkMarkerPass,
+ markerPassOptions,
+ bulkTypeLearn,
+ typeLearnOptions,
+ bulkCommisConcl,
+ commisConclOptions,
+ bulkGrade,
+ gradeOptions,
+ bulkEmployeeStatus,
+ employeeStatusOptions,
+ bulkPrintedStatus,
+ printedStatusOptions,
+ printedFilterOptions,
  columnsMenuOpen,
  columnsMenuRef,
  visibleColumns,
@@ -861,8 +1237,16 @@ export function useCertificatesTableController({
  setEditValue,
  setCourseFilter,
  setCategoryFilter,
+ setPrintedFilter,
  setBulkStartDate,
  setBulkExpiryDate,
+ setBulkCategory,
+ setBulkMarkerPass,
+ setBulkTypeLearn,
+ setBulkCommisConcl,
+ setBulkGrade,
+ setBulkEmployeeStatus,
+ setBulkPrintedStatus,
  setColumnsMenuOpen,
  setDraggingColumn,
  handleSort,
@@ -877,8 +1261,16 @@ export function useCertificatesTableController({
  bulkFillNumber,
  bulkFillProtocolWithMode,
  bulkFillText,
+ bulkFillCategory,
+ bulkFillMarkerPass,
+ bulkFillTypeLearn,
+ bulkFillCommisConcl,
+ bulkFillGrade,
+ bulkFillEmployeeStatus,
+ bulkFillPrintedStatus,
  bulkFillPrice,
  bulkFillDate,
+ saveDirectPatch,
  generateDocuments,
  syncCertificatesToBitrix,
  };

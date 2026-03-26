@@ -56,6 +56,9 @@ npm run build
 - Document generation via Google Apps Script requires:
   - `GOOGLE_APPS_SCRIPT_URL` (deployed GAS Web App endpoint)
   - `GOOGLE_APPS_SCRIPT_TOKEN` (shared secret between Edge Function and GAS, optional but recommended)
+- Protocol generation via Google Apps Script requires:
+  - `GOOGLE_APPS_SCRIPT_PROTOCOL_URL` (separate GAS Web App endpoint for protocol templates; falls back to `GOOGLE_APPS_SCRIPT_URL` if omitted)
+  - `GOOGLE_APPS_SCRIPT_PROTOCOL_TOKEN` (shared secret for protocol GAS; falls back to `GOOGLE_APPS_SCRIPT_TOKEN` if omitted)
 - Vercel OCR proxy `api/extract-payment-order` requires server-side env vars:
   - `ALLOWED_ORIGIN` (same allowlist format as Supabase edge functions)
   - `PAYMENT_OCR_UPSTREAM_URL` (URL of PaddlePDF OCR service)
@@ -64,6 +67,8 @@ npm run build
   - `VITE_BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
   - `VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD` (UF field in deal with type `Файл`, for payment-order file)
   - `VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD` (UF field in deal with type `Да/Нет`, value maps from coordinator checkbox)
+- Protocol smart-process UI uses:
+  - `VITE_BITRIX_PROTOCOL_ENTITY_TYPE_ID` (default `1070`)
 - HR days-to-words webhook function requires:
   - `BITRIX_WEBHOOK_URL`
   - `BITRIX_OUTGOING_TOKEN`
@@ -84,6 +89,15 @@ npm run build
 3. GAS creates Google Doc from template and returns `fileUrl`.
 4. Frontend stores generated file metadata in `generated_documents` and updates related `certificates.document_url`.
 5. Coordinator marks rows as printed in tab `Printed documents`, then syncs this flag to Bitrix24.
+
+## Protocol generation flow
+
+1. Questionnaire page automatically derives protocol rows from employee certificate rows (`1056`) by course/template/category.
+2. Coordinator opens tab `Протоколы`, fills `Номер протокола` and `Дата протокола`.
+3. Frontend calls Supabase Edge Function `generate-protocol-document`.
+4. Edge Function sends grouped row data to a dedicated Google Apps Script Web App for protocol templates.
+5. GAS creates one Google Doc per protocol/course/category group and returns `fileUrl`.
+6. Frontend stores generated file metadata in `protocols` and can sync protocol metadata to Bitrix24 smart process `1070`.
 
 ## HR vacation days text sync
 

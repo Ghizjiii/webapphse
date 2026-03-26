@@ -1,4 +1,4 @@
-export interface QuestionnaireLink {
+﻿export interface QuestionnaireLink {
   id: string;
   secret_token: string;
   title: string;
@@ -162,6 +162,35 @@ export interface Certificate {
   sync_error: string;
   created_at: string;
   updated_at: string;
+}
+
+export type ProtocolCategoryScope = 'itr' | 'worker' | 'all';
+
+export interface Protocol {
+  id: string;
+  questionnaire_id: string;
+  deal_id: string | null;
+  company_id: string | null;
+  bitrix_item_id: string;
+  template_key: string;
+  template_name: string;
+  course_name: string;
+  category_scope: ProtocolCategoryScope;
+  category_label: string;
+  protocol_number: string;
+  protocol_date: string | null;
+  employees_count: number;
+  file_id: string;
+  file_name: string;
+  file_url: string;
+  is_printed: boolean;
+  generated_at: string | null;
+  sync_status: 'pending' | 'synced' | 'error';
+  sync_error: string;
+  created_at: string;
+  updated_at: string;
+  group_key?: string;
+  is_draft?: boolean;
 }
 
 export type GeneratedDocumentType = 'certificate' | 'id_card';

@@ -52,7 +52,7 @@ const TEMPLATE_RULES: Array<{ matcher: RegExp; template: TemplateConfig }> = [
     template: { key: 'tpl_04_industrial_safety', name: '04. Industrial safety', docType: 'id_card' },
   },
   {
-    matcher: /(?:\u043a\u0432\u0430\u043b\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u043e\u043d\u043d)/i,
+    matcher: /(?:\u043a\u0432\u0430\u043b\u0438\u0444\u0438\u043a\u0430\u0446)/i,
     template: { key: 'tpl_05_qualification_id', name: '05. Qualification ID', docType: 'id_card' },
   },
 ];

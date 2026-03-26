@@ -1,4 +1,4 @@
-# Google Apps Script setup (course-based generation)
+﻿# Google Apps Script setup (course-based generation)
 
 This setup matches your templates and field dictionary:
 - ID templates: placeholders with `_1.._4` (4 employees per document copy)
@@ -157,6 +157,7 @@ function fillIdCardBatch(body, batch, report) {
     replaceToken(body, `DATE_${slot}`, values.COURSE_START);
     replaceToken(body, `DATE_END_${slot}`, values.DOC_VALID);
     replaceToken(body, `QUALIFICATION_${slot}`, values.QUALIFICATION);
+    replaceToken(body, `LEVEL_${slot}`, values.LEVEL);
     replaceToken(body, `HEAD_${slot}`, values.HEAD);
     replaceToken(body, `COMMISSION_ALL_${slot}`, values.COMMISSION_ALL);
 
@@ -206,6 +207,7 @@ function clearIdCardSlot(body, slot) {
     `{{DATE_${slot}}}`,
     `{{DATE_END_${slot}}}`,
     `{{QUALIFICATION_${slot}}}`,
+    `{{LEVEL_${slot}}}`,
     `{{HEAD_${slot}}}`,
     `{{COMMISSION_ALL_${slot}}}`,
     `{{COMMISSION_MEMB_${slot}_1}}`,
@@ -272,6 +274,7 @@ function buildCommonValues(p) {
     COURSE_START: pick(p, ['COURSE_START', 'DATE', 'DATE_ISSUE']),
     DOC_VALID: pick(p, ['DOC_VALID', 'DATE_END']),
     QUALIFICATION: pick(p, ['QUALIFICATION']),
+    LEVEL: pick(p, ['LEVEL']),
     HEAD: pick(p, ['HEAD', 'MANAGER']),
     COMMISSION_ALL: pick(p, ['COMMISSION_ALL', 'COMMISSION']),
     COMMISSION_MEMB_1: pick(p, ['COMMISSION_MEMB_1', 'COMMISSION_MEMBER_1']),
@@ -425,3 +428,4 @@ If text placeholders are filled but photos are missing:
   - `PHOTO_X` token is missing in template.
   - Photo URL is not publicly reachable.
   - URL returns non-image content.
+
