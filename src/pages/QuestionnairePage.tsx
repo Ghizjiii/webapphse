@@ -4,14 +4,16 @@ import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, Power
 import DashboardLayout from '../components/DashboardLayout';
 import ParticipantsTable from '../components/ParticipantsTable';
 import CertificatesTable from '../components/CertificatesTable';
+import ProtocolsTable from '../components/ProtocolsTable';
 import PrintedDocumentsTable from '../components/PrintedDocumentsTable';
 import BitrixSyncModal from '../components/BitrixSyncModal';
 import { supabase } from '../lib/supabase';
+import { buildProtocolDraftRows, reconcileProtocolsFromCertificates } from '../lib/protocolGeneration';
 import { useToast } from '../context/ToastContext';
 import { fetchCoursesList } from '../lib/bitrix';
-import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument } from '../types';
+import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol } from '../types';
 
-type Tab = 'participants' | 'certificates' | 'printed_documents';
+type Tab = 'participants' | 'certificates' | 'protocols' | 'printed_documents';
 
 function getRecordValue(record: unknown, key: string): string {
   return String((record as Record<string, unknown>)[key] ?? '');
@@ -27,6 +29,7 @@ export default function QuestionnairePage() {
   const [deal, setDeal] = useState<Deal | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
   const [availableCourses, setAvailableCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +105,36 @@ export default function QuestionnairePage() {
       .select('*')
       .eq('questionnaire_id', id)
       .order('created_at', { ascending: false });
-    setCertificates(certData || []);
+    const resolvedCertificates = certData || [];
+    setCertificates(resolvedCertificates);
+
+    const { data: rawProtocols } = await supabase
+      .from('protocols')
+      .select('*')
+      .eq('questionnaire_id', id)
+      .order('course_name')
+      .order('category_label');
+
+    const draftProtocols = buildProtocolDraftRows({
+      questionnaireId: id,
+      dealId: resolvedDealWithUrl?.id || null,
+      companyId: resolvedCompany?.id || null,
+      certificates: resolvedCertificates,
+      storedProtocols: (rawProtocols || []) as Protocol[],
+    });
+    setProtocols(draftProtocols);
+
+    try {
+      const reconciledProtocols = await reconcileProtocolsFromCertificates({
+        questionnaireId: id,
+        dealId: resolvedDealWithUrl?.id || null,
+        companyId: resolvedCompany?.id || null,
+        certificates: resolvedCertificates,
+      });
+      setProtocols(reconciledProtocols);
+    } catch (error) {
+      console.warn('Protocol reconcile fallback', error);
+    }
 
     const { data: docsData } = await supabase
       .from('generated_documents')
@@ -112,7 +144,7 @@ export default function QuestionnairePage() {
     setGeneratedDocuments(docsData || []);
 
     setLoading(false);
-  }, [id, navigate]);
+  }, [id, navigate, showToast]);
 
   useEffect(() => {
     loadData();
@@ -522,6 +554,7 @@ export default function QuestionnairePage() {
             {([
               { key: 'participants', label: 'Сотрудники', icon: <Users size={15} />, count: participants.length },
               { key: 'certificates', label: 'Удостоверения и сертификаты', icon: <FileText size={15} />, count: certificates.length },
+              { key: 'protocols', label: 'Протоколы', icon: <FileText size={15} />, count: protocols.length },
               { key: 'printed_documents', label: 'Распечатанные документы', icon: <FileText size={15} />, count: generatedDocuments.length },
             ] as const).map(t => (
               <button
@@ -563,6 +596,19 @@ export default function QuestionnairePage() {
               onRefresh={loadData}
             />
           )}
+          {tab === 'protocols' && (
+            <ProtocolsTable
+              questionnaireId={id!}
+              dealId={deal?.id || null}
+              companyId={company?.id || null}
+              companyName={company?.name || ''}
+              bitrixDealId={deal?.bitrix_deal_id || null}
+              bitrixCompanyId={company?.bitrix_company_id || null}
+              protocols={protocols}
+              certificates={certificates}
+              onRefresh={loadData}
+            />
+          )}
           {tab === 'printed_documents' && (
             <PrintedDocumentsTable
               documents={generatedDocuments}
@@ -592,4 +638,5 @@ export default function QuestionnairePage() {
     </DashboardLayout>
   );
 }
+
 
