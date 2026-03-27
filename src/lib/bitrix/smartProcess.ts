@@ -449,6 +449,21 @@ export async function updateSmartProcessItem(params: {
   });
 }
 
+export async function fetchSmartProcessItem(params: {
+  entityTypeId: number;
+  itemId: string;
+}): Promise<Record<string, unknown>> {
+  const raw = await callBitrix('crm.item.get', {
+    entityTypeId: params.entityTypeId,
+    id: params.itemId,
+  });
+  const item = ((raw as Record<string, unknown>)?.item || raw || {}) as Record<string, unknown>;
+  const itemFields = item.fields && typeof item.fields === 'object'
+    ? item.fields as Record<string, unknown>
+    : null;
+  return itemFields ? { ...item, ...itemFields } : item;
+}
+
 export async function deleteSmartProcessItem(params: {
   entityTypeId: number;
   itemId: string;

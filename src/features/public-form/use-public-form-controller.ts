@@ -544,9 +544,7 @@ export function usePublicFormController(token: string | undefined) {
 
  const participantsToSubmit = participants.filter(isParticipantRowStarted);
 
- let companyId = existingCompany?.id;
- if (existingCompany) {
- await supabase.from('companies').update({
+ const companyPayload = {
  name: companyName,
  phone: companyPhone,
  email: companyEmail,
@@ -572,38 +570,87 @@ export function usePublicFormController(token: string | undefined) {
  payment_order_date: paymentOrderDateValue,
  payment_order_amount: paymentOrderAmountValue,
  updated_at: new Date().toISOString(),
- }).eq('id', existingCompany.id);
- } else {
- const { data: newCompany, error } = await supabase.from('companies').insert({
- questionnaire_id: questionnaireId,
- name: companyName,
- phone: companyPhone,
- email: companyEmail,
- bin_iin: companyBin,
- city: companyCity,
- source_ref_company_id: directoryMatch?.id || null,
- has_contract: Boolean(directoryMatch?.has_contract),
- contract_bitrix_id: directoryMatch?.contract_bitrix_id || '',
- contract_title: directoryMatch?.contract_title || '',
- contract_number: directoryMatch?.contract_number || '',
- contract_date: directoryMatch?.contract_date || null,
- contract_start: directoryMatch?.contract_start || null,
- contract_end: directoryMatch?.contract_end || null,
- contract_status: directoryMatch?.contract_status || '',
- contract_is_active: Boolean(directoryMatch?.contract_is_active),
- no_contract_confirmed: noContractConfirmed,
- payment_order_url: paymentOrderUrl || '',
- payment_order_name: paymentOrderName || '',
- payment_order_uploaded_at: paymentOrderUrl ? new Date().toISOString() : null,
- payment_order_storage_bucket: paymentOrderStorageBucket || '',
- payment_order_storage_path: paymentOrderStoragePath || '',
- payment_order_number: paymentOrderNumberValue || '',
- payment_order_date: paymentOrderDateValue,
- payment_order_amount: paymentOrderAmountValue,
- }).select().maybeSingle();
+ };
 
- if (error) throw error;
- companyId = newCompany?.id;
+ let companyId = existingCompany?.id;
+
+ if (existingCompany?.id) {
+ const { data: updatedCompany, error: updateCompanyError } = await supabase
+ .from('companies')
+ .update(companyPayload)
+ .eq('id', existingCompany.id)
+ .select()
+ .maybeSingle();
+
+ if (updateCompanyError) throw updateCompanyError;
+ if (updatedCompany) {
+ setExistingCompany(updatedCompany as Company);
+ companyId = updatedCompany.id;
+ }
+ } else {
+ const { data: currentCompany, error: currentCompanyError } = await supabase
+ .from('companies')
+ .select('*')
+ .eq('questionnaire_id', questionnaireId)
+ .maybeSingle();
+
+ if (currentCompanyError) throw currentCompanyError;
+
+ if (currentCompany?.id) {
+ const { data: updatedCompany, error: updateCompanyError } = await supabase
+ .from('companies')
+ .update(companyPayload)
+ .eq('id', currentCompany.id)
+ .select()
+ .maybeSingle();
+
+ if (updateCompanyError) throw updateCompanyError;
+ if (updatedCompany) {
+ setExistingCompany(updatedCompany as Company);
+ companyId = updatedCompany.id;
+ } else {
+ companyId = currentCompany.id;
+ }
+ } else {
+ const { data: newCompany, error } = await supabase
+ .from('companies')
+ .insert({
+ questionnaire_id: questionnaireId,
+ ...companyPayload,
+ })
+ .select()
+ .maybeSingle();
+
+ if (error) {
+ if (String((error as { code?: string }).code || '') !== '23505') throw error;
+
+ const { data: fallbackCompany, error: fallbackCompanyError } = await supabase
+ .from('companies')
+ .select('*')
+ .eq('questionnaire_id', questionnaireId)
+ .maybeSingle();
+
+ if (fallbackCompanyError || !fallbackCompany?.id) throw fallbackCompanyError || error;
+
+ const { data: updatedCompany, error: updateCompanyError } = await supabase
+ .from('companies')
+ .update(companyPayload)
+ .eq('id', fallbackCompany.id)
+ .select()
+ .maybeSingle();
+
+ if (updateCompanyError) throw updateCompanyError;
+ if (updatedCompany) {
+ setExistingCompany(updatedCompany as Company);
+ companyId = updatedCompany.id;
+ } else {
+ companyId = fallbackCompany.id;
+ }
+ } else if (newCompany) {
+ setExistingCompany(newCompany as Company);
+ companyId = newCompany.id;
+ }
+ }
  }
 
  for (let index = 0; index < participantsToSubmit.length; index++) {
@@ -672,9 +719,9 @@ export function usePublicFormController(token: string | undefined) {
  }
 
  if (paymentOrderUrl && paymentOrderDateValue && paymentOrderAmountValue !== null) {
- const { error: paymentRegistryError } = await supabase
+ const { error: paymentRegistryInsertError } = await supabase
  .from('payment_order_registry')
- .upsert({
+ .insert({
  questionnaire_id: questionnaireId,
  company_id: companyId || null,
  company_bin_digits: paymentBinDigits,
@@ -684,17 +731,28 @@ export function usePublicFormController(token: string | undefined) {
  payment_order_url: paymentOrderUrl,
  payment_order_name: paymentOrderName || '',
  updated_at: new Date().toISOString(),
- }, { onConflict: 'questionnaire_id' });
-
- if (paymentRegistryError) {
- if (String((paymentRegistryError as { code?: string }).code || '') === '23505') {
- setErrors({
- payment_order: 'Платежное поручение с такими номером, датой и суммой уже загружено ранее. Проверьте данные.',
  });
- setSubmitting(false);
- return;
+
+ if (paymentRegistryInsertError) {
+ if (String((paymentRegistryInsertError as { code?: string }).code || '') !== '23505') {
+ throw paymentRegistryInsertError;
  }
- throw paymentRegistryError;
+ const { error: paymentRegistryUpdateError } = await supabase
+ .from('payment_order_registry')
+ .update({
+ questionnaire_id: questionnaireId,
+ company_id: companyId || null,
+ company_bin_digits: paymentBinDigits,
+ payment_order_number: paymentOrderNumberValue,
+ payment_order_date: paymentOrderDateValue,
+ payment_order_amount: paymentOrderAmountValue,
+ payment_order_url: paymentOrderUrl,
+ payment_order_name: paymentOrderName || '',
+ updated_at: new Date().toISOString(),
+ })
+ .eq('questionnaire_id', questionnaireId);
+
+ if (paymentRegistryUpdateError) throw paymentRegistryUpdateError;
  }
  }
 

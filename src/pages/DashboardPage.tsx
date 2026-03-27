@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Link as LinkIcon, Copy, Power, PowerOff, Clock, CheckCircle2, Archive, RefreshCw, Trash2 } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
@@ -55,6 +55,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(20);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -144,6 +146,17 @@ export default function DashboardPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [pageSize]);
+
+  useEffect(() => {
+    const nextTotalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    if (currentPage > nextTotalPages) {
+      setCurrentPage(nextTotalPages);
+    }
+  }, [rows.length, pageSize, currentPage]);
+
   function getFormUrl(token: string) {
     return `${window.location.origin}/form/${token}`;
   }
@@ -170,6 +183,66 @@ export default function DashboardPage() {
   function formatDate(str: string | null) {
     if (!str) return '—';
     return new Date(str).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
+  function formatTime(str: string | null) {
+    if (!str) return '—';
+    return new Date(str).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const pagedRows = useMemo(
+    () => rows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [rows, currentPage, pageSize],
+  );
+  const paginationStart = rows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const paginationEnd = Math.min(currentPage * pageSize, rows.length);
+
+  function renderPaginationControls(borderClassName: string) {
+    return (
+      <div className={`flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between ${borderClassName}`}>
+        <div className="text-sm text-gray-500">
+          Показано {paginationStart}-{paginationEnd} из {rows.length}
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <label className="flex items-center gap-2 text-sm text-gray-500">
+            <span>На странице</span>
+            <select
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            >
+              {[20, 50, 100].map(size => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition-colors hover:border-blue-200 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Назад
+            </button>
+            <div className="text-sm text-gray-600">
+              {currentPage} / {totalPages}
+            </div>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition-colors hover:border-blue-200 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Вперед
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   async function handleCreate(data: { title: string; expires_at: string | null; payment_order_optional: boolean }) {
@@ -215,10 +288,13 @@ export default function DashboardPage() {
             <p className="text-gray-400 text-sm mt-1">Создайте первую анкету для клиента</p>
           </div>
         ) : (
+          <>
+          {renderPaginationControls('border-b border-gray-100')}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60">
-                <th className="text-left px-5 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Название / Компания</th>
+                <th className="text-left px-5 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider w-16">№</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявка / Название компании</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Статус</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Создана</th>
@@ -227,15 +303,17 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ questionnaire: q, company, participantCount }) => {
+              {pagedRows.map(({ questionnaire: q, company, participantCount }, index) => {
                 const cfg = STATUS_CONFIG[q.status] || STATUS_CONFIG.active;
+                const rowNumber = (currentPage - 1) * pageSize + index + 1;
                 return (
                   <tr
                     key={q.id}
                     className="border-b border-gray-50 hover:bg-blue-50/30 cursor-pointer transition-colors"
                     onClick={() => navigate(`/dashboard/questionnaire/${q.id}`)}
                   >
-                    <td className="px-5 py-4">
+                    <td className="px-5 py-4 text-gray-400 font-medium align-top">{rowNumber}</td>
+                    <td className="px-4 py-4">
                       <div className="font-medium text-gray-900">{q.title || 'Без названия'}</div>
                       {company && <div className="text-gray-500 text-xs mt-0.5">{company.name}</div>}
                     </td>
@@ -245,7 +323,10 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="px-4 py-4 text-gray-600">{participantCount}</td>
-                    <td className="px-4 py-4 text-gray-500">{formatDate(q.created_at)}</td>
+                    <td className="px-4 py-4 text-gray-500">
+                      <div>{formatDate(q.created_at)}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{formatTime(q.created_at)}</div>
+                    </td>
                     <td className="px-4 py-4 text-gray-500">
                       {q.expires_at ? (
                         <span className={new Date(q.expires_at) < new Date() ? 'text-red-500' : ''}>
@@ -283,6 +364,8 @@ export default function DashboardPage() {
               })}
             </tbody>
           </table>
+          {renderPaginationControls('border-t border-gray-100')}
+          </>
         )}
       </div>
 
