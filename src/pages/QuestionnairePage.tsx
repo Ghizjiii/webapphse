@@ -1,5 +1,7 @@
 ﻿import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useRef } from 'react';
+import { uploadPaymentOrder } from '../lib/cloudinary';
 import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import ParticipantsTable from '../components/ParticipantsTable';
@@ -17,6 +19,33 @@ type Tab = 'participants' | 'certificates' | 'protocols' | 'printed_documents';
 
 function getRecordValue(record: unknown, key: string): string {
   return String((record as Record<string, unknown>)[key] ?? '');
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  return new Date(value).toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '—';
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function normalizeAmountInput(value: string): number | null {
+  const normalized = String(value || '').replace(',', '.').trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export default function QuestionnairePage() {
@@ -39,8 +68,10 @@ export default function QuestionnairePage() {
   const [companyDraft, setCompanyDraft] = useState<Partial<Company>>({});
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
+  const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
+  const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -188,6 +219,43 @@ export default function QuestionnairePage() {
     loadData();
   }
 
+  async function handleAdminPaymentOrderSelect(file: File) {
+    setUploadingPaymentOrder(true);
+    try {
+      const uploaded = await uploadPaymentOrder(file);
+      setCompanyDraft(prev => ({
+        ...prev,
+        payment_order_url: uploaded.secure_url,
+        payment_order_name: file.name,
+        payment_order_storage_bucket: uploaded.storage_bucket || '',
+        payment_order_storage_path: uploaded.storage_path || '',
+        payment_order_uploaded_at: new Date().toISOString(),
+      }));
+      showToast('success', 'Платежное поручение загружено');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить платежное поручение';
+      showToast('error', message);
+    } finally {
+      setUploadingPaymentOrder(false);
+      if (paymentOrderInputRef.current) paymentOrderInputRef.current.value = '';
+    }
+  }
+
+  function clearPaymentOrderDraft() {
+    setCompanyDraft(prev => ({
+      ...prev,
+      payment_order_url: '',
+      payment_order_name: '',
+      payment_order_storage_bucket: '',
+      payment_order_storage_path: '',
+      payment_order_uploaded_at: null,
+      payment_order_number: '',
+      payment_order_date: null,
+      payment_order_amount: null,
+      payment_is_paid: false,
+    }));
+  }
+
   async function togglePaymentStatus(nextValue: boolean) {
     if (!company) return;
     setSavingPaymentStatus(true);
@@ -276,7 +344,7 @@ export default function QuestionnairePage() {
               </span>
               {questionnaire.expires_at && (
                 <span className={`text-xs flex items-center gap-1 ${isExpired ? 'text-red-500' : 'text-gray-500'}`}>
-                  <Clock size={12} /> Срок: {new Date(questionnaire.expires_at).toLocaleDateString('ru-RU')}
+                  <Clock size={12} /> Срок: {formatDate(questionnaire.expires_at)}
                 </span>
               )}
             </div>
@@ -378,6 +446,24 @@ export default function QuestionnairePage() {
               </button>
             </div>
           )}
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Создана</div>
+              <div className="text-sm font-medium text-gray-900">{formatDateTime(questionnaire.created_at)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Заполнена клиентом</div>
+              <div className="text-sm font-medium text-gray-900">
+                {questionnaire.submitted_at ? formatDateTime(questionnaire.submitted_at) : 'Еще не заполнена'}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Срок действия</div>
+              <div className="text-sm font-medium text-gray-900">
+                {questionnaire.expires_at ? formatDateTime(questionnaire.expires_at) : 'Бессрочно'}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
@@ -486,7 +572,81 @@ export default function QuestionnairePage() {
                 <>
                   <div>
                     <div className="text-xs text-gray-500 mb-1">Платежное поручение</div>
-                    {String(company.payment_order_url || '').trim() ? (
+                    {companyEditing ? (
+                      <div className="space-y-2">
+                        {String(companyDraft.payment_order_url || '').trim() ? (
+                          <>
+                            <a
+                              href={String(companyDraft.payment_order_url || '')}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-600 hover:underline"
+                            >
+                              {String(companyDraft.payment_order_name || 'Открыть файл')}
+                            </a>
+                            <div className="text-xs text-gray-600">
+                              № {String(companyDraft.payment_order_number || '—')} · {String(companyDraft.payment_order_date || '—')} · {companyDraft.payment_order_amount ?? '—'}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-sm text-gray-500">Файл не загружен</div>
+                        )}
+                        <input
+                          ref={paymentOrderInputRef}
+                          type="file"
+                          accept=".pdf,image/*"
+                          className="hidden"
+                          onChange={event => {
+                            const file = event.target.files?.[0];
+                            if (file) void handleAdminPaymentOrderSelect(file);
+                          }}
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => paymentOrderInputRef.current?.click()}
+                            disabled={uploadingPaymentOrder}
+                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 transition-all hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            {String(companyDraft.payment_order_url || '').trim() ? 'Заменить файл' : 'Загрузить файл'}
+                          </button>
+                          {String(companyDraft.payment_order_url || '').trim() && (
+                            <button
+                              type="button"
+                              onClick={clearPaymentOrderDraft}
+                              disabled={uploadingPaymentOrder}
+                              className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 transition-all hover:bg-red-50 disabled:opacity-50"
+                            >
+                              Удалить файл
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <input
+                            value={String(companyDraft.payment_order_number || '')}
+                            onChange={event => setCompanyDraft(prev => ({ ...prev, payment_order_number: event.target.value }))}
+                            placeholder="Номер поручения"
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <input
+                            type="date"
+                            value={String(companyDraft.payment_order_date || '')}
+                            onChange={event => setCompanyDraft(prev => ({ ...prev, payment_order_date: event.target.value || null }))}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <input
+                            value={companyDraft.payment_order_amount == null ? '' : String(companyDraft.payment_order_amount)}
+                            onChange={event => setCompanyDraft(prev => ({
+                              ...prev,
+                              payment_order_amount: normalizeAmountInput(event.target.value),
+                            }))}
+                            placeholder="Сумма оплаты"
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        </div>
+                        {uploadingPaymentOrder && <div className="text-xs text-blue-600">Загружаем платежное поручение...</div>}
+                      </div>
+                    ) : String(company.payment_order_url || '').trim() ? (
                       <div className="space-y-1">
                         <a
                           href={String(company.payment_order_url || '')}
@@ -507,18 +667,30 @@ export default function QuestionnairePage() {
                   <div>
                     <div className="text-xs text-gray-500 mb-1">Статус оплаты</div>
                     <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                      company.payment_is_paid ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700'
+                      Boolean(companyEditing ? companyDraft.payment_is_paid : company.payment_is_paid)
+                        ? 'border-green-200 bg-green-50 text-green-700'
+                        : 'border-gray-200 bg-gray-50 text-gray-700'
                     }`}>
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        checked={Boolean(company.payment_is_paid)}
-                        onChange={(e) => void togglePaymentStatus(e.target.checked)}
-                        disabled={savingPaymentStatus || !String(company.payment_order_url || '').trim()}
+                        checked={Boolean(companyEditing ? companyDraft.payment_is_paid : company.payment_is_paid)}
+                        onChange={(e) => {
+                          if (companyEditing) {
+                            setCompanyDraft(prev => ({ ...prev, payment_is_paid: e.target.checked }));
+                            return;
+                          }
+                          void togglePaymentStatus(e.target.checked);
+                        }}
+                        disabled={
+                          companyEditing
+                            ? uploadingPaymentOrder || !String(companyDraft.payment_order_url || '').trim()
+                            : savingPaymentStatus || !String(company.payment_order_url || '').trim()
+                        }
                       />
-                      <span>{company.payment_is_paid ? 'Оплачено' : 'Не оплачено'}</span>
+                      <span>{Boolean(companyEditing ? companyDraft.payment_is_paid : company.payment_is_paid) ? 'Оплачено' : 'Не оплачено'}</span>
                     </label>
-                    {!String(company.payment_order_url || '').trim() && (
+                    {!String(companyEditing ? companyDraft.payment_order_url || '' : company.payment_order_url || '').trim() && (
                       <div className="text-xs text-gray-500 mt-1">Сначала дождитесь загрузки платежного поручения.</div>
                     )}
                   </div>

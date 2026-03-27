@@ -115,7 +115,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
               {isUpdate && (
                 <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                   <RefreshCw size={15} className="flex-shrink-0 mt-0.5" />
-                  <span>Существующие записи сотрудников будут удалены и созданы заново. Сделка и компания будут обновлены.</span>
+                  <span>Сделка и компания будут обновлены, а существующие элементы сотрудников и удостоверений будут синхронизированы без удаления уже заполненных полей.</span>
                 </div>
               )}
 

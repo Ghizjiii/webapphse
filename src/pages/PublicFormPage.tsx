@@ -47,7 +47,7 @@ export default function PublicFormPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 py-10 px-4" onClick={() => controller.setOpenCourseSelect(null)}>
-      <div className="max-w-7xl mx-auto">
+      <div className="mx-auto w-full max-w-[1760px]">
         <div className="text-center mb-8">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Shield size={28} className="text-white" />

@@ -1,7 +1,50 @@
-import type { MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent, MutableRefObject } from 'react';
 import { ChevronDown, Plus, Trash2, Upload, Users, X } from 'lucide-react';
-import ResizableTableContainer from '../../components/ResizableTableContainer';
 import { getParticipantMissingFields, isParticipantRowStarted, type LocalParticipant, type ValidationErrors } from './model';
+
+type ParticipantColumnKey =
+  | 'photo'
+  | 'last_name'
+  | 'first_name'
+  | 'patronymic'
+  | 'position'
+  | 'category'
+  | 'courses'
+  | 'actions';
+
+const DEFAULT_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
+  photo: 96,
+  last_name: 180,
+  first_name: 170,
+  patronymic: 190,
+  position: 220,
+  category: 180,
+  courses: 460,
+  actions: 56,
+};
+
+const MIN_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
+  photo: 96,
+  last_name: 140,
+  first_name: 140,
+  patronymic: 150,
+  position: 170,
+  category: 150,
+  courses: 320,
+  actions: 56,
+};
+
+const HEADER_DEFS: Array<{ key: ParticipantColumnKey; label: string; resizable: boolean }> = [
+  { key: 'photo', label: 'Фото', resizable: false },
+  { key: 'last_name', label: 'Фамилия', resizable: true },
+  { key: 'first_name', label: 'Имя', resizable: true },
+  { key: 'patronymic', label: 'Отчество', resizable: true },
+  { key: 'position', label: 'Должность', resizable: true },
+  { key: 'category', label: 'Категория', resizable: true },
+  { key: 'courses', label: 'Курсы', resizable: true },
+  { key: 'actions', label: '', resizable: false },
+];
 
 interface ParticipantsSectionProps {
   participants: LocalParticipant[];
@@ -58,8 +101,58 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     onAddParticipant,
   } = props;
 
+  const [columnWidths, setColumnWidths] = useState<Record<ParticipantColumnKey, number>>(DEFAULT_COLUMN_WIDTHS);
+  const resizeStateRef = useRef<{ key: ParticipantColumnKey; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    function handleMouseMove(event: MouseEvent) {
+      const state = resizeStateRef.current;
+      if (!state) return;
+
+      const minWidth = MIN_COLUMN_WIDTHS[state.key];
+      const nextWidth = Math.max(minWidth, state.startWidth + (event.clientX - state.startX));
+      setColumnWidths(prev => ({ ...prev, [state.key]: nextWidth }));
+    }
+
+    function handleMouseUp() {
+      if (!resizeStateRef.current) return;
+      resizeStateRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const tableMinWidth = useMemo(
+    () => Object.values(columnWidths).reduce((total, width) => total + width, 0),
+    [columnWidths]
+  );
+  const minimumVisibleRows = 10;
+  const estimatedRowHeight = 76;
+  const estimatedHeaderHeight = 52;
+  const tableViewportMinHeight = estimatedHeaderHeight + Math.max(minimumVisibleRows, pagedParticipants.length) * estimatedRowHeight;
+  const tableViewportPaddingBottom = openCourseSelect ? 220 : 0;
+
+  function beginResizeColumn(columnKey: ParticipantColumnKey, event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeStateRef.current = {
+      key: columnKey,
+      startX: event.clientX,
+      startWidth: columnWidths[columnKey],
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
   return (
-    <div className={`bg-white rounded-2xl shadow-lg p-6 ${!canEditParticipants ? 'opacity-60' : ''}`}>
+    <div className={`bg-white rounded-2xl shadow-lg p-5 lg:p-6 xl:p-8 ${!canEditParticipants ? 'opacity-60' : ''}`}>
       <div className="flex items-center justify-between mb-5">
         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2.5">
           <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
@@ -103,18 +196,35 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
         </div>
       )}
 
-      <ResizableTableContainer>
-        <table className="w-full" style={{ minWidth: '1100px' }}>
+      <div className="rounded-xl border border-gray-200 bg-white">
+        <div
+          className="overflow-x-auto"
+          style={{
+            minHeight: `${tableViewportMinHeight}px`,
+            paddingBottom: tableViewportPaddingBottom ? `${tableViewportPaddingBottom}px` : undefined,
+          }}
+        >
+          <table className="w-full table-fixed" style={{ minWidth: `${tableMinWidth}px` }}>
           <thead>
             <tr className="border-b border-gray-100">
-              <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-16">Фото</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-32">Фамилия</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-28">Имя</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-32">Отчество</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-36">Должность</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-36">Категория</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Курсы</th>
-              <th className="px-4 py-3 w-10" />
+              {HEADER_DEFS.map(column => (
+                <th
+                  key={column.key}
+                  className={`relative text-left py-3 text-xs font-medium text-gray-500 uppercase tracking-wide ${
+                    column.key === 'photo' ? 'px-6' : 'px-4'
+                  }`}
+                  style={{ width: columnWidths[column.key], minWidth: columnWidths[column.key] }}
+                >
+                  {column.label}
+                  {column.resizable && (
+                    <div
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-blue-200/40"
+                      onMouseDown={event => beginResizeColumn(column.key, event)}
+                      title="Изменить ширину столбца"
+                    />
+                  )}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -127,7 +237,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
 
               return (
                 <tr key={participant.id} className={`border-b border-gray-50 ${hasMissing ? 'bg-red-50/40' : ''}`}>
-                  <td className="px-6 py-3">
+                  <td className="px-6 py-3 align-top" style={{ width: columnWidths.photo, minWidth: columnWidths.photo }}>
                     <div className="relative w-12 h-14 flex-shrink-0">
                       {participant.photoPreview || participant.photo_url ? (
                         <img src={participant.photoPreview || participant.photo_url} alt="" className="w-12 h-14 rounded-lg object-cover border border-gray-200" />
@@ -167,7 +277,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                   </td>
 
                   {(['last_name', 'first_name', 'patronymic', 'position'] as const).map(field => (
-                    <td key={field} className="px-4 py-3">
+                    <td key={field} className="px-4 py-3 align-top" style={{ width: columnWidths[field], minWidth: columnWidths[field] }}>
                       <input
                         value={participant[field]}
                         onChange={event => onParticipantFieldChange(participant.id, field, event.target.value)}
@@ -180,7 +290,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                     </td>
                   ))}
 
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-top" style={{ width: columnWidths.category, minWidth: columnWidths.category }}>
                     <div className="relative">
                       <select
                         value={participant.category}
@@ -197,7 +307,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                     </div>
                   </td>
 
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-top" style={{ width: columnWidths.courses, minWidth: columnWidths.courses }}>
                     <div className="relative" onClick={event => event.stopPropagation()}>
                       <div
                         className={`flex flex-wrap gap-1 min-h-[36px] p-1 border rounded-lg hover:border-blue-300 transition-colors cursor-pointer ${
@@ -231,7 +341,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                       </div>
 
                       {openCourseSelect === participant.id && canEditParticipants && (
-                        <div className="absolute top-full mt-1 left-0 z-30 bg-white rounded-xl border border-gray-200 shadow-xl w-64 p-2">
+                        <div className="absolute top-full mt-1 left-0 z-30 bg-white rounded-xl border border-gray-200 shadow-xl w-[min(28rem,calc(100vw-4rem))] p-2">
                           <input
                             autoFocus
                             value={courseSearch}
@@ -250,7 +360,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                                   onClick={() => onToggleCourse(participant.id, course)}
                                   className={`w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors ${selected ? 'bg-blue-50 text-blue-700 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
                                 >
-                                  {selected ? 'вњ“ ' : ''}{course}
+                                  {selected ? <span className="mr-1 text-blue-600">+</span> : null}{course}
                                 </button>
                               );
                             })}
@@ -260,7 +370,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                     </div>
                   </td>
 
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-top" style={{ width: columnWidths.actions, minWidth: columnWidths.actions }}>
                     {participants.length > 1 && (
                       <button
                         type="button"
@@ -276,8 +386,9 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
               );
             })}
           </tbody>
-        </table>
-      </ResizableTableContainer>
+          </table>
+        </div>
+      </div>
 
       {totalPages > 1 && (
         <div className="px-6 pt-3 flex items-center justify-between text-sm">
@@ -332,3 +443,4 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     </div>
   );
 }
+
