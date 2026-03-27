@@ -5,8 +5,10 @@ import {
  BITRIX_FIELDS,
  BITRIX_FIELDS_RAW,
  createSmartProcessItem,
+ fetchSmartProcessItem,
  fetchUserFieldEnumValues,
  findSmartProcessEntityTypeId,
+ getBitrixFieldValue,
  resolveSmartProcessEnumId,
  updateSmartProcessItem,
 } from '../../lib/bitrix';
@@ -70,6 +72,12 @@ export function useCertificatesTableController({
  'Работает',
  'Уволен',
  ];
+ type SmartFieldKind = 'text' | 'date' | 'boolean' | 'number';
+ type SmartFieldEntry = {
+ code: string;
+ kind: SmartFieldKind;
+ value: string | number;
+ };
  const printedStatusOptions = [
  'Да',
  'Нет',
@@ -156,6 +164,76 @@ export function useCertificatesTableController({
  return 'Уволен';
  }
  return String(value || '').trim();
+ }
+
+ function normalizeBitrixDate(value: unknown): string | null {
+ const raw = String(value || '').trim();
+ if (!raw) return null;
+ const isoPart = raw.includes('T') ? raw.split('T')[0] : raw;
+ if (/^\d{4}-\d{2}-\d{2}$/.test(isoPart)) return isoPart;
+ const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+ if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+ return raw;
+ }
+
+ function normalizeBitrixBoolean(value: unknown): boolean | null {
+ if (typeof value === 'boolean') return value;
+ const raw = String(value || '').trim().toUpperCase();
+ if (!raw) return null;
+ if (['Y', 'YES', 'TRUE', '1', 'ДА'].includes(raw)) return true;
+ if (['N', 'NO', 'FALSE', '0', 'НЕТ'].includes(raw)) return false;
+ return null;
+ }
+
+ function normalizeBitrixNumber(value: unknown): number | null {
+ if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+ const raw = String(value || '').trim().replace(',', '.');
+ if (!raw) return null;
+ const parsed = Number(raw);
+ return Number.isFinite(parsed) ? parsed : null;
+ }
+
+ function getSmartFieldValue(item: Record<string, unknown>, code: string): unknown {
+ const direct = getBitrixFieldValue(item, code);
+ if (direct !== undefined) return direct;
+
+ for (const [key, camelCode] of Object.entries(BITRIX_FIELDS)) {
+ const rawCode = BITRIX_FIELDS_RAW[key as keyof typeof BITRIX_FIELDS_RAW];
+ if (camelCode === code || rawCode === code) {
+ return getBitrixFieldValue(item, camelCode) ?? getBitrixFieldValue(item, rawCode);
+ }
+ }
+
+ return undefined;
+ }
+
+ function areSmartFieldValuesEqual(kind: SmartFieldKind, currentValue: unknown, desiredValue: unknown): boolean {
+ switch (kind) {
+ case 'date':
+ return normalizeBitrixDate(currentValue) === normalizeBitrixDate(desiredValue);
+ case 'boolean':
+ return normalizeBitrixBoolean(currentValue) === normalizeBitrixBoolean(desiredValue);
+ case 'number':
+ return normalizeBitrixNumber(currentValue) === normalizeBitrixNumber(desiredValue);
+ case 'text':
+ default:
+ return String(currentValue ?? '').trim() === String(desiredValue ?? '').trim();
+ }
+ }
+
+ function isBitrixItemMissingError(error: unknown): boolean {
+ const message = error instanceof Error ? error.message : String(error || '');
+ return /ENTITY_ITEM_NOT_FOUND|ITEM_NOT_FOUND|not found|does not exist|could not find/i.test(message);
+ }
+
+ function buildSmartProcessDiff(currentItem: Record<string, unknown>, entries: SmartFieldEntry[]): Record<string, unknown> {
+ const patch: Record<string, unknown> = {};
+ for (const entry of entries) {
+ const currentValue = entry.code === 'TITLE' ? currentItem.TITLE : getSmartFieldValue(currentItem, entry.code);
+ if (areSmartFieldValuesEqual(entry.kind, currentValue, entry.value)) continue;
+ patch[entry.code] = entry.value;
+ }
+ return patch;
  }
 
  const [localCertificates, setLocalCertificates] = useState<Certificate[]>(certificates);
@@ -612,9 +690,14 @@ export function useCertificatesTableController({
  }
  }
 
- async function bulkFillNumber(field: 'document_number' | 'protocol_number', label: string) {
+async function bulkFillNumber(field: 'document_number' | 'protocol_number', label: string) {
  if (bulkSaving) return;
- const startRaw = window.prompt(`Начальный номер для ${label} (${targetRowsInfo}):`, '1');
+ const promptLabel = field === 'document_number'
+ ? 'номер документа'
+ : field === 'protocol_number'
+   ? 'номер протокола'
+   : label;
+ const startRaw = window.prompt(`Начальный номер для ${promptLabel} (${targetRowsInfo}):`, '1');
  if (startRaw === null) return;
  const start = Number(startRaw);
  if (!Number.isInteger(start) || start < 0) {
@@ -1107,45 +1190,71 @@ export function useCertificatesTableController({
  if (String(normalizedEmployeeStatus || '').trim() && !employeeStatusValue) {
  throw new Error(`Не найден вариант Bitrix для поля "Статус сотрудника": ${normalizedEmployeeStatus}`);
  }
- const fields: Record<string, unknown> = {
- TITLE: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - '),
- [BITRIX_FIELDS.LAST_NAME]: cert.last_name || '',
- [BITRIX_FIELDS.FIRST_NAME]: cert.first_name || '',
- [BITRIX_FIELDS.MIDDLE_NAME]: cert.middle_name || '',
- [BITRIX_FIELDS.POSITION]: cert.position || '',
- [BITRIX_FIELDS.CATEGORY]: categoryValue || '',
- [BITRIX_FIELDS.COURSE_NAME]: courseValue || '',
- [BITRIX_FIELDS.COURSE_START_DATE]: toBitrixDate(cert.start_date),
- [BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE]: toBitrixDate(cert.expiry_date),
- [BITRIX_FIELDS.COMMISSION_CHAIR]: cert.commission_chair || '',
- [BITRIX_FIELDS.PROTOCOL]: cert.protocol_number || '',
- [BITRIX_FIELDS.DOCUMENT_NUMBER]: cert.document_number || '',
- [BITRIX_FIELDS.COMMISSION_MEMBER_1]: cert.commission_member_1 || '',
- [BITRIX_FIELDS.COMMISSION_MEMBER_2]: cert.commission_member_2 || '',
- [BITRIX_FIELDS.COMMISSION_MEMBER_3]: cert.commission_member_3 || '',
- [BITRIX_FIELDS.COMMISSION_MEMBER_4]: cert.commission_member_4 || '',
- [BITRIX_FIELDS.COMMISSION_MEMBERS]: cert.commission_members || '',
- [BITRIX_FIELDS.QUALIFICATION]: cert.qualification || '',
- [BITRIX_FIELDS.LEVEL]: cert.level || '',
- [BITRIX_FIELDS.MARKER_PASS]: markerPassValue || '',
- [BITRIX_FIELDS.TYPE_LEARN]: typeLearnValue || '',
- [BITRIX_FIELDS.COMMIS_CONCL]: commisConclValue || '',
- [BITRIX_FIELDS.GRADE]: gradeValue || '',
- [BITRIX_FIELDS.MANAGER]: cert.manager || '',
- [BITRIX_FIELDS.IS_PRINTED]: cert.is_printed ? 'Y' : 'N',
- [BITRIX_FIELDS.EMPLOYEE_STATUS]: employeeStatusValue || '',
- [BITRIX_FIELDS.PRICE]: cert.price ?? '',
- };
+ const fieldEntries: SmartFieldEntry[] = [
+ { code: 'TITLE', kind: 'text', value: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - ') },
+ { code: BITRIX_FIELDS.LAST_NAME, kind: 'text', value: cert.last_name || '' },
+ { code: BITRIX_FIELDS.FIRST_NAME, kind: 'text', value: cert.first_name || '' },
+ { code: BITRIX_FIELDS.MIDDLE_NAME, kind: 'text', value: cert.middle_name || '' },
+ { code: BITRIX_FIELDS.POSITION, kind: 'text', value: cert.position || '' },
+ { code: BITRIX_FIELDS.CATEGORY, kind: 'text', value: categoryValue || '' },
+ { code: BITRIX_FIELDS.COURSE_NAME, kind: 'text', value: courseValue || '' },
+ { code: BITRIX_FIELDS.COURSE_START_DATE, kind: 'date', value: toBitrixDate(cert.start_date) },
+ { code: BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE, kind: 'date', value: toBitrixDate(cert.expiry_date) },
+ { code: BITRIX_FIELDS.COMMISSION_CHAIR, kind: 'text', value: cert.commission_chair || '' },
+ { code: BITRIX_FIELDS.PROTOCOL, kind: 'text', value: cert.protocol_number || '' },
+ { code: BITRIX_FIELDS.DOCUMENT_NUMBER, kind: 'text', value: cert.document_number || '' },
+ { code: BITRIX_FIELDS.COMMISSION_MEMBER_1, kind: 'text', value: cert.commission_member_1 || '' },
+ { code: BITRIX_FIELDS.COMMISSION_MEMBER_2, kind: 'text', value: cert.commission_member_2 || '' },
+ { code: BITRIX_FIELDS.COMMISSION_MEMBER_3, kind: 'text', value: cert.commission_member_3 || '' },
+ { code: BITRIX_FIELDS.COMMISSION_MEMBER_4, kind: 'text', value: cert.commission_member_4 || '' },
+ { code: BITRIX_FIELDS.COMMISSION_MEMBERS, kind: 'text', value: cert.commission_members || '' },
+ { code: BITRIX_FIELDS.QUALIFICATION, kind: 'text', value: cert.qualification || '' },
+ { code: BITRIX_FIELDS.LEVEL, kind: 'text', value: cert.level || '' },
+ { code: BITRIX_FIELDS.MARKER_PASS, kind: 'text', value: markerPassValue || '' },
+ { code: BITRIX_FIELDS.TYPE_LEARN, kind: 'text', value: typeLearnValue || '' },
+ { code: BITRIX_FIELDS.COMMIS_CONCL, kind: 'text', value: commisConclValue || '' },
+ { code: BITRIX_FIELDS.GRADE, kind: 'text', value: gradeValue || '' },
+ { code: BITRIX_FIELDS.MANAGER, kind: 'text', value: cert.manager || '' },
+ { code: BITRIX_FIELDS.IS_PRINTED, kind: 'boolean', value: cert.is_printed ? 'Y' : 'N' },
+ { code: BITRIX_FIELDS.EMPLOYEE_STATUS, kind: 'text', value: employeeStatusValue || '' },
+ { code: BITRIX_FIELDS.PRICE, kind: 'number', value: cert.price ?? '' },
+ ];
+ const fields = fieldEntries.reduce<Record<string, unknown>>((acc, entry) => {
+ acc[entry.code] = entry.value;
+ return acc;
+ }, {});
 
  const existingItemId = String(cert.bitrix_item_id || '').trim();
  let finalItemId = existingItemId;
+ let currentBitrixItem: Record<string, unknown> | null = null;
 
  if (/^\d+$/.test(existingItemId)) {
- await updateSmartProcessItem({
+ try {
+ currentBitrixItem = await fetchSmartProcessItem({
  entityTypeId,
  itemId: existingItemId,
- fields,
  });
+ } catch (error) {
+ if (isBitrixItemMissingError(error)) {
+ finalItemId = '';
+ currentBitrixItem = null;
+ } else {
+ throw error;
+ }
+ }
+ } else {
+ finalItemId = '';
+ }
+
+ if (finalItemId && currentBitrixItem) {
+ const changedFields = buildSmartProcessDiff(currentBitrixItem, fieldEntries);
+ if (Object.keys(changedFields).length > 0) {
+ await updateSmartProcessItem({
+ entityTypeId,
+ itemId: finalItemId,
+ fields: changedFields,
+ });
+ }
  } else {
  finalItemId = await createSmartProcessItem({
  entityTypeId,

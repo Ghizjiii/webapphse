@@ -16,6 +16,26 @@ const BITRIX_FIELDS = {
   POSITION: "ufCrm12_1772560767",
   CATEGORY: "ufCrm12_1772560781",
   COURSE_NAME: "ufCrm12_1772560835",
+  COURSE_START_DATE: "ufCrm12_1772561081",
+  DOCUMENT_EXPIRY_DATE: "ufCrm12_1772561142",
+  COMMISSION_CHAIR: "ufCrm12_1772561169",
+  PROTOCOL: "ufCrm12_1772561202",
+  DOCUMENT_NUMBER: "ufCrm12_1772561299",
+  COMMISSION_MEMBER_1: "ufCrm12_1772561371",
+  COMMISSION_MEMBER_2: "ufCrm12_1772561385",
+  COMMISSION_MEMBER_3: "ufCrm12_1772561392",
+  COMMISSION_MEMBER_4: "ufCrm12_1772561401",
+  COMMISSION_MEMBERS: "ufCrm12_1772561415",
+  QUALIFICATION: "ufCrm12_1772561427",
+  LEVEL: "ufCrm12_1774461941",
+  MARKER_PASS: "ufCrm12_1774463808",
+  TYPE_LEARN: "ufCrm12_1774464295",
+  COMMIS_CONCL: "ufCrm12_1774464335",
+  GRADE: "ufCrm12_1774464392",
+  MANAGER: "ufCrm12_1772561434",
+  IS_PRINTED: "ufCrm12_1772561447",
+  EMPLOYEE_STATUS: "ufCrm12_1772561489",
+  PRICE: "ufCrm12_1773257578",
 } as const;
 
 const BITRIX_FIELDS_RAW = {
@@ -25,6 +45,26 @@ const BITRIX_FIELDS_RAW = {
   POSITION: "UF_CRM_12_1772560767",
   CATEGORY: "UF_CRM_12_1772560781",
   COURSE_NAME: "UF_CRM_12_1772560835",
+  COURSE_START_DATE: "UF_CRM_12_1772561081",
+  DOCUMENT_EXPIRY_DATE: "UF_CRM_12_1772561142",
+  COMMISSION_CHAIR: "UF_CRM_12_1772561169",
+  PROTOCOL: "UF_CRM_12_1772561202",
+  DOCUMENT_NUMBER: "UF_CRM_12_1772561299",
+  COMMISSION_MEMBER_1: "UF_CRM_12_1772561371",
+  COMMISSION_MEMBER_2: "UF_CRM_12_1772561385",
+  COMMISSION_MEMBER_3: "UF_CRM_12_1772561392",
+  COMMISSION_MEMBER_4: "UF_CRM_12_1772561401",
+  COMMISSION_MEMBERS: "UF_CRM_12_1772561415",
+  QUALIFICATION: "UF_CRM_12_1772561427",
+  LEVEL: "UF_CRM_12_1774461941",
+  MARKER_PASS: "UF_CRM_12_1774463808",
+  TYPE_LEARN: "UF_CRM_12_1774464295",
+  COMMIS_CONCL: "UF_CRM_12_1774464335",
+  GRADE: "UF_CRM_12_1774464392",
+  MANAGER: "UF_CRM_12_1772561434",
+  IS_PRINTED: "UF_CRM_12_1772561447",
+  EMPLOYEE_STATUS: "UF_CRM_12_1772561489",
+  PRICE: "UF_CRM_12_1773257578",
   PHOTO: "UF_CRM_12_1772578817",
 } as const;
 
@@ -58,6 +98,7 @@ type DealRow = {
   id: string;
   bitrix_deal_id: string | null;
   bitrix_company_id: string | null;
+  payment_file_sync_key: string | null;
 };
 
 type ParticipantRow = {
@@ -75,9 +116,60 @@ type SyncTask = {
   courseName: string;
 };
 
+type ExistingCertificateRow = {
+  id: string;
+  participant_id: string | null;
+  bitrix_item_id: string | null;
+  photo_sync_key: string | null;
+  last_name: string;
+  first_name: string;
+  middle_name: string;
+  position: string;
+  category: string;
+  course_name: string;
+  start_date: string | null;
+  expiry_date: string | null;
+  commission_chair: string | null;
+  protocol_number: string | null;
+  document_number: string | null;
+  commission_member_1: string | null;
+  commission_member_2: string | null;
+  commission_member_3: string | null;
+  commission_member_4: string | null;
+  commission_members: string | null;
+  qualification: string | null;
+  level: string | null;
+  marker_pass: string | null;
+  type_learn: string | null;
+  commis_concl: string | null;
+  grade: string | null;
+  manager: string | null;
+  is_printed: boolean | null;
+  employee_status: string | null;
+  price: number | null;
+};
+
 type PreparedFile = {
   fileName: string;
   base64: string;
+};
+
+type SmartFieldKind = "text" | "date" | "boolean" | "number";
+
+type SmartFieldEntry = {
+  code: string;
+  kind: SmartFieldKind;
+  value: string | number;
+};
+
+type EnumMaps = {
+  categoryMap: Map<string, string>;
+  courseMap: Map<string, string>;
+  markerPassMap: Map<string, string>;
+  typeLearnMap: Map<string, string>;
+  commisConclMap: Map<string, string>;
+  gradeMap: Map<string, string>;
+  employeeStatusMap: Map<string, string>;
 };
 
 type PhotoContract = {
@@ -220,6 +312,279 @@ function sanitizeFileName(name: string): string {
   return plain(name).replace(/[\\/:*?"<>|]+/g, "_");
 }
 
+function taskKey(participantId: string | null | undefined, courseName: string | null | undefined): string {
+  return `${plain(participantId)}::${plain(courseName).toLowerCase()}`;
+}
+
+function normalizeBitrixDate(value: unknown): string | null {
+  const raw = plain(value);
+  if (!raw) return null;
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  const ruMatch = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (ruMatch) return `${ruMatch[3]}-${ruMatch[2]}-${ruMatch[1]}`;
+
+  return raw;
+}
+
+function normalizeBitrixBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  const raw = plain(value).toUpperCase();
+  if (!raw) return null;
+  if (["Y", "YES", "TRUE", "1", "ДА"].includes(raw)) return true;
+  if (["N", "NO", "FALSE", "0", "НЕТ"].includes(raw)) return false;
+  return null;
+}
+
+function normalizeBitrixNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const raw = plain(value).replace(",", ".");
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeMarkerPassValue(value: unknown): string {
+  const normalized = plain(value).toLocaleLowerCase("ru");
+  if (!normalized) return "";
+  if (normalized === "прошел" || normalized === "прошла" || normalized === "прошел (-а)" || normalized === "прошла (-а)") {
+    return "Прошел (-а)";
+  }
+  if (normalized === "не прошел" || normalized === "не прошла" || normalized === "не прошел (-а)" || normalized === "не прошла (-а)") {
+    return "Не прошел (-а)";
+  }
+  if (normalized === "подлежит повторной проверке знаний" || normalized === "проверка знаний проведена") {
+    return "Подлежит повторной проверке знаний";
+  }
+  return plain(value);
+}
+
+function normalizeCommisConclValue(value: unknown): string {
+  const normalized = plain(value).toLocaleLowerCase("ru");
+  if (!normalized) return "";
+  if (
+    normalized === "сдал" ||
+    normalized === "сдала" ||
+    normalized === "сдал (-а)" ||
+    normalized === "сдала (-а)" ||
+    normalized === "сдал (-a)" ||
+    normalized === "сдала (-a)"
+  ) {
+    return "Сдал (-а)";
+  }
+  if (
+    normalized === "не сдал" ||
+    normalized === "не сдала" ||
+    normalized === "не сдал (-а)" ||
+    normalized === "не сдала (-а)" ||
+    normalized === "не сдал (-a)" ||
+    normalized === "не сдала (-a)"
+  ) {
+    return "Не сдал (-а)";
+  }
+  return plain(value);
+}
+
+function toBitrixCommisConclValue(value: unknown): string {
+  const normalized = normalizeCommisConclValue(value);
+  if (normalized === "Сдал (-а)") return "Сдал (-a)";
+  if (normalized === "Не сдал (-а)") return "Не сдал (-a)";
+  return normalized;
+}
+
+function normalizeTypeLearnValue(value: unknown): string {
+  const normalized = plain(value).toLocaleLowerCase("ru");
+  if (!normalized) return "";
+  if (normalized === "первичный" || normalized === "первичная") return "первичная";
+  if (normalized === "повторный" || normalized === "повторная") return "повторная";
+  if (normalized === "периодический" || normalized === "периодическая") return "периодическая";
+  return plain(value);
+}
+
+function normalizeGradeValue(value: unknown): string {
+  const normalized = plain(value).toLocaleLowerCase("ru");
+  if (!normalized) return "";
+  if (normalized === "плохо") return "Плохо";
+  if (normalized === "удовлетворительно") return "Удовлетворительно";
+  if (normalized === "хорошо") return "Хорошо";
+  if (normalized === "отлично") return "Отлично";
+  return plain(value);
+}
+
+function normalizeEmployeeStatusValue(value: unknown): string {
+  const normalized = plain(value).toLocaleLowerCase("ru");
+  if (!normalized) return "";
+  if (normalized === "работает" || normalized === "active" || normalized === "работающий") return "Работает";
+  if (normalized === "уволен" || normalized === "inactive" || normalized === "не работает") return "Уволен";
+  return plain(value);
+}
+
+function preferredTextValue(localValue: unknown, currentBitrixValue: unknown): string | undefined {
+  const localPlain = plain(localValue);
+  if (localPlain) return localPlain;
+  const currentPlain = plain(currentBitrixValue);
+  return currentPlain || undefined;
+}
+
+function preferredDateValue(localValue: unknown, currentBitrixValue: unknown): string | undefined {
+  const localDate = normalizeBitrixDate(localValue);
+  if (localDate) return localDate;
+  const currentDate = normalizeBitrixDate(currentBitrixValue);
+  return currentDate || undefined;
+}
+
+function preferredBooleanValue(localValue: boolean | null | undefined, currentBitrixValue: unknown): string | undefined {
+  if (localValue === true) return "Y";
+  if (localValue === false) return "N";
+  const currentBool = normalizeBitrixBoolean(currentBitrixValue);
+  if (currentBool === true) return "Y";
+  if (currentBool === false) return "N";
+  return undefined;
+}
+
+function preferredNumberValue(localValue: number | null | undefined, currentBitrixValue: unknown): number | undefined {
+  if (typeof localValue === "number" && Number.isFinite(localValue)) return localValue;
+  const currentNumber = normalizeBitrixNumber(currentBitrixValue);
+  return currentNumber ?? undefined;
+}
+
+function preferredEnumValue(
+  localValue: unknown,
+  currentBitrixValue: unknown,
+  map: Map<string, string>,
+  normalizer: (value: unknown) => string = value => plain(value).toLowerCase(),
+): string | undefined {
+  const normalizedLocal = normalizer(localValue);
+  if (normalizedLocal) return map.get(normalizedLocal) || plain(currentBitrixValue) || plain(localValue);
+  const currentPlain = plain(currentBitrixValue);
+  return currentPlain || undefined;
+}
+
+function getPaymentFileSourceKey(company: CompanyRow): string {
+  const bucket = plain(company.payment_order_storage_bucket);
+  const path = plain(company.payment_order_storage_path);
+  const url = plain(company.payment_order_url);
+  const name = plain(company.payment_order_name);
+
+  if (bucket && path) return `storage:${bucket}:${path}:${name}`;
+  if (url) return `url:${url}:${name}`;
+  return "";
+}
+
+function getPhotoSourceKey(photoUrl: string | null | undefined): string {
+  return plain(photoUrl);
+}
+
+function smartItemHasPhoto(item: Record<string, unknown>): boolean {
+  return hasPersistedFileValue(getFieldValue(item, PHOTO_FIELD_KEY)) ||
+    hasPersistedFileValue(getFieldValue(item, BITRIX_FIELDS_RAW.PHOTO));
+}
+
+function isBitrixItemMissingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /ENTITY_ITEM_NOT_FOUND|ITEM_NOT_FOUND|not found|does not exist|could not find/i.test(message);
+}
+
+function areSmartFieldValuesEqual(kind: SmartFieldKind, currentValue: unknown, desiredValue: unknown): boolean {
+  switch (kind) {
+    case "date":
+      return normalizeBitrixDate(currentValue) === normalizeBitrixDate(desiredValue);
+    case "boolean":
+      return normalizeBitrixBoolean(currentValue) === normalizeBitrixBoolean(desiredValue);
+    case "number":
+      return normalizeBitrixNumber(currentValue) === normalizeBitrixNumber(desiredValue);
+    case "text":
+    default:
+      return plain(currentValue) === plain(desiredValue);
+  }
+}
+
+function buildSmartProcessFieldRecord(entries: SmartFieldEntry[]): Record<string, unknown> {
+  return entries.reduce<Record<string, unknown>>((acc, entry) => {
+    acc[entry.code] = entry.value;
+    return acc;
+  }, {});
+}
+
+function buildSmartProcessUpdatePatch(currentItem: Record<string, unknown>, entries: SmartFieldEntry[]): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  for (const entry of entries) {
+    const currentValue = entry.code === "TITLE" ? currentItem.TITLE : getSmartFieldValue(currentItem, entry.code);
+    if (areSmartFieldValuesEqual(entry.kind, currentValue, entry.value)) continue;
+    patch[entry.code] = entry.value;
+  }
+  return patch;
+}
+
+function needsCertificateRestore(cert: ExistingCertificateRow): boolean {
+  return !plain(cert.document_number) ||
+    !plain(cert.protocol_number) ||
+    !plain(cert.commission_chair) ||
+    !plain(cert.commission_member_1) ||
+    !plain(cert.commission_member_2) ||
+    !plain(cert.commission_member_3) ||
+    !plain(cert.commission_member_4) ||
+    !plain(cert.commission_members) ||
+    !plain(cert.qualification) ||
+    !plain(cert.level) ||
+    !plain(cert.manager) ||
+    !plain(cert.marker_pass) ||
+    !plain(cert.type_learn) ||
+    !plain(cert.commis_concl) ||
+    !plain(cert.grade) ||
+    !plain(cert.employee_status) ||
+    !cert.start_date ||
+    !cert.expiry_date ||
+    cert.price == null;
+}
+
+function buildCertificateRestorePatch(cert: ExistingCertificateRow, item: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const assignIfMissing = (field: keyof ExistingCertificateRow, value: unknown) => {
+    const currentValue = cert[field];
+    if ((typeof currentValue === "string" ? plain(currentValue) : currentValue) != null) {
+      if (typeof currentValue === "string" && plain(currentValue)) return;
+      if (typeof currentValue !== "string" && currentValue !== null && currentValue !== undefined) return;
+    }
+    if (typeof value === "string") {
+      if (!plain(value)) return;
+      patch[field] = plain(value);
+      return;
+    }
+    if (value === null || value === undefined) return;
+    patch[field] = value;
+  };
+
+  assignIfMissing("start_date", normalizeBitrixDate(getFieldValue(item, BITRIX_FIELDS_RAW.COURSE_START_DATE) ?? getFieldValue(item, BITRIX_FIELDS.COURSE_START_DATE)));
+  assignIfMissing("expiry_date", normalizeBitrixDate(getFieldValue(item, BITRIX_FIELDS_RAW.DOCUMENT_EXPIRY_DATE) ?? getFieldValue(item, BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE)));
+  assignIfMissing("commission_chair", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_CHAIR) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_CHAIR));
+  assignIfMissing("protocol_number", getFieldValue(item, BITRIX_FIELDS_RAW.PROTOCOL) ?? getFieldValue(item, BITRIX_FIELDS.PROTOCOL));
+  assignIfMissing("document_number", getFieldValue(item, BITRIX_FIELDS_RAW.DOCUMENT_NUMBER) ?? getFieldValue(item, BITRIX_FIELDS.DOCUMENT_NUMBER));
+  assignIfMissing("commission_member_1", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBER_1) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBER_1));
+  assignIfMissing("commission_member_2", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBER_2) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBER_2));
+  assignIfMissing("commission_member_3", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBER_3) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBER_3));
+  assignIfMissing("commission_member_4", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBER_4) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBER_4));
+  assignIfMissing("commission_members", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBERS) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBERS));
+  assignIfMissing("qualification", getFieldValue(item, BITRIX_FIELDS_RAW.QUALIFICATION) ?? getFieldValue(item, BITRIX_FIELDS.QUALIFICATION));
+  assignIfMissing("level", getFieldValue(item, BITRIX_FIELDS_RAW.LEVEL) ?? getFieldValue(item, BITRIX_FIELDS.LEVEL));
+  assignIfMissing("marker_pass", getFieldValue(item, BITRIX_FIELDS_RAW.MARKER_PASS) ?? getFieldValue(item, BITRIX_FIELDS.MARKER_PASS));
+  assignIfMissing("type_learn", getFieldValue(item, BITRIX_FIELDS_RAW.TYPE_LEARN) ?? getFieldValue(item, BITRIX_FIELDS.TYPE_LEARN));
+  assignIfMissing("commis_concl", getFieldValue(item, BITRIX_FIELDS_RAW.COMMIS_CONCL) ?? getFieldValue(item, BITRIX_FIELDS.COMMIS_CONCL));
+  assignIfMissing("grade", getFieldValue(item, BITRIX_FIELDS_RAW.GRADE) ?? getFieldValue(item, BITRIX_FIELDS.GRADE));
+  assignIfMissing("manager", getFieldValue(item, BITRIX_FIELDS_RAW.MANAGER) ?? getFieldValue(item, BITRIX_FIELDS.MANAGER));
+  assignIfMissing("employee_status", getFieldValue(item, BITRIX_FIELDS_RAW.EMPLOYEE_STATUS) ?? getFieldValue(item, BITRIX_FIELDS.EMPLOYEE_STATUS));
+
+  const printedValue = normalizeBitrixBoolean(getFieldValue(item, BITRIX_FIELDS_RAW.IS_PRINTED) ?? getFieldValue(item, BITRIX_FIELDS.IS_PRINTED));
+  if (cert.is_printed == null && printedValue !== null) patch.is_printed = printedValue;
+
+  const priceValue = normalizeBitrixNumber(getFieldValue(item, BITRIX_FIELDS_RAW.PRICE) ?? getFieldValue(item, BITRIX_FIELDS.PRICE));
+  if (cert.price == null && priceValue !== null) patch.price = priceValue;
+
+  return patch;
+}
+
 function extensionFromContentType(contentType: string): string {
   const ct = plain(contentType).toLowerCase();
   if (!ct) return "";
@@ -268,6 +633,19 @@ function getFieldValue(item: Record<string, unknown>, code: string): unknown {
   for (const key of fieldVariants(code)) {
     if (Object.prototype.hasOwnProperty.call(item, key)) return item[key];
   }
+  return undefined;
+}
+
+function getSmartFieldValue(item: Record<string, unknown>, code: string): unknown {
+  const direct = getFieldValue(item, code);
+  if (direct !== undefined) return direct;
+
+  for (const key of Object.keys(BITRIX_FIELDS) as Array<keyof typeof BITRIX_FIELDS>) {
+    if (BITRIX_FIELDS[key] === code || BITRIX_FIELDS_RAW[key] === code) {
+      return getFieldValue(item, BITRIX_FIELDS[key]) ?? getFieldValue(item, BITRIX_FIELDS_RAW[key]);
+    }
+  }
+
   return undefined;
 }
 
@@ -335,13 +713,24 @@ function dealFieldKeyVariants(code: string): string[] {
 }
 
 async function fetchDealFieldValue(bitrixDealId: string, paymentFieldCode: string): Promise<unknown> {
-  const raw = await callBitrix("crm.deal.get", { id: bitrixDealId });
-  const deal = (raw || {}) as Record<string, unknown>;
+  const deal = await fetchDealFields(bitrixDealId);
 
   for (const key of dealFieldKeyVariants(paymentFieldCode)) {
     if (Object.prototype.hasOwnProperty.call(deal, key)) return deal[key];
   }
 
+  return undefined;
+}
+
+async function fetchDealFields(bitrixDealId: string): Promise<Record<string, unknown>> {
+  const raw = await callBitrix("crm.deal.get", { id: bitrixDealId });
+  return (raw || {}) as Record<string, unknown>;
+}
+
+function getDealFieldValue(deal: Record<string, unknown>, fieldCode: string): unknown {
+  for (const key of dealFieldKeyVariants(fieldCode)) {
+    if (Object.prototype.hasOwnProperty.call(deal, key)) return deal[key];
+  }
   return undefined;
 }
 
@@ -480,7 +869,149 @@ async function loadEnumMaps() {
   return {
     categoryMap: toMap(findField(BITRIX_FIELDS_RAW.CATEGORY, BITRIX_FIELDS.CATEGORY)),
     courseMap: toMap(findField(BITRIX_FIELDS_RAW.COURSE_NAME, BITRIX_FIELDS.COURSE_NAME)),
+    markerPassMap: toMap(findField(BITRIX_FIELDS_RAW.MARKER_PASS, BITRIX_FIELDS.MARKER_PASS)),
+    typeLearnMap: toMap(findField(BITRIX_FIELDS_RAW.TYPE_LEARN, BITRIX_FIELDS.TYPE_LEARN)),
+    commisConclMap: toMap(findField(BITRIX_FIELDS_RAW.COMMIS_CONCL, BITRIX_FIELDS.COMMIS_CONCL)),
+    gradeMap: toMap(findField(BITRIX_FIELDS_RAW.GRADE, BITRIX_FIELDS.GRADE)),
+    employeeStatusMap: toMap(findField(BITRIX_FIELDS_RAW.EMPLOYEE_STATUS, BITRIX_FIELDS.EMPLOYEE_STATUS)),
   };
+}
+
+function buildDesiredSmartProcessFieldEntries(params: {
+  participant: ParticipantRow;
+  courseName: string;
+  expectedTitle: string;
+  existingCertificate: ExistingCertificateRow | null;
+  currentItem: Record<string, unknown> | null;
+  enumMaps: EnumMaps;
+}): SmartFieldEntry[] {
+  const currentItem = params.currentItem || {};
+  const cert = params.existingCertificate;
+  const entries: SmartFieldEntry[] = [
+    { code: "TITLE", kind: "text", value: params.expectedTitle },
+    { code: BITRIX_FIELDS.LAST_NAME, kind: "text", value: params.participant.last_name },
+    { code: BITRIX_FIELDS.FIRST_NAME, kind: "text", value: params.participant.first_name },
+    { code: BITRIX_FIELDS.MIDDLE_NAME, kind: "text", value: params.participant.patronymic },
+    { code: BITRIX_FIELDS.POSITION, kind: "text", value: params.participant.position },
+  ];
+
+  const pushIfDefined = (code: string, kind: SmartFieldKind, value: string | number | undefined) => {
+    if (value === undefined) return;
+    if (typeof value === "string" && !plain(value)) return;
+    entries.push({ code, kind, value });
+  };
+
+  pushIfDefined(
+    BITRIX_FIELDS.CATEGORY,
+    "text",
+    preferredEnumValue(params.participant.category, getSmartFieldValue(currentItem, BITRIX_FIELDS.CATEGORY), params.enumMaps.categoryMap),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COURSE_NAME,
+    "text",
+    preferredEnumValue(params.courseName, getSmartFieldValue(currentItem, BITRIX_FIELDS.COURSE_NAME), params.enumMaps.courseMap),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COURSE_START_DATE,
+    "date",
+    preferredDateValue(cert?.start_date, getSmartFieldValue(currentItem, BITRIX_FIELDS.COURSE_START_DATE)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE,
+    "date",
+    preferredDateValue(cert?.expiry_date, getSmartFieldValue(currentItem, BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMISSION_CHAIR,
+    "text",
+    preferredTextValue(cert?.commission_chair, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_CHAIR)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.PROTOCOL,
+    "text",
+    preferredTextValue(cert?.protocol_number, getSmartFieldValue(currentItem, BITRIX_FIELDS.PROTOCOL)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.DOCUMENT_NUMBER,
+    "text",
+    preferredTextValue(cert?.document_number, getSmartFieldValue(currentItem, BITRIX_FIELDS.DOCUMENT_NUMBER)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMISSION_MEMBER_1,
+    "text",
+    preferredTextValue(cert?.commission_member_1, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_MEMBER_1)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMISSION_MEMBER_2,
+    "text",
+    preferredTextValue(cert?.commission_member_2, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_MEMBER_2)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMISSION_MEMBER_3,
+    "text",
+    preferredTextValue(cert?.commission_member_3, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_MEMBER_3)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMISSION_MEMBER_4,
+    "text",
+    preferredTextValue(cert?.commission_member_4, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_MEMBER_4)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMISSION_MEMBERS,
+    "text",
+    preferredTextValue(cert?.commission_members, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_MEMBERS)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.QUALIFICATION,
+    "text",
+    preferredTextValue(cert?.qualification, getSmartFieldValue(currentItem, BITRIX_FIELDS.QUALIFICATION)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.LEVEL,
+    "text",
+    preferredTextValue(cert?.level, getSmartFieldValue(currentItem, BITRIX_FIELDS.LEVEL)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.MARKER_PASS,
+    "text",
+    preferredEnumValue(cert?.marker_pass, getSmartFieldValue(currentItem, BITRIX_FIELDS.MARKER_PASS), params.enumMaps.markerPassMap, value => normalizeMarkerPassValue(value).toLowerCase()),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.TYPE_LEARN,
+    "text",
+    preferredEnumValue(cert?.type_learn, getSmartFieldValue(currentItem, BITRIX_FIELDS.TYPE_LEARN), params.enumMaps.typeLearnMap, value => normalizeTypeLearnValue(value).toLowerCase()),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.COMMIS_CONCL,
+    "text",
+    preferredEnumValue(cert?.commis_concl, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMIS_CONCL), params.enumMaps.commisConclMap, value => toBitrixCommisConclValue(value).toLowerCase()),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.GRADE,
+    "text",
+    preferredEnumValue(cert?.grade, getSmartFieldValue(currentItem, BITRIX_FIELDS.GRADE), params.enumMaps.gradeMap, value => normalizeGradeValue(value).toLowerCase()),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.MANAGER,
+    "text",
+    preferredTextValue(cert?.manager, getSmartFieldValue(currentItem, BITRIX_FIELDS.MANAGER)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.IS_PRINTED,
+    "boolean",
+    preferredBooleanValue(cert?.is_printed, getSmartFieldValue(currentItem, BITRIX_FIELDS.IS_PRINTED)),
+  );
+  pushIfDefined(
+    BITRIX_FIELDS.EMPLOYEE_STATUS,
+    "text",
+    preferredEnumValue(cert?.employee_status, getSmartFieldValue(currentItem, BITRIX_FIELDS.EMPLOYEE_STATUS), params.enumMaps.employeeStatusMap, value => normalizeEmployeeStatusValue(value).toLowerCase()),
+  );
+  const preferredPrice = preferredNumberValue(cert?.price, getSmartFieldValue(currentItem, BITRIX_FIELDS.PRICE));
+  if (preferredPrice !== undefined) {
+    entries.push({ code: BITRIX_FIELDS.PRICE, kind: "number", value: preferredPrice });
+  }
+
+  return entries;
 }
 
 async function findExistingCompanyIdByBin(binIin: string, companyName: string): Promise<string | null> {
@@ -519,6 +1050,20 @@ async function findExistingCompanyIdByBin(binIin: string, companyName: string): 
   return best ? plain(best.ID || best.id) : null;
 }
 
+async function fetchCompanyFields(bitrixCompanyId: string): Promise<Record<string, unknown>> {
+  const raw = await callBitrix("crm.company.get", { id: bitrixCompanyId });
+  return (raw || {}) as Record<string, unknown>;
+}
+
+function crmMultiPrimaryValue(value: unknown): string {
+  if (!Array.isArray(value)) return plain(value);
+  for (const item of value as Array<Record<string, unknown>>) {
+    const current = plain(item?.VALUE || item?.value);
+    if (current) return current;
+  }
+  return "";
+}
+
 async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise<string> {
   const fields: Record<string, unknown> = {
     TITLE: company.name,
@@ -535,13 +1080,63 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
 
   const currentId = plain(deal?.bitrix_company_id || company.bitrix_company_id || "");
   if (currentId) {
-    await callBitrix("crm.company.update", { id: currentId, fields });
+    const currentCompany = await fetchCompanyFields(currentId);
+    const fieldsToUpdate: Record<string, unknown> = {};
+
+    if (plain(currentCompany.TITLE || currentCompany.title) !== plain(company.name)) {
+      fieldsToUpdate.TITLE = fields.TITLE;
+    }
+    if (crmMultiPrimaryValue(currentCompany.PHONE) !== plain(company.phone)) {
+      fieldsToUpdate.PHONE = fields.PHONE;
+    }
+    if (crmMultiPrimaryValue(currentCompany.EMAIL) !== plain(company.email)) {
+      fieldsToUpdate.EMAIL = fields.EMAIL;
+    }
+    if (plain(currentCompany.INDUSTRY) !== "") {
+      fieldsToUpdate.INDUSTRY = "";
+    }
+    for (const code of COMPANY_BIN_FIELD_CANDIDATES) {
+      if (plain(getFieldValue(currentCompany, code)) !== binValue) {
+        fieldsToUpdate[code] = fields[code];
+        const camel = companyCamel(code);
+        if (camel) fieldsToUpdate[camel] = fields[camel];
+      }
+    }
+
+    if (Object.keys(fieldsToUpdate).length > 0) {
+      await callBitrix("crm.company.update", { id: currentId, fields: fieldsToUpdate });
+    }
     return currentId;
   }
 
   const existingId = await findExistingCompanyIdByBin(company.bin_iin, company.name);
   if (existingId) {
-    await callBitrix("crm.company.update", { id: existingId, fields });
+    const currentCompany = await fetchCompanyFields(existingId);
+    const fieldsToUpdate: Record<string, unknown> = {};
+
+    if (plain(currentCompany.TITLE || currentCompany.title) !== plain(company.name)) {
+      fieldsToUpdate.TITLE = fields.TITLE;
+    }
+    if (crmMultiPrimaryValue(currentCompany.PHONE) !== plain(company.phone)) {
+      fieldsToUpdate.PHONE = fields.PHONE;
+    }
+    if (crmMultiPrimaryValue(currentCompany.EMAIL) !== plain(company.email)) {
+      fieldsToUpdate.EMAIL = fields.EMAIL;
+    }
+    if (plain(currentCompany.INDUSTRY) !== "") {
+      fieldsToUpdate.INDUSTRY = "";
+    }
+    for (const code of COMPANY_BIN_FIELD_CANDIDATES) {
+      if (plain(getFieldValue(currentCompany, code)) !== binValue) {
+        fieldsToUpdate[code] = fields[code];
+        const camel = companyCamel(code);
+        if (camel) fieldsToUpdate[camel] = fields[camel];
+      }
+    }
+
+    if (Object.keys(fieldsToUpdate).length > 0) {
+      await callBitrix("crm.company.update", { id: existingId, fields: fieldsToUpdate });
+    }
     return existingId;
   }
 
@@ -637,43 +1232,102 @@ async function upsertDeal(params: {
   paymentStatusFieldCode: string;
   paymentFileFieldCode: string;
 }) {
-  const fields: Record<string, unknown> = {
-    TITLE: params.dealTitle,
-    COMPANY_ID: params.bitrixCompanyId,
-  };
-  if (params.company.city) {
-    fields["UF_CRM_1772560175"] = params.company.city;
-    fields["UF_CRM_CITY"] = params.company.city;
-  }
-  if (params.paymentFieldCode && params.company.payment_order_url) {
-    fields[params.paymentFieldCode] = params.company.payment_order_url;
-  }
-  if (params.paymentStatusFieldCode) {
-    fields[params.paymentStatusFieldCode] = params.company.payment_is_paid ? "Y" : "N";
-  }
-
   let bitrixDealId = plain(params.deal?.bitrix_deal_id || "");
+  const paymentStatusValue = params.company.payment_is_paid ? "Y" : "N";
+  const paymentOrderUrl = plain(params.company.payment_order_url);
+  const localPaymentFileSyncKey = getPaymentFileSourceKey(params.company);
+  let paymentFileSyncKey = plain(params.deal?.payment_file_sync_key);
+  let paymentUrlChanged = false;
+  let shouldSyncPaymentFile = false;
+
   if (bitrixDealId) {
-    await callBitrix("crm.deal.update", { id: bitrixDealId, fields });
+    const currentDeal = await fetchDealFields(bitrixDealId);
+    const fieldsToUpdate: Record<string, unknown> = {};
+
+    if (plain(currentDeal.TITLE) !== params.dealTitle) {
+      fieldsToUpdate.TITLE = params.dealTitle;
+    }
+    if (plain(currentDeal.COMPANY_ID || currentDeal.companyId) !== params.bitrixCompanyId) {
+      fieldsToUpdate.COMPANY_ID = params.bitrixCompanyId;
+    }
+
+    const currentCity = plain(currentDeal.UF_CRM_1772560175 || currentDeal.UF_CRM_CITY);
+    if (plain(params.company.city) !== currentCity) {
+      fieldsToUpdate["UF_CRM_1772560175"] = params.company.city || "";
+      fieldsToUpdate["UF_CRM_CITY"] = params.company.city || "";
+    }
+
+    if (params.paymentFieldCode) {
+      const currentPaymentUrl = plain(getDealFieldValue(currentDeal, params.paymentFieldCode));
+      paymentUrlChanged = currentPaymentUrl !== paymentOrderUrl;
+      if (paymentUrlChanged) {
+        fieldsToUpdate[params.paymentFieldCode] = paymentOrderUrl;
+      }
+    }
+
+    if (params.paymentStatusFieldCode) {
+      const currentPaymentStatus = plain(getDealFieldValue(currentDeal, params.paymentStatusFieldCode));
+      if (currentPaymentStatus !== paymentStatusValue) {
+        fieldsToUpdate[params.paymentStatusFieldCode] = paymentStatusValue;
+      }
+    }
+
+    if (Object.keys(fieldsToUpdate).length > 0) {
+      await callBitrix("crm.deal.update", { id: bitrixDealId, fields: fieldsToUpdate });
+    }
+
+    if (params.paymentFileFieldCode && localPaymentFileSyncKey) {
+      const currentDealFileValue = getDealFieldValue(currentDeal, params.paymentFileFieldCode);
+      const hasCurrentDealFile = hasPersistedFileValue(currentDealFileValue);
+
+      if (paymentFileSyncKey && paymentFileSyncKey === localPaymentFileSyncKey) {
+        shouldSyncPaymentFile = false;
+      } else if (!paymentFileSyncKey && hasCurrentDealFile) {
+        paymentFileSyncKey = localPaymentFileSyncKey;
+      } else {
+        shouldSyncPaymentFile = true;
+      }
+    }
   } else {
+    const fields: Record<string, unknown> = {
+      TITLE: params.dealTitle,
+      COMPANY_ID: params.bitrixCompanyId,
+    };
+    if (params.company.city) {
+      fields["UF_CRM_1772560175"] = params.company.city;
+      fields["UF_CRM_CITY"] = params.company.city;
+    }
+    if (params.paymentFieldCode && paymentOrderUrl) {
+      fields[params.paymentFieldCode] = paymentOrderUrl;
+    }
+    if (params.paymentStatusFieldCode) {
+      fields[params.paymentStatusFieldCode] = paymentStatusValue;
+    }
+
     const result = await callBitrix("crm.deal.add", {
       fields: { ...fields, STAGE_ID: "NEW" },
     });
     bitrixDealId = plain(result?.ID || result?.id || result);
+    shouldSyncPaymentFile = Boolean(params.paymentFileFieldCode && localPaymentFileSyncKey);
   }
 
   if (
+    shouldSyncPaymentFile &&
     params.paymentFileFieldCode &&
-    (plain(params.company.payment_order_url) || (plain(params.company.payment_order_storage_bucket) && plain(params.company.payment_order_storage_path)))
+    localPaymentFileSyncKey
   ) {
     await attachPaymentFileToDeal(
       bitrixDealId,
       params.paymentFileFieldCode,
       params.company,
     );
+    paymentFileSyncKey = localPaymentFileSyncKey;
   }
 
-  return bitrixDealId;
+  return {
+    bitrixDealId,
+    paymentFileSyncKey,
+  };
 }
 
 async function createSmartProcessItem(params: {
@@ -707,6 +1361,24 @@ async function createSmartProcessItem(params: {
   }
 
   throw lastError || new Error("Failed to create smart-process item");
+}
+
+async function updateSmartProcessItem(itemId: string, fields: Record<string, unknown>): Promise<void> {
+  await callBitrix("crm.item.update", {
+    entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID,
+    id: itemId,
+    fields,
+  });
+}
+
+async function fetchSmartProcessItem(itemId: string): Promise<Record<string, unknown>> {
+  const raw = await callBitrix("crm.item.get", {
+    entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID,
+    id: itemId,
+  });
+  const item = ((raw as Record<string, unknown>)?.item || raw || {}) as Record<string, unknown>;
+  const itemFields = item.fields && typeof item.fields === "object" ? item.fields as Record<string, unknown> : null;
+  return itemFields ? { ...item, ...itemFields } : item;
 }
 
 function buildCloudinaryJpgCandidates(photoUrl: string): string[] {
@@ -839,7 +1511,7 @@ Deno.serve(async (req: Request) => {
         .maybeSingle(),
       supabase
         .from("deals")
-        .select("id, bitrix_deal_id, bitrix_company_id")
+        .select("id, bitrix_deal_id, bitrix_company_id, payment_file_sync_key")
         .eq("questionnaire_id", questionnaireId)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -890,7 +1562,7 @@ Deno.serve(async (req: Request) => {
     const bitrixCompanyId = await upsertCompany(company, deal);
     await supabase.from("companies").update({ bitrix_company_id: bitrixCompanyId }).eq("id", company.id);
 
-    const bitrixDealId = await upsertDeal({
+    const { bitrixDealId, paymentFileSyncKey } = await upsertDeal({
       deal,
       company,
       bitrixCompanyId,
@@ -905,6 +1577,7 @@ Deno.serve(async (req: Request) => {
       company_id: company.id,
       bitrix_deal_id: bitrixDealId,
       bitrix_company_id: bitrixCompanyId,
+      payment_file_sync_key: paymentFileSyncKey,
       deal_title: dealTitle,
       deal_url: buildDealUrl(bitrixDealId),
       sync_status: "in_progress",
@@ -916,72 +1589,108 @@ Deno.serve(async (req: Request) => {
       await supabase.from("deals").insert(dealPayload);
     }
 
-    if (plain(deal?.bitrix_deal_id)) {
-      const oldCertsResult = await supabase
-        .from("certificates")
-        .select("id, bitrix_item_id")
-        .eq("questionnaire_id", questionnaireId)
-        .not("bitrix_item_id", "is", null);
-      if (oldCertsResult.error) throw oldCertsResult.error;
+    const existingCertsResult = await supabase
+      .from("certificates")
+      .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
+      .eq("questionnaire_id", questionnaireId);
+    if (existingCertsResult.error) throw existingCertsResult.error;
 
-      const oldCerts = oldCertsResult.data || [];
-      const deleteIds = Array.from(new Set(oldCerts.map(item => plain(item.bitrix_item_id)).filter(id => /^\d+$/.test(id))));
-      await runInChunks(deleteIds, BITRIX_DELETE_CONCURRENCY, async itemId => {
-        try {
-          await callBitrix("crm.item.delete", { entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID, id: itemId });
-        } catch {
-          // ignore already deleted items during resync
-        }
-      });
-      const oldCertIds = oldCerts.map(item => item.id);
-      for (const chunk of chunkArray(oldCertIds, SUPABASE_DELETE_BATCH_SIZE)) {
-        const { error } = await supabase.from("certificates").delete().in("id", chunk);
-        if (error) throw error;
+    const existingCertificates = (existingCertsResult.data || []) as ExistingCertificateRow[];
+    const existingCertificateByKey = new Map<string, ExistingCertificateRow>();
+    for (const cert of existingCertificates) {
+      const key = taskKey(cert.participant_id, cert.course_name);
+      if (!key.startsWith("::") && !existingCertificateByKey.has(key)) {
+        existingCertificateByKey.set(key, cert);
       }
     }
 
     const enumMaps = await loadEnumMaps();
-    const certificateRows: Array<Record<string, unknown>> = [];
+    const certificateInserts: Array<Record<string, unknown>> = [];
+    const certificateUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
     let photoFailures = 0;
     const photoFailureSamples: string[] = [];
 
     await runInChunks(syncTasks, BITRIX_SYNC_CONCURRENCY, async task => {
-      const categoryValue = enumMaps.categoryMap.get(plain(task.participant.category).toLowerCase()) || plain(task.participant.category);
-      const courseValue = enumMaps.courseMap.get(plain(task.courseName).toLowerCase()) || task.courseName;
-      const fields: Record<string, unknown> = {
-        TITLE: `${task.participant.last_name} ${task.participant.first_name} - ${task.courseName}`,
-        [BITRIX_FIELDS.LAST_NAME]: task.participant.last_name,
-        [BITRIX_FIELDS_RAW.LAST_NAME]: task.participant.last_name,
-        [BITRIX_FIELDS.FIRST_NAME]: task.participant.first_name,
-        [BITRIX_FIELDS_RAW.FIRST_NAME]: task.participant.first_name,
-        [BITRIX_FIELDS.MIDDLE_NAME]: task.participant.patronymic,
-        [BITRIX_FIELDS_RAW.MIDDLE_NAME]: task.participant.patronymic,
-        [BITRIX_FIELDS.POSITION]: task.participant.position,
-        [BITRIX_FIELDS_RAW.POSITION]: task.participant.position,
-        [BITRIX_FIELDS.CATEGORY]: categoryValue,
-        [BITRIX_FIELDS_RAW.CATEGORY]: categoryValue,
-        [BITRIX_FIELDS.COURSE_NAME]: courseValue,
-        [BITRIX_FIELDS_RAW.COURSE_NAME]: courseValue,
-      };
+      const existingCertificate = existingCertificateByKey.get(taskKey(task.participant.id, task.courseName)) || null;
+      const expectedTitle = `${task.participant.last_name} ${task.participant.first_name} - ${task.courseName}`;
+      const itemIdRaw = plain(existingCertificate?.bitrix_item_id);
+      let itemId = itemIdRaw;
+      let currentBitrixItem: Record<string, unknown> | null = null;
+      let restorePatch: Record<string, unknown> = {};
+      let shouldAttachPhoto = false;
+      let resolvedPhotoSyncKey = plain(existingCertificate?.photo_sync_key);
 
-      const itemId = await createSmartProcessItem({
-        dealId: bitrixDealId,
-        companyId: bitrixCompanyId,
-        fields,
+      if (/^\d+$/.test(itemIdRaw)) {
+        try {
+          currentBitrixItem = await fetchSmartProcessItem(itemIdRaw);
+        } catch (error) {
+          if (isBitrixItemMissingError(error)) {
+            itemId = "";
+            currentBitrixItem = null;
+          } else {
+            throw error;
+          }
+        }
+      } else {
+        itemId = "";
+      }
+
+      const desiredFieldEntries = buildDesiredSmartProcessFieldEntries({
+        participant: task.participant,
+        courseName: task.courseName,
+        expectedTitle,
+        existingCertificate,
+        currentItem: currentBitrixItem,
+        enumMaps,
       });
-      if (task.participant.photo_url) {
+      const desiredFields = buildSmartProcessFieldRecord(desiredFieldEntries);
+
+      if (itemId && currentBitrixItem) {
+        const changedFields = buildSmartProcessUpdatePatch(currentBitrixItem, desiredFieldEntries);
+        if (Object.keys(changedFields).length > 0) {
+          await updateSmartProcessItem(itemId, changedFields);
+          currentBitrixItem = { ...currentBitrixItem, ...changedFields };
+        }
+
+        if (existingCertificate && needsCertificateRestore(existingCertificate)) {
+          restorePatch = buildCertificateRestorePatch(existingCertificate, currentBitrixItem);
+        }
+      }
+
+      if (!itemId) {
+        itemId = await createSmartProcessItem({
+          dealId: bitrixDealId,
+          companyId: bitrixCompanyId,
+          fields: desiredFields,
+        });
+        shouldAttachPhoto = Boolean(task.participant.photo_url);
+      }
+
+      const photoSourceKey = getPhotoSourceKey(task.participant.photo_url);
+      const hasCurrentPhoto = currentBitrixItem ? smartItemHasPhoto(currentBitrixItem) : false;
+      const shouldSyncPhoto = Boolean(photoSourceKey) && (
+        shouldAttachPhoto ||
+        (resolvedPhotoSyncKey && resolvedPhotoSyncKey !== photoSourceKey) ||
+        (!resolvedPhotoSyncKey && !hasCurrentPhoto)
+      );
+
+      if (photoSourceKey && shouldSyncPhoto) {
         const fullName = [task.participant.last_name, task.participant.first_name, task.participant.patronymic].filter(Boolean).join(" ");
         try {
           await attachPhotoToSmartItem(itemId, task.participant.photo_url, fullName);
+          resolvedPhotoSyncKey = photoSourceKey;
         } catch (error) {
           photoFailures++;
           if (photoFailureSamples.length < 3) {
             photoFailureSamples.push(`${fullName || task.participant.id}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
+      } else if (photoSourceKey && !resolvedPhotoSyncKey && hasCurrentPhoto) {
+        resolvedPhotoSyncKey = photoSourceKey;
       }
 
-      certificateRows.push({
+      const baseCertificatePatch: Record<string, unknown> = {
+        ...restorePatch,
         questionnaire_id: questionnaireId,
         company_id: company.id,
         participant_id: task.participant.id,
@@ -993,11 +1702,35 @@ Deno.serve(async (req: Request) => {
         category: task.participant.category,
         course_name: task.courseName,
         sync_status: "synced",
-      });
+        sync_error: "",
+        updated_at: new Date().toISOString(),
+      };
+      if (resolvedPhotoSyncKey) {
+        baseCertificatePatch.photo_sync_key = resolvedPhotoSyncKey;
+      }
+
+      if (existingCertificate?.id) {
+        certificateUpdates.push({
+          id: existingCertificate.id,
+          patch: baseCertificatePatch,
+        });
+      } else {
+        certificateInserts.push(baseCertificatePatch);
+      }
     });
 
-    if (certificateRows.length > 0) {
-      const { error } = await supabase.from("certificates").insert(certificateRows);
+    if (certificateUpdates.length > 0) {
+      await runInChunks(certificateUpdates, BITRIX_SYNC_CONCURRENCY, async item => {
+        const { error } = await supabase
+          .from("certificates")
+          .update(item.patch)
+          .eq("id", item.id);
+        if (error) throw error;
+      });
+    }
+
+    if (certificateInserts.length > 0) {
+      const { error } = await supabase.from("certificates").insert(certificateInserts);
       if (error) throw error;
     }
 
@@ -1009,6 +1742,7 @@ Deno.serve(async (req: Request) => {
         deal_url: buildDealUrl(bitrixDealId),
         bitrix_deal_id: bitrixDealId,
         bitrix_company_id: bitrixCompanyId,
+        payment_file_sync_key: paymentFileSyncKey,
       })
       .eq("questionnaire_id", questionnaireId);
 
@@ -1017,7 +1751,7 @@ Deno.serve(async (req: Request) => {
       isUpdate: Boolean(plain(deal?.bitrix_deal_id)),
       dealTitle,
       dealUrl: buildDealUrl(bitrixDealId),
-      certificateCount: certificateRows.length,
+      certificateCount: certificateUpdates.length + certificateInserts.length,
       photoFailures,
       photoFailureSamples,
     });
