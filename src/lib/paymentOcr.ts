@@ -1,68 +1,22 @@
 import type { PaymentOrderExtractedFields } from './cloudinary';
 
-function isLocalHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1';
-}
-
-function parseOcrApiCandidates(rawValue: string): string[] {
-  return String(rawValue || '')
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean)
-    .map(v => v.replace(/\/+$/, ''));
-}
-
-function resolveOcrApiUrl(): string {
-  const raw = String(import.meta.env.VITE_PAYMENT_OCR_API_URL || '').trim();
-  const candidates = parseOcrApiCandidates(raw);
-  if (candidates.length === 0) return '';
-
-  const valid = candidates.filter(candidate => {
-    try {
-      const parsed = new URL(candidate);
-      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  });
-  if (valid.length === 0) return '';
-
-  const browserHost = typeof window !== 'undefined' ? window.location.hostname : '';
-  const browserIsLocal = isLocalHost(browserHost);
-
-  if (browserIsLocal) {
-    const localCandidate = valid.find(candidate => {
-      try {
-        return isLocalHost(new URL(candidate).hostname);
-      } catch {
-        return false;
-      }
-    });
-    return localCandidate || valid[0];
-  }
-
-  const publicCandidate = valid.find(candidate => {
-    try {
-      return !isLocalHost(new URL(candidate).hostname);
-    } catch {
-      return false;
-    }
-  });
-  return publicCandidate || valid[0];
-}
-
-const OCR_API_URL = resolveOcrApiUrl();
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+const SUPABASE_ANON_KEY = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export async function extractPaymentOrderFields(file: File): Promise<PaymentOrderExtractedFields> {
-  if (!OCR_API_URL) {
-    throw new Error('OCR API URL is not configured (VITE_PAYMENT_OCR_API_URL)');
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('Supabase OCR proxy is not configured');
   }
 
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch(`${OCR_API_URL}/extract-payment-order`, {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/parse-payment-order`, {
     method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      apikey: SUPABASE_ANON_KEY,
+    },
     body: formData,
   });
 
