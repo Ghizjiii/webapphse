@@ -84,6 +84,20 @@ export interface RefDocumentValidityRule {
   updated_at: string;
 }
 
+export interface RefBitrixListItem {
+  id: string;
+  list_key: string;
+  list_name: string;
+  iblock_id: number;
+  bitrix_item_id: string;
+  name: string;
+  bitrix_value: string;
+  code: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Deal {
   id: string;
   questionnaire_id: string;
