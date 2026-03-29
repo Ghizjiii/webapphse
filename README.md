@@ -59,10 +59,14 @@ npm run build
 - Protocol generation via Google Apps Script requires:
   - `GOOGLE_APPS_SCRIPT_PROTOCOL_URL` (separate GAS Web App endpoint for protocol templates; falls back to `GOOGLE_APPS_SCRIPT_URL` if omitted)
   - `GOOGLE_APPS_SCRIPT_PROTOCOL_TOKEN` (shared secret for protocol GAS; falls back to `GOOGLE_APPS_SCRIPT_TOKEN` if omitted)
-- Vercel OCR proxy `api/extract-payment-order` requires server-side env vars:
-  - `ALLOWED_ORIGIN` (same allowlist format as Supabase edge functions)
-  - `PAYMENT_OCR_UPSTREAM_URL` (URL of PaddlePDF OCR service)
-  - `PAYMENT_OCR_UPSTREAM_TOKEN` (optional but recommended; must match OCR service env)
+- Payment OCR now goes through Supabase Edge Function `parse-payment-order` and requires Supabase secrets:
+  - `ALLOWED_ORIGIN` (same allowlist format as other edge functions)
+  - `PAYMENT_OCR_API_URL` (for example `https://ocr.absystems.kz`)
+  - `PAYMENT_OCR_API_TOKEN` (must match `OCR_SHARED_SECRET` on the OCR server)
+- Legacy Vercel OCR proxy `api/extract-payment-order` is optional and requires:
+  - `ALLOWED_ORIGIN`
+  - `PAYMENT_OCR_UPSTREAM_URL`
+  - `PAYMENT_OCR_UPSTREAM_TOKEN`
 - Optional Bitrix deal mapping for payment order (used in questionnaire sync):
   - `VITE_BITRIX_DEAL_PAYMENT_FIELD` (for example `UF_CRM_...`)
   - `VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD` (UF field in deal with type `Файл`, for payment-order file)
@@ -115,3 +119,4 @@ npm run build
   - Auto-fill company info + contract snapshot
   - If no active contract, user can confirm `Нет договора` and fill manually
   - Optional payment-order file can be attached
+  - Payment-order OCR runs through Supabase Edge Function `parse-payment-order`, which calls the protected PaddlePDF OCR server

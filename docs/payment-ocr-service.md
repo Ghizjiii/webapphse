@@ -1,63 +1,62 @@
-﻿# Payment OCR Service
+# Payment OCR Service
 
-Pipeline:
-1. Upload file to endpoint `/extract-payment-order`
-2. Detect file type
-3. If PDF -> PyMuPDF
-4. If Image -> PaddleOCR
-5. If Excel -> pandas
-6. Return JSON with extracted fields
+## Current production flow
 
-## Run locally
+1. User uploads PDF/JPG/PNG in the public form.
+2. Frontend calls Supabase Edge Function `parse-payment-order`.
+3. Edge Function forwards the file to the protected OCR server `POST /parse-payment`.
+4. OCR server extracts:
+   - `payment_number`
+   - `payment_date`
+   - `amount`
+   - `payer_bin`
+   - `payer_name`
+5. Edge Function maps the response into frontend fields:
+   - `payment_order_number`
+   - `payment_order_date`
+   - `payment_order_amount`
+   - `payment_order_bin_iin`
 
-```bash
-cd services/payment_ocr_service
-python -m venv .venv
-. .venv/Scripts/activate
-pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 8001
+The browser must not call `ocr.absystems.kz` directly because the OCR service is protected by a shared secret.
+
+## OCR server
+
+Production OCR server is the separate project in `C:\dev\AB\HSE\webapp\app_ocr`.
+
+Current protected endpoints:
+- `POST /ocr`
+- `POST /parse-payment`
+- `GET /version`
+
+Public endpoint:
+- `GET /health`
+
+Authentication:
+- `Authorization: Bearer <OCR_SHARED_SECRET>`
+
+## Supabase secrets
+
+Set these in Supabase Edge Function secrets:
+
+```env
+ALLOWED_ORIGIN=http://localhost:5173,https://your-frontend-domain.vercel.app
+PAYMENT_OCR_API_URL=https://ocr.absystems.kz
+PAYMENT_OCR_API_TOKEN=your-shared-secret
 ```
 
-Notes:
-- For scanned PDFs, service does fallback OCR: renders PDF pages to images and runs PaddleOCR.
-- OCR model is configured with `lang=\"ru\"` for better RU/KZ docs.
-- Optional env for protected deployment:
-  - `ALLOWED_ORIGINS=http://localhost:5173,https://your-domain.vercel.app`
-  - `PAYMENT_OCR_UPSTREAM_TOKEN=shared-secret`
-
-## API
-
-`POST /extract-payment-order`
-- form-data: `file`
-- header: `x-ocr-token` when `PAYMENT_OCR_UPSTREAM_TOKEN` is configured
-
-Response:
-```json
-{
-  "ok": true,
-  "file_type": "pdf|image|excel",
-  "extracted": {
-    "payment_order_bin_iin": "...",
-    "payment_order_number": "...",
-    "payment_order_date": "YYYY-MM-DD",
-    "payment_order_amount": "12345.67"
-  },
-  "text_preview": "..."
-}
-```
+`PAYMENT_OCR_API_TOKEN` must match `OCR_SHARED_SECRET` on the OCR server.
 
 ## Frontend env
 
-Set OCR endpoint:
+No dedicated Vite OCR URL is required anymore. Frontend only needs:
 
 ```env
-VITE_PAYMENT_OCR_API_URL=http://localhost:8001
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
 ```
 
-For Vercel proxy deployment:
+## Legacy local service
 
-```env
-ALLOWED_ORIGIN=http://localhost:5173,https://your-domain.vercel.app
-PAYMENT_OCR_UPSTREAM_URL=http://localhost:8001
-PAYMENT_OCR_UPSTREAM_TOKEN=shared-secret
-```
+This repository still contains the older local OCR prototype in `services/payment_ocr_service` and the optional Vercel proxy `api/extract-payment-order.js`.
+
+They are no longer the primary production path and should be treated as legacy/local tooling unless you explicitly decide to keep that route.
