@@ -1,4 +1,4 @@
-﻿# HSE Web App
+# HSE Web App
 
 React + Vite + TypeScript application for HSE questionnaire collection, participant management, and Bitrix24 sync.
 
@@ -73,7 +73,7 @@ npm run build
   - `VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD` (UF field in deal with type `Да/Нет`, value maps from coordinator checkbox)
 - Protocol smart-process UI uses:
   - `VITE_BITRIX_PROTOCOL_ENTITY_TYPE_ID` (default `1070`)
-- HR days-to-words webhook function requires:
+- HR days-to-words / position-genitive webhook function requires:
   - `BITRIX_WEBHOOK_URL`
   - `BITRIX_OUTGOING_TOKEN`
   - optional overrides:
@@ -82,6 +82,9 @@ npm run build
     - `BITRIX_HR_END_DATE_FIELD` (default `ufCrm10_1771778942`)
     - `BITRIX_HR_DAYS_NUMBER_FIELD` (default `ufCrm10_1772124949853`)
     - `BITRIX_HR_DAYS_WORDS_FIELD` (default `ufCrm10_1772131937986`)
+    - `BITRIX_HR_POSITION_FIELD` (default `ufCrm10_1772992837`, Bitrix code `UF_CRM_10_1772992837`)
+    - `BITRIX_HR_POSITION_GENITIVE_FIELD` (default `ufCrm10_1771778817`, Bitrix code `UF_CRM_10_1771778817`)
+    - `MORPHER_API_TOKEN` (optional)
 
 ## Google Docs generation flow
 
@@ -105,10 +108,14 @@ npm run build
 5. GAS creates one Google Doc per protocol/course/category group and returns `fileUrl`.
 6. Frontend stores generated file metadata in `protocols` and can sync protocol metadata to Bitrix24 smart process `1070`.
 
-## HR vacation days text sync
+## HR vacation days and position genitive sync
 
 - Function: `bitrix-hr-days-spell`
 - Setup guide: `docs/bitrix-hr-days-spell-setup.md`
+
+## Bitrix outgoing webhook consolidation
+
+- Single outgoing webhook setup: `docs/bitrix-unified-outgoing-webhook.md`
 
 ## Company directory sync (Bitrix24)
 

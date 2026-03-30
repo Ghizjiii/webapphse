@@ -5,11 +5,10 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import {
   BITRIX_PROTOCOL_FIELDS,
-  BITRIX_PROTOCOL_FIELDS_RAW,
+  BITRIX_PROTOCOL_REFERENCE_FIELDS,
   PROTOCOL_SMART_PROCESS_ENTITY_TYPE_ID,
   createSmartProcessItem,
   resolveProtocolSmartProcessFieldMap,
-  resolveSmartProcessEnumId,
   updateSmartProcessItem,
 } from '../lib/bitrix';
 import {
@@ -19,7 +18,7 @@ import {
   makeProtocolGeneratedFileName,
   protocolGroupKey,
 } from '../lib/protocolGeneration';
-import type { Certificate, Protocol } from '../types';
+import type { Certificate, Protocol, RefBitrixListItem } from '../types';
 
 interface Props {
   questionnaireId: string;
@@ -104,6 +103,38 @@ function getBitrixCourseEnumAliases(courseName: string): string[] {
   }
 
   return Array.from(aliases);
+}
+
+function normalizeReferenceLookup(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLocaleLowerCase('ru')
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ');
+}
+
+function findReferenceBitrixItemId(
+  listItems: RefBitrixListItem[],
+  listKey: RefBitrixListItem['list_key'],
+  value: string,
+  aliases: string[] = [],
+): string {
+  const candidates = Array.from(new Set([value, ...aliases]))
+    .map(candidate => normalizeReferenceLookup(candidate))
+    .filter(Boolean);
+  if (candidates.length === 0) return '';
+
+  const relevantItems = listItems.filter(item => item.list_key === listKey);
+  for (const candidate of candidates) {
+    const match = relevantItems.find(item => {
+      const itemValues = [item.name, item.bitrix_value, item.code]
+        .map(current => normalizeReferenceLookup(current));
+      return itemValues.includes(candidate);
+    });
+    if (match) return String(match.bitrix_item_id || '').trim();
+  }
+
+  return '';
 }
 
 export default function ProtocolsTable({
@@ -413,24 +444,29 @@ export default function ProtocolsTable({
 
     try {
       const protocolFieldMap = await resolveProtocolSmartProcessFieldMap(PROTOCOL_SMART_PROCESS_ENTITY_TYPE_ID);
+      const { data: referenceCourseRows, error: referenceCourseError } = await supabase
+        .from('ref_bitrix_list_items')
+        .select('*')
+        .eq('list_key', 'COURSES')
+        .order('sort_order')
+        .order('name');
+      if (referenceCourseError) throw referenceCourseError;
 
       const numberFieldKey = protocolFieldMap.number?.key || BITRIX_PROTOCOL_FIELDS.NUMBER;
       const dateFieldKey = protocolFieldMap.date?.key || BITRIX_PROTOCOL_FIELDS.DATE;
-      const courseFieldKey = protocolFieldMap.course?.key || BITRIX_PROTOCOL_FIELDS.COURSE;
-      const courseFieldRawName = protocolFieldMap.course?.upperName || BITRIX_PROTOCOL_FIELDS_RAW.COURSE;
+      const courseFieldKey = protocolFieldMap.courseReference?.key || BITRIX_PROTOCOL_REFERENCE_FIELDS.COURSE;
       const titleFieldKey = protocolFieldMap.title?.key || 'title';
       const isPrintedFieldKey = protocolFieldMap.isPrinted?.key;
+      const referenceCourseItems = (referenceCourseRows || []) as RefBitrixListItem[];
 
       for (const row of visibleRows) {
         try {
-          const courseEnumId = await resolveSmartProcessEnumId({
-            entityTypeId: PROTOCOL_SMART_PROCESS_ENTITY_TYPE_ID,
-            fieldRawName: courseFieldRawName,
-            fieldCamelName: courseFieldKey,
-            value: row.course_name,
-            aliases: getBitrixCourseEnumAliases(row.course_name),
-            forceRefresh: true,
-          });
+          const courseReferenceId = findReferenceBitrixItemId(
+            referenceCourseItems,
+            'COURSES',
+            row.course_name,
+            getBitrixCourseEnumAliases(row.course_name),
+          );
 
           const baseFields: Record<string, unknown> = {
             [titleFieldKey]: buildProtocolBitrixTitle(row, companyName),
@@ -455,12 +491,10 @@ export default function ProtocolsTable({
             ...baseFields,
           };
 
-          if (courseEnumId) {
-            fields[courseFieldKey] = courseEnumId;
-          } else if (protocolFieldMap.course && protocolFieldMap.course.type !== 'enumeration') {
-            fields[courseFieldKey] = row.course_name;
+          if (courseReferenceId) {
+            fields[courseFieldKey] = courseReferenceId;
           } else if (String(row.course_name || '').trim()) {
-            warnings.add(`В Bitrix нет варианта поля "Курс" для "${row.course_name}". Название элемента обновлено, но поле курса может остаться пустым.`);
+            warnings.add(`В Bitrix не найден элемент списка "Наименование курсов" для "${row.course_name}". Новое поле курса в протоколе может остаться пустым.`);
           }
 
           let bitrixItemId = String(row.bitrix_item_id || '').trim();
@@ -484,18 +518,7 @@ export default function ProtocolsTable({
             });
           };
 
-          if (courseEnumId || !protocolFieldMap.course || protocolFieldMap.course.type !== 'enumeration') {
-            await runSync(fields);
-          } else {
-            try {
-              await runSync({
-                ...fields,
-                [courseFieldKey]: row.course_name,
-              });
-            } catch {
-              await runSync(baseFields);
-            }
-          }
+          await runSync(fields);
 
           await persistProtocolRow(row, {
             bitrix_item_id: bitrixItemId,

@@ -73,6 +73,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
+  const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetId = useRef<string | null>(null);
   const lastResumeRefreshAtRef = useRef(0);
@@ -85,14 +86,26 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     );
   }
 
-  const sorted = useMemo(() => sortParticipants(participants, sortConfig), [participants, sortConfig]);
+  useEffect(() => {
+    setLocalParticipants(participants);
+  }, [participants]);
+
+  function applyParticipantPatch(participantId: string, patch: Partial<Participant>) {
+    setLocalParticipants(prev => prev.map(participant => (
+      participant.id === participantId
+        ? { ...participant, ...patch }
+        : participant
+    )));
+  }
+
+  const sorted = useMemo(() => sortParticipants(localParticipants, sortConfig), [localParticipants, sortConfig]);
   const totalCourses = useMemo(
-    () => [...new Set(participants.flatMap(p => (p.courses || []).map(c => c.course_name)))].length,
-    [participants]
+    () => [...new Set(localParticipants.flatMap(p => (p.courses || []).map(c => c.course_name)))].length,
+    [localParticipants]
   );
   const totalCourseRequests = useMemo(
-    () => participants.reduce((sum, p) => sum + (p.courses || []).length, 0),
-    [participants]
+    () => localParticipants.reduce((sum, p) => sum + (p.courses || []).length, 0),
+    [localParticipants]
   );
   const totalPages = Math.ceil(sorted.length / pageSize);
   const paged = useMemo(() => sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize), [sorted, currentPage, pageSize]);
@@ -107,7 +120,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       position: '',
       category: '',
       photo_url: '',
-      sort_order: participants.length,
+      sort_order: localParticipants.length,
     });
     if (error) {
       showToast('error', UI.addError);
@@ -119,6 +132,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   async function deleteParticipant(id: string) {
     await supabase.from('participant_courses').delete().eq('participant_id', id);
     await supabase.from('participants').delete().eq('id', id);
+    setLocalParticipants(prev => prev.filter(participant => participant.id !== id));
     onRefresh();
   }
 
@@ -129,24 +143,44 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
 
   async function saveEdit() {
     if (!editCell) return;
+    const currentCell = editCell;
+    const currentParticipant = localParticipants.find(participant => participant.id === currentCell.participantId) || null;
+    const previousValue = currentParticipant
+      ? String((currentParticipant as unknown as Record<string, unknown>)[currentCell.field] ?? '')
+      : '';
+    const optimisticPatch = { [currentCell.field]: editValue } as Partial<Participant>;
+
+    applyParticipantPatch(currentCell.participantId, optimisticPatch);
     setSaving(true);
     const { error } = await supabase
       .from('participants')
-      .update({ [editCell.field]: editValue, updated_at: new Date().toISOString() })
-      .eq('id', editCell.participantId);
-    if (error) showToast('error', UI.saveError);
+      .update({ [currentCell.field]: editValue, updated_at: new Date().toISOString() })
+      .eq('id', currentCell.participantId);
+    if (error) {
+      showToast('error', UI.saveError);
+      applyParticipantPatch(currentCell.participantId, { [currentCell.field]: previousValue } as Partial<Participant>);
+    }
     setSaving(false);
     setEditCell(null);
     onRefresh();
   }
 
   async function saveParticipantPatch(participantId: string, patch: Partial<Participant>) {
+    const previousParticipant = localParticipants.find(participant => participant.id === participantId) || null;
+    applyParticipantPatch(participantId, patch);
     setSaving(true);
     const { error } = await supabase
       .from('participants')
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', participantId);
-    if (error) showToast('error', UI.saveError);
+    if (error) {
+      showToast('error', UI.saveError);
+      if (previousParticipant) {
+        setLocalParticipants(prev => prev.map(participant => (
+          participant.id === participantId ? previousParticipant : participant
+        )));
+      }
+    }
     setSaving(false);
     onRefresh();
   }
@@ -157,6 +191,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     setUploadingId(uploadTargetId.current);
     try {
       const url = await uploadPhoto(file);
+      applyParticipantPatch(uploadTargetId.current, { photo_url: url });
       await supabase
         .from('participants')
         .update({ photo_url: url, updated_at: new Date().toISOString() })
@@ -174,14 +209,37 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
 
   async function toggleCourse(participantId: string, courseName: string, currentCourses: ParticipantCourse[]) {
     const exists = currentCourses.find(c => c.course_name === courseName);
+    const previousParticipant = localParticipants.find(participant => participant.id === participantId) || null;
+    const nextCourses = exists
+      ? currentCourses.filter(course => course.course_name !== courseName)
+      : [
+          ...currentCourses,
+          {
+            participant_id: participantId,
+            questionnaire_id: questionnaireId,
+            course_name: courseName,
+          },
+        ];
+    applyParticipantPatch(participantId, { courses: nextCourses } as Partial<Participant>);
+
     if (exists) {
-      await supabase.from('participant_courses').delete().eq('participant_id', participantId).eq('course_name', courseName);
+      const { error } = await supabase.from('participant_courses').delete().eq('participant_id', participantId).eq('course_name', courseName);
+      if (error && previousParticipant) {
+        setLocalParticipants(prev => prev.map(participant => (
+          participant.id === participantId ? previousParticipant : participant
+        )));
+      }
     } else {
-      await supabase.from('participant_courses').insert({
+      const { error } = await supabase.from('participant_courses').insert({
         participant_id: participantId,
         questionnaire_id: questionnaireId,
         course_name: courseName,
       });
+      if (error && previousParticipant) {
+        setLocalParticipants(prev => prev.map(participant => (
+          participant.id === participantId ? previousParticipant : participant
+        )));
+      }
     }
     onRefresh();
   }
@@ -237,9 +295,9 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       ['ИТР', 'Обычный'].forEach(push);
     }
 
-    participants.forEach(participant => push(participant.category));
+    localParticipants.forEach(participant => push(participant.category));
     return result;
-  }, [participants, referenceCategories]);
+  }, [localParticipants, referenceCategories]);
 
   function EditableCell({ p, field, value }: { p: Participant; field: string; value: string }) {
     const isEditing = editCell?.participantId === p.id && editCell?.field === field;
@@ -301,7 +359,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
 
       <div className="mb-3 flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500">
-          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-blue-700">{participants.length} {UI.employees}</span>
+          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-blue-700">{localParticipants.length} {UI.employees}</span>
           <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-green-700">{totalCourses} {UI.courses}</span>
           <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-amber-700">{totalCourseRequests} {UI.requests}</span>
           {totalPages > 1 && (
