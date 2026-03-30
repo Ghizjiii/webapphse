@@ -6,6 +6,14 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "
 const BITRIX_WEBHOOK_URL = (Deno.env.get("BITRIX_WEBHOOK_URL") || Deno.env.get("BITRIX_WEBHOOK") || "").replace(/\/+$/, "");
 const OUTGOING_TOKEN = Deno.env.get("BITRIX_REFERENCE_SYNC_TOKEN") || Deno.env.get("BITRIX_OUTGOING_TOKEN") || "";
 const CONTRACT_ENTITY_TYPE_ID = Number(Deno.env.get("BITRIX_CONTRACT_ENTITY_TYPE_ID") || "1060");
+const HR_ENTITY_TYPE_ID = Number(Deno.env.get("BITRIX_HR_ENTITY_TYPE_ID") || "1050");
+const HR_START_DATE_FIELD = Deno.env.get("BITRIX_HR_START_DATE_FIELD") || "ufCrm10_1771778909";
+const HR_END_DATE_FIELD = Deno.env.get("BITRIX_HR_END_DATE_FIELD") || "ufCrm10_1771778942";
+const HR_DAYS_NUMBER_FIELD = Deno.env.get("BITRIX_HR_DAYS_NUMBER_FIELD") || "ufCrm10_1772124949853";
+const HR_DAYS_WORDS_FIELD = Deno.env.get("BITRIX_HR_DAYS_WORDS_FIELD") || "ufCrm10_1772131937986";
+const HR_POSITION_FIELD = Deno.env.get("BITRIX_HR_POSITION_FIELD") || "ufCrm10_1772992837";
+const HR_POSITION_GENITIVE_FIELD = Deno.env.get("BITRIX_HR_POSITION_GENITIVE_FIELD") || "ufCrm10_1771778817";
+const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 const SYNC_SCOPE = "reference_lists";
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
 const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
@@ -80,7 +88,10 @@ type ContractSnapshot = {
 type SyncTargets = {
   syncReferenceLists: boolean;
   syncCompanyDirectory: boolean;
+  syncHrItem: boolean;
+  ignoreEvent: boolean;
   entityTypeId: number | null;
+  reason: string;
 };
 
 const BITRIX_REFERENCE_LISTS = {
@@ -335,10 +346,35 @@ function fieldKeyVariants(code: string): string[] {
   if (!base) return [];
 
   const variants = new Set<string>([base, base.toUpperCase(), base.toLowerCase()]);
+  variants.add(base[0].toLowerCase() + base.slice(1));
+  variants.add(base[0].toUpperCase() + base.slice(1));
+
   const smartCamel = smartUfCamelFromUpper(base);
   if (smartCamel) variants.add(smartCamel);
+
   const companyCamel = companyUfCamelFromUpper(base);
   if (companyCamel) variants.add(companyCamel);
+
+  const camelUnderscoreMatch = base.match(/^(?:U|u)fCrm(\d+)_(\d+)$/);
+  if (camelUnderscoreMatch) {
+    variants.add(`UfCrm${camelUnderscoreMatch[1]}${camelUnderscoreMatch[2]}`);
+    variants.add(`ufCrm${camelUnderscoreMatch[1]}${camelUnderscoreMatch[2]}`);
+    variants.add(`UF_CRM_${camelUnderscoreMatch[1]}_${camelUnderscoreMatch[2]}`);
+  }
+
+  const upperMatch = base.match(/^UF_CRM_(\d+)_(\d+)$/i);
+  if (upperMatch) {
+    variants.add(`UfCrm${upperMatch[1]}${upperMatch[2]}`);
+    variants.add(`ufCrm${upperMatch[1]}${upperMatch[2]}`);
+    variants.add(`ufCrm${upperMatch[1]}_${upperMatch[2]}`);
+  }
+
+  const camelFlatMatch = base.match(/^(?:U|u)fCrm(\d{2})(\d+)$/);
+  if (camelFlatMatch) {
+    variants.add(`ufCrm${camelFlatMatch[1]}_${camelFlatMatch[2]}`);
+    variants.add(`UF_CRM_${camelFlatMatch[1]}_${camelFlatMatch[2]}`);
+  }
+
   return Array.from(variants);
 }
 
@@ -346,6 +382,14 @@ function getFieldValue(item: PlainObject, code: string): unknown {
   for (const key of fieldKeyVariants(code)) {
     if (Object.prototype.hasOwnProperty.call(item, key)) return item[key];
   }
+
+  const itemKeys = Object.keys(item);
+  for (const key of fieldKeyVariants(code)) {
+    const target = normalizedKey(key);
+    const found = itemKeys.find(itemKey => normalizedKey(itemKey) === target);
+    if (found) return item[found];
+  }
+
   return undefined;
 }
 
@@ -462,6 +506,434 @@ async function callBitrixRestMethod(method: string, params: PlainObject): Promis
   }
 
   throw lastError || new Error(`Bitrix call failed: ${method}`);
+}
+
+function normalizedKey(value: string): string {
+  return plain(value)
+    .toLowerCase()
+    .replace(/[{}_\s[\].-]/g, "");
+}
+
+function resolveUpdateFieldKey(item: PlainObject, code: string): string {
+  const variants = fieldKeyVariants(code);
+  for (const variant of variants) {
+    if (variant in item) return variant;
+  }
+
+  const itemKeys = Object.keys(item);
+  for (const variant of variants) {
+    const target = normalizedKey(variant);
+    const found = itemKeys.find(key => normalizedKey(key) === target);
+    if (found) return found;
+  }
+
+  return plain(code);
+}
+
+function parseHrDateValue(value: unknown): string | null {
+  const raw = firstScalarValue(value);
+  if (!raw) return null;
+
+  const isoDateMatch = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/);
+  if (isoDateMatch) return isoDateMatch[1];
+
+  const ruDateMatch = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:[T\s].*)?$/);
+  if (ruDateMatch) return `${ruDateMatch[3]}-${ruDateMatch[2]}-${ruDateMatch[1]}`;
+
+  return null;
+}
+
+function parseIsoDateToUtcTimestamp(value: string): number | null {
+  const match = plain(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return timestamp;
+}
+
+function calculateInclusiveDays(startDate: string, endDate: string): number | null {
+  const startTimestamp = parseIsoDateToUtcTimestamp(startDate);
+  const endTimestamp = parseIsoDateToUtcTimestamp(endDate);
+  if (startTimestamp === null || endTimestamp === null) return null;
+
+  const diffDays = Math.round((endTimestamp - startTimestamp) / 86_400_000) + 1;
+  return diffDays > 0 ? diffDays : null;
+}
+
+function normalizeComparableText(value: unknown): string {
+  return plain(value).replace(/\s+/g, " ").toLowerCase();
+}
+
+function trimNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function parseItemId(value: unknown): string {
+  const raw = plain(value);
+  if (!raw) return "";
+  if (/^\d+$/.test(raw)) return raw;
+  const mDoc = raw.match(/^SPA_(\d+)_(\d+)$/i);
+  if (mDoc) return mDoc[2];
+  const m = raw.match(/(\d+)$/);
+  return m ? m[1] : "";
+}
+
+function parseEntityTypeId(value: unknown): number | null {
+  const raw = plain(value);
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const mDoc = raw.match(/^SPA_(\d+)_(\d+)$/i);
+  if (mDoc) return Number(mDoc[1]);
+  return null;
+}
+
+function morph(value: number, one: string, two: string, many: string): string {
+  const n = Math.abs(value) % 100;
+  const n1 = n % 10;
+  if (n > 10 && n < 20) return many;
+  if (n1 > 1 && n1 < 5) return two;
+  if (n1 === 1) return one;
+  return many;
+}
+
+function hundredToWords(num: number, feminine = false): string {
+  const onesMale = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"];
+  const onesFemale = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"];
+  const teens = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"];
+  const tens = ["", "", "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто"];
+  const hundreds = ["", "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот"];
+
+  const parts: string[] = [];
+  const h = Math.trunc(num / 100);
+  const rest = num % 100;
+  const t = Math.trunc(rest / 10);
+  const o = rest % 10;
+
+  if (h > 0) parts.push(hundreds[h]);
+  if (rest >= 10 && rest <= 19) {
+    parts.push(teens[rest - 10]);
+  } else {
+    if (t > 1) parts.push(tens[t]);
+    if (o > 0) parts.push((feminine ? onesFemale : onesMale)[o]);
+  }
+
+  return parts.join(" ").trim();
+}
+
+function numberToWordsRu(num: number): string {
+  if (num === 0) return "ноль";
+  if (!Number.isFinite(num)) return "";
+
+  const abs = Math.abs(Math.trunc(num));
+  let rest = abs;
+  const parts: string[] = [];
+
+  const billions = Math.trunc(rest / 1_000_000_000);
+  if (billions > 0) {
+    parts.push(hundredToWords(billions, false), morph(billions, "миллиард", "миллиарда", "миллиардов"));
+    rest %= 1_000_000_000;
+  }
+
+  const millions = Math.trunc(rest / 1_000_000);
+  if (millions > 0) {
+    parts.push(hundredToWords(millions, false), morph(millions, "миллион", "миллиона", "миллионов"));
+    rest %= 1_000_000;
+  }
+
+  const thousands = Math.trunc(rest / 1000);
+  if (thousands > 0) {
+    parts.push(hundredToWords(thousands, true), morph(thousands, "тысяча", "тысячи", "тысяч"));
+    rest %= 1000;
+  }
+
+  if (rest > 0) {
+    parts.push(hundredToWords(rest, false));
+  }
+
+  const output = parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  return num < 0 ? `минус ${output}` : output;
+}
+
+async function toGenitiveCase(value: string): Promise<string> {
+  const text = plain(value);
+  if (!text) return "";
+
+  const url = new URL("https://ws3.morpher.ru/russian/declension");
+  url.searchParams.set("s", text);
+  url.searchParams.set("format", "json");
+
+  const headers: Record<string, string> = {};
+  if (MORPHER_API_TOKEN) {
+    headers.authorization = `Bearer ${MORPHER_API_TOKEN}`;
+  }
+
+  const response = await fetch(url, { method: "GET", headers });
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`Morpher HTTP ${response.status}: ${raw || "empty response"}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json") || raw.trim().startsWith("{")) {
+    let parsed: PlainObject = {};
+    try {
+      parsed = raw ? JSON.parse(raw) as PlainObject : {};
+    } catch {
+      parsed = {};
+    }
+
+    const genitive = plain(parsed["\u0420"] || parsed.r);
+    if (!genitive) {
+      throw new Error(`Morpher JSON without genitive case: ${raw || "empty response"}`);
+    }
+
+    return genitive;
+  }
+
+  const genitive =
+    trimNonEmptyString(raw.match(/<Р>([^<]+)<\/Р>/u)?.[1]) ||
+    trimNonEmptyString(raw.match(/<r>([^<]+)<\/r>/i)?.[1]);
+
+  if (!genitive) {
+    throw new Error(`Morpher response without genitive case: ${raw || "empty response"}`);
+  }
+
+  return genitive;
+}
+
+function startDatePaths(): string[] {
+  return [
+    "startDate",
+    "start_date",
+    "dateStart",
+    "date_start",
+    "beginDate",
+    "begin_date",
+    HR_START_DATE_FIELD,
+    ...fieldKeyVariants(HR_START_DATE_FIELD),
+  ];
+}
+
+function endDatePaths(): string[] {
+  return [
+    "endDate",
+    "end_date",
+    "dateEnd",
+    "date_end",
+    "finishDate",
+    "finish_date",
+    HR_END_DATE_FIELD,
+    ...fieldKeyVariants(HR_END_DATE_FIELD),
+  ];
+}
+
+async function runHrFieldSync(source: string, eventName: string, body: PlainObject) {
+  const itemId = parseItemId(
+    pickFormOrJson(body, [
+      "itemId",
+      "item_id",
+      "id",
+      "document_id",
+      "data.FIELDS.ID",
+      "data[FIELDS][ID]",
+    ]),
+  );
+
+  if (!itemId) {
+    return {
+      ok: true,
+      ignored: true,
+      scope: "hr_fields",
+      source,
+      eventName,
+      reason: "Missing itemId for HR webhook event",
+    };
+  }
+
+  const entityTypeId =
+    parseEntityTypeId(
+      pickFormOrJson(body, [
+        "entityTypeId",
+        "entity_type_id",
+        "document_id",
+        "data.FIELDS.ENTITY_TYPE_ID",
+        "data[FIELDS][ENTITY_TYPE_ID]",
+      ]),
+    ) ?? extractEventEntityTypeId(body) ?? HR_ENTITY_TYPE_ID;
+
+  if (entityTypeId !== HR_ENTITY_TYPE_ID) {
+    return {
+      ok: true,
+      ignored: true,
+      scope: "hr_fields",
+      source,
+      eventName,
+      reason: `Entity type ${entityTypeId} is not target ${HR_ENTITY_TYPE_ID}`,
+      itemId,
+      entityTypeId,
+    };
+  }
+
+  const itemResult = await callBitrixRestMethod("crm.item.get", { entityTypeId, id: itemId });
+  const item = toPlainRecord(toPlainRecord(itemResult).item || itemResult);
+  const fieldsToUpdate: PlainObject = {};
+  const warnings: string[] = [];
+
+  const rawStartDate = pickFormOrJson(body, startDatePaths()) ?? getFieldValue(item, HR_START_DATE_FIELD);
+  const rawEndDate = pickFormOrJson(body, endDatePaths()) ?? getFieldValue(item, HR_END_DATE_FIELD);
+  const rawPosition =
+    pickFormOrJson(body, [
+      "position",
+      "jobTitle",
+      "job_title",
+      HR_POSITION_FIELD,
+      ...fieldKeyVariants(HR_POSITION_FIELD),
+    ]) ?? getFieldValue(item, HR_POSITION_FIELD);
+
+  const startDateValue = firstScalarValue(rawStartDate);
+  const endDateValue = firstScalarValue(rawEndDate);
+  const sourcePosition = firstScalarValue(rawPosition);
+
+  let startDate: string | null = null;
+  let endDate: string | null = null;
+  let days: number | null = null;
+  let daysWords = "";
+  let daysError = "";
+  let updateDaysNumberFieldKey = "";
+  let updateDaysWordsFieldKey = "";
+
+  if (startDateValue || endDateValue) {
+    startDate = parseHrDateValue(rawStartDate);
+    endDate = parseHrDateValue(rawEndDate);
+
+    if (!startDate) {
+      daysError = `Cannot read start date from ${HR_START_DATE_FIELD}`;
+    } else if (!endDate) {
+      daysError = `Cannot read end date from ${HR_END_DATE_FIELD}`;
+    } else {
+      days = calculateInclusiveDays(startDate, endDate);
+      if (days === null) {
+        daysError = "End date must be the same as or later than start date";
+      } else {
+        daysWords = numberToWordsRu(days);
+        const currentDays = toNumberOrNull(getFieldValue(item, HR_DAYS_NUMBER_FIELD));
+        const currentWords = normalizeComparableText(getFieldValue(item, HR_DAYS_WORDS_FIELD));
+
+        updateDaysNumberFieldKey = resolveUpdateFieldKey(item, HR_DAYS_NUMBER_FIELD);
+        updateDaysWordsFieldKey = resolveUpdateFieldKey(item, HR_DAYS_WORDS_FIELD);
+
+        if (currentDays !== days) {
+          fieldsToUpdate[updateDaysNumberFieldKey] = days;
+        }
+
+        if (currentWords !== normalizeComparableText(daysWords)) {
+          fieldsToUpdate[updateDaysWordsFieldKey] = daysWords;
+        }
+      }
+    }
+  } else {
+    warnings.push("Days sync skipped because start and end dates are empty");
+  }
+
+  let genitivePosition = "";
+  let positionError = "";
+  let updatePositionFieldKey = "";
+
+  if (sourcePosition) {
+    try {
+      genitivePosition = await toGenitiveCase(sourcePosition);
+      const currentGenitive = normalizeComparableText(getFieldValue(item, HR_POSITION_GENITIVE_FIELD));
+
+      if (currentGenitive !== normalizeComparableText(genitivePosition)) {
+        updatePositionFieldKey = resolveUpdateFieldKey(item, HR_POSITION_GENITIVE_FIELD);
+        fieldsToUpdate[updatePositionFieldKey] = genitivePosition;
+      }
+    } catch (error) {
+      positionError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    warnings.push("Position genitive sync skipped because position field is empty");
+  }
+
+  const daysAttempted = Boolean(startDateValue || endDateValue);
+  const positionAttempted = Boolean(sourcePosition);
+  const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
+  const hasPositionSuccess = Boolean(positionAttempted && !positionError);
+
+  if (daysError && !hasPositionSuccess) {
+    throw new Error(daysError);
+  }
+
+  if (positionError && !hasDaysSuccess) {
+    throw new Error(positionError);
+  }
+
+  if (daysError) warnings.push(daysError);
+  if (positionError) warnings.push(positionError);
+
+  const updateFieldKeys = Object.keys(fieldsToUpdate);
+  if (updateFieldKeys.length > 0) {
+    await callBitrixRestMethod("crm.item.update", {
+      entityTypeId,
+      id: itemId,
+      fields: fieldsToUpdate,
+    });
+  }
+
+  console.log(JSON.stringify({
+    stage: "hr-field-sync",
+    source,
+    eventName,
+    itemId,
+    entityTypeId,
+    updated: updateFieldKeys.length > 0,
+    sourcePosition,
+    genitivePosition,
+    warnings,
+    updateFieldKeys,
+    updatePositionFieldKey,
+  }));
+
+  return {
+    ok: true,
+    scope: "hr_fields",
+    source,
+    eventName,
+    itemId,
+    entityTypeId,
+    updated: updateFieldKeys.length > 0,
+    partial: Boolean(daysError || positionError),
+    startDate,
+    endDate,
+    days,
+    daysWords,
+    sourcePosition,
+    genitivePosition,
+    warnings,
+    updateFieldKeys,
+    updateDaysNumberFieldKey,
+    updateDaysWordsFieldKey,
+    updatePositionFieldKey,
+  };
 }
 
 async function resolveCompanyBinFieldCodes(): Promise<string[]> {
@@ -1032,6 +1504,8 @@ function extractEventEntityTypeId(body: PlainObject): number | null {
     pickFormOrJson(body, [
       "entityTypeId",
       "ENTITY_TYPE_ID",
+      "document_id",
+      "DOCUMENT_ID",
       "data.FIELDS.ENTITY_TYPE_ID",
       "data.FIELDS.entityTypeId",
       "FIELDS.ENTITY_TYPE_ID",
@@ -1041,7 +1515,7 @@ function extractEventEntityTypeId(body: PlainObject): number | null {
       "FIELDS[ENTITY_TYPE_ID]",
       "FIELDS[entityTypeId]",
     ]),
-  );
+  ) ?? parseEntityTypeId(pickFormOrJson(body, ["document_id", "DOCUMENT_ID"]));
 }
 
 function determineSyncTargets(source: string, eventName: string, body: PlainObject): SyncTargets {
@@ -1052,31 +1526,31 @@ function determineSyncTargets(source: string, eventName: string, body: PlainObje
     return {
       syncReferenceLists: true,
       syncCompanyDirectory: true,
+      syncHrItem: false,
+      ignoreEvent: false,
       entityTypeId,
+      reason: "manual or direct reference sync request",
     };
   }
 
   const isCompanyEvent = /^ONCRMCOMPANY(ADD|UPDATE|DELETE)$/.test(normalizedEvent);
   const isDynamicItemEvent = /^ONCRMDYNAMICITEM(ADD|UPDATE|DELETE)$/.test(normalizedEvent);
-  const isReferenceListEvent = /(LIST|IBLOCK)/.test(normalizedEvent);
+  const isFieldMetadataEvent = /(USERFIELD|SETENUMVALUES|LIST|IBLOCK)/.test(normalizedEvent);
 
-  const syncCompanyDirectory = isCompanyEvent || (
-    isDynamicItemEvent && (!entityTypeId || entityTypeId === CONTRACT_ENTITY_TYPE_ID)
-  );
-  const syncReferenceLists = isReferenceListEvent;
-
-  if (!syncReferenceLists && !syncCompanyDirectory) {
-    return {
-      syncReferenceLists: true,
-      syncCompanyDirectory: true,
-      entityTypeId,
-    };
-  }
+  const syncHrItem = isDynamicItemEvent && entityTypeId === HR_ENTITY_TYPE_ID;
+  const syncCompanyDirectory = isCompanyEvent || (isDynamicItemEvent && entityTypeId === CONTRACT_ENTITY_TYPE_ID);
+  const syncReferenceLists = isFieldMetadataEvent;
+  const ignoreEvent = !syncHrItem && !syncReferenceLists && !syncCompanyDirectory;
 
   return {
     syncReferenceLists,
     syncCompanyDirectory,
+    syncHrItem,
+    ignoreEvent,
     entityTypeId,
+    reason: ignoreEvent
+      ? `Ignoring event ${normalizedEvent}${entityTypeId ? ` for entityTypeId ${entityTypeId}` : ""}`
+      : `Matched event ${normalizedEvent}`,
   };
 }
 
@@ -1146,6 +1620,18 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
   const supabase = adminClient();
   const startedAt = new Date().toISOString();
   const targets = determineSyncTargets(source, eventName, body);
+
+  if (!targets.syncReferenceLists && !targets.syncCompanyDirectory) {
+    return {
+      ok: true,
+      ignored: true,
+      scope: SYNC_SCOPE,
+      source,
+      eventName,
+      targets,
+      reason: targets.reason,
+    };
+  }
 
   console.log(JSON.stringify({
     stage: "sync-start",
@@ -1327,8 +1813,12 @@ Deno.serve(async (req: Request) => {
     const source = auth.source === "manual-ui"
       ? plain(pickFormOrJson(body, ["source", "trigger"])) || "manual-ui"
       : auth.source;
+    const targets = determineSyncTargets(source, eventName, body);
 
-    const result = await runReferenceSync(source, eventName, body);
+    const result = targets.syncHrItem
+      ? await runHrFieldSync(source, eventName, body)
+      : await runReferenceSync(source, eventName, body);
+
     return jsonResponse(req, 200, result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

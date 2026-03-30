@@ -8,12 +8,19 @@ export async function createDeal(dealData: {
   paymentOrderUrl?: string;
   paymentOrderName?: string;
   paymentIsPaid?: boolean;
+  amount?: number;
+  currencyId?: string;
 }): Promise<string> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
     COMPANY_ID: dealData.companyId,
     STAGE_ID: 'NEW',
   };
+  if (typeof dealData.amount === 'number' && Number.isFinite(dealData.amount)) {
+    fields.OPPORTUNITY = dealData.amount;
+    fields.CURRENCY_ID = String(dealData.currencyId || 'KZT').trim() || 'KZT';
+    fields.IS_MANUAL_OPPORTUNITY = 'Y';
+  }
   if (dealData.city) {
     fields['UF_CRM_1772560175'] = dealData.city;
     fields['UF_CRM_CITY'] = dealData.city;
@@ -50,11 +57,18 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   paymentOrderUrl?: string;
   paymentOrderName?: string;
   paymentIsPaid?: boolean;
+  amount?: number;
+  currencyId?: string;
 }): Promise<void> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
     COMPANY_ID: dealData.companyId,
   };
+  if (typeof dealData.amount === 'number' && Number.isFinite(dealData.amount)) {
+    fields.OPPORTUNITY = dealData.amount;
+    fields.CURRENCY_ID = String(dealData.currencyId || 'KZT').trim() || 'KZT';
+    fields.IS_MANUAL_OPPORTUNITY = 'Y';
+  }
   if (dealData.city) {
     fields['UF_CRM_1772560175'] = dealData.city;
     fields['UF_CRM_CITY'] = dealData.city;

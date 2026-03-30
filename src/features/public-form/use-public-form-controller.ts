@@ -514,9 +514,8 @@ export function usePublicFormController(token: string | undefined) {
  questionnaireId,
  ]);
 
- const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
- event.preventDefault();
- if (!validate() || !questionnaireId) return;
+ const submitQuestionnaire = useCallback(async () => {
+ if (!questionnaireId) return;
 
  setSubmitting(true);
  try {
@@ -791,8 +790,15 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderStoragePath,
  paymentOrderUrl,
  questionnaireId,
- validate,
  ]);
+
+ const validateForm = useCallback(() => validate(), [validate]);
+
+ const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+ event.preventDefault();
+ if (!validateForm()) return;
+ await submitQuestionnaire();
+ }, [submitQuestionnaire, validateForm]);
 
  const updateParticipant = useCallback(<K extends keyof LocalParticipant>(id: string, field: K, value: LocalParticipant[K]) => {
  setParticipants(current => current.map(participant => (
@@ -956,6 +962,8 @@ export function usePublicFormController(token: string | undefined) {
  handlePhotoSelect,
  handlePaymentOrderSelect,
  handleSubmit,
+ validateForm,
+ submitQuestionnaire,
  updateParticipant,
  toggleCourse,
  removeParticipant,

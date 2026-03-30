@@ -10,6 +10,7 @@ interface Props {
   participants: Participant[];
   dealId: string | null;
   existingDeal: Deal | null;
+  dealAmount: number;
   onClose: () => void;
   onDone: () => void;
 }
@@ -26,7 +27,7 @@ function prettifySyncError(msg: string): string {
     .replace(/company card/gi, 'карточке компании');
 }
 
-export default function BitrixSyncModal({ questionnaireId, company, participants, dealId, existingDeal, onClose, onDone }: Props) {
+export default function BitrixSyncModal({ questionnaireId, company, participants, dealId, existingDeal, dealAmount, onClose, onDone }: Props) {
   const { showToast } = useToast();
   const [progress, setProgress] = useState<BitrixSyncProgress>({ step: '', current: 0, total: 0, status: 'idle' });
   const [started, setStarted] = useState(false);
@@ -36,12 +37,21 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
   const participantsCount = participants.length;
   const uniqueCoursesCount = allCourses.length;
   const totalCourseRequests = participants.reduce((sum, p) => sum + (p.courses?.length || 0), 0);
+  const dealCurrencyId = String(import.meta.env.VITE_BITRIX_DEAL_CURRENCY_ID || 'KZT').trim() || 'KZT';
 
   const titlePrefix = [company.name, company.city].filter(Boolean).join(' - ');
   const dealTitle = [
     titlePrefix,
     `${participantsCount} сотрудников, ${uniqueCoursesCount} курсов, ${totalCourseRequests} заявок на курсы`,
   ].filter(Boolean).join(' - ');
+
+  function formatMoney(value: number): string {
+    const hasFractions = Math.round(value * 100) !== Math.round(value) * 100;
+    return `${value.toLocaleString('ru-RU', {
+      minimumFractionDigits: hasFractions ? 2 : 0,
+      maximumFractionDigits: 2,
+    })} ₸`;
+  }
 
   async function runSync() {
     setStarted(true);
@@ -58,6 +68,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
           paymentFieldCode: import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FIELD || '',
           paymentStatusFieldCode: import.meta.env.VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD || '',
           paymentFileFieldCode: import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD || '',
+          dealCurrencyId,
         },
       });
 
@@ -137,6 +148,10 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
                 <div className="flex gap-2">
                   <span className="text-gray-500 w-28 flex-shrink-0">Заявок:</span>
                   <span className="font-medium text-gray-900">{totalCourseRequests}</span>
+                </div>
+                <div className="flex gap-2">
+                  <span className="text-gray-500 w-28 flex-shrink-0">Сумма сделки:</span>
+                  <span className="font-medium text-gray-900">{formatMoney(dealAmount)}</span>
                 </div>
                 {isUpdate && existingDeal?.bitrix_deal_id && (
                   <div className="flex gap-2">

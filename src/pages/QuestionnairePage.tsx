@@ -5,18 +5,21 @@ import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, Power
 import DashboardLayout from '../components/DashboardLayout';
 import ParticipantsTable from '../components/ParticipantsTable';
 import CertificatesTable from '../components/CertificatesTable';
+import CourseCostSummaryTable from '../components/CourseCostSummaryTable';
 import ProtocolsTable from '../components/ProtocolsTable';
 import PrintedDocumentsTable from '../components/PrintedDocumentsTable';
 import BitrixSyncModal from '../components/BitrixSyncModal';
 import { supabase } from '../lib/supabase';
+import { buildCourseCostSummarySet } from '../lib/courseCostSummary';
 import { buildProtocolDraftRows, reconcileProtocolsFromCertificates } from '../lib/protocolGeneration';
+import { getPublicFormUrl } from '../lib/publicFormUrl';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
 import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 
-type Tab = 'participants' | 'certificates' | 'protocols' | 'printed_documents';
+type Tab = 'participants' | 'certificates' | 'course_costs' | 'protocols' | 'printed_documents';
 
 function getRecordValue(record: unknown, key: string): string {
   return String((record as Record<string, unknown>)[key] ?? '');
@@ -153,6 +156,7 @@ export default function QuestionnairePage() {
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
   const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
+  const courseCostSummaries = buildCourseCostSummarySet(certificates);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -438,7 +442,7 @@ export default function QuestionnairePage() {
   }
 
   function getFormUrl() {
-    return `${window.location.origin}/form/${questionnaire?.secret_token}`;
+    return getPublicFormUrl(questionnaire?.secret_token);
   }
 
   async function copyFormUrl() {
@@ -1026,6 +1030,7 @@ export default function QuestionnairePage() {
             {([
               { key: 'participants', label: 'Сотрудники', icon: <Users size={15} />, count: participants.length },
               { key: 'certificates', label: 'Удостоверения и сертификаты', icon: <FileText size={15} />, count: certificates.length },
+              { key: 'course_costs', label: 'Сумма стоимости курсов', icon: <FileText size={15} />, count: courseCostSummaries.separate.rows.length },
               { key: 'protocols', label: 'Протоколы', icon: <FileText size={15} />, count: protocols.length },
               { key: 'printed_documents', label: 'Распечатанные документы', icon: <FileText size={15} />, count: generatedDocuments.length },
             ] as const).map(t => (
@@ -1068,6 +1073,9 @@ export default function QuestionnairePage() {
               onRefresh={loadData}
             />
           )}
+          {tab === 'course_costs' && (
+            <CourseCostSummaryTable summaries={courseCostSummaries} />
+          )}
           {tab === 'protocols' && (
             <ProtocolsTable
               questionnaireId={id!}
@@ -1100,6 +1108,7 @@ export default function QuestionnairePage() {
           participants={participants}
           dealId={deal?.id || null}
           existingDeal={deal}
+          dealAmount={courseCostSummaries.combined.grandTotal}
           onClose={() => setShowSyncModal(false)}
           onDone={() => {
             setShowSyncModal(false);
