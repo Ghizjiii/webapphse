@@ -78,6 +78,8 @@ npm run build
   - `BITRIX_OUTGOING_TOKEN`
   - optional overrides:
     - `BITRIX_HR_ENTITY_TYPE_ID` (default `1050`)
+    - `BITRIX_HR_START_DATE_FIELD` (default `ufCrm10_1771778909`)
+    - `BITRIX_HR_END_DATE_FIELD` (default `ufCrm10_1771778942`)
     - `BITRIX_HR_DAYS_NUMBER_FIELD` (default `ufCrm10_1772124949853`)
     - `BITRIX_HR_DAYS_WORDS_FIELD` (default `ufCrm10_1772131937986`)
 

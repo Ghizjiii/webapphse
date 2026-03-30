@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, RefreshCw, CheckCircle2, AlertCircle, Send } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { getFreshAccessToken, supabase } from '../lib/supabase';
 import { useToast } from '../context/ToastContext';
 import type { Company, Participant, BitrixSyncProgress, Deal } from '../types';
 
@@ -13,8 +13,6 @@ interface Props {
   onClose: () => void;
   onDone: () => void;
 }
-
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 function decodeUnicodeEscapes(input: string): string {
   return input.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
@@ -50,10 +48,10 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
     setProgress({ step: 'Синхронизация с Битрикс24...', current: 0, total: 1, status: 'running' });
 
     try {
+      const accessToken = await getFreshAccessToken();
       const { data, error } = await supabase.functions.invoke('bitrix-sync', {
         headers: {
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: {
           questionnaireId,

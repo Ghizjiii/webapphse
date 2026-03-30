@@ -76,8 +76,6 @@ const COMPANY_BIN_FIELD_CANDIDATES = [
   "UF_CRM_1772598149",
 ];
 const BITRIX_SYNC_CONCURRENCY = 3;
-const BITRIX_DELETE_CONCURRENCY = 5;
-const SUPABASE_DELETE_BATCH_SIZE = 200;
 
 type CompanyRow = {
   id: string;
@@ -175,6 +173,14 @@ type EnumMaps = {
 type PhotoContract = {
   fieldKey: string;
   variant: "tuple" | "wrapped" | "wrappedWithId" | "tupleArray";
+};
+
+type AppProfileAuthRow = {
+  user_id: string;
+  role: "admin" | "coordinator" | "user";
+  is_active: boolean;
+  bitrix_user_id: string | null;
+  bitrix_user_name: string | null;
 };
 
 const preparedPhotoCache = new Map<string, Promise<PreparedFile>>();
@@ -298,6 +304,50 @@ function adminClient() {
 
 function plain(value: unknown): string {
   return String(value || "").trim();
+}
+
+async function getAuthenticatedUser(req: Request, supabase = adminClient()) {
+  const bearerToken = plain(req.headers.get("authorization")).replace(/^Bearer\s+/i, "").trim();
+  if (!bearerToken) {
+    throw new Error("Unauthorized");
+  }
+
+  const { data, error } = await supabase.auth.getUser(bearerToken);
+  if (error || !data.user) {
+    throw new Error("Unauthorized");
+  }
+
+  return data.user;
+}
+
+async function getAppProfile(userId: string, supabase = adminClient()): Promise<AppProfileAuthRow> {
+  const { data, error } = await supabase
+    .from("app_profiles")
+    .select("user_id, role, is_active, bitrix_user_id, bitrix_user_name")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Error("App profile not found");
+  }
+
+  return data as AppProfileAuthRow;
+}
+
+async function requireActiveProfile(req: Request) {
+  const supabase = adminClient();
+  const user = await getAuthenticatedUser(req, supabase);
+  const profile = await getAppProfile(user.id, supabase);
+
+  if (!profile.is_active) {
+    throw new Error("User is inactive");
+  }
+
+  return {
+    supabase,
+    user,
+    profile,
+  };
 }
 
 function digits(value: unknown): string {
@@ -829,14 +879,6 @@ async function runInChunks<T>(items: T[], concurrency: number, worker: (item: T)
   }
 }
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    out.push(items.slice(index, index + size));
-  }
-  return out;
-}
-
 async function loadEnumMaps() {
   const raw = await callBitrix("crm.item.fields", { entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID });
   const fields = (raw?.fields || raw || {}) as Record<string, unknown>;
@@ -881,6 +923,7 @@ function buildDesiredSmartProcessFieldEntries(params: {
   participant: ParticipantRow;
   courseName: string;
   expectedTitle: string;
+  responsibleBitrixUserId: string;
   existingCertificate: ExistingCertificateRow | null;
   currentItem: Record<string, unknown> | null;
   enumMaps: EnumMaps;
@@ -889,6 +932,7 @@ function buildDesiredSmartProcessFieldEntries(params: {
   const cert = params.existingCertificate;
   const entries: SmartFieldEntry[] = [
     { code: "TITLE", kind: "text", value: params.expectedTitle },
+    { code: "assignedById", kind: "text", value: params.responsibleBitrixUserId },
     { code: BITRIX_FIELDS.LAST_NAME, kind: "text", value: params.participant.last_name },
     { code: BITRIX_FIELDS.FIRST_NAME, kind: "text", value: params.participant.first_name },
     { code: BITRIX_FIELDS.MIDDLE_NAME, kind: "text", value: params.participant.patronymic },
@@ -1228,6 +1272,7 @@ async function upsertDeal(params: {
   company: CompanyRow;
   bitrixCompanyId: string;
   dealTitle: string;
+  assignedById: string;
   paymentFieldCode: string;
   paymentStatusFieldCode: string;
   paymentFileFieldCode: string;
@@ -1249,6 +1294,9 @@ async function upsertDeal(params: {
     }
     if (plain(currentDeal.COMPANY_ID || currentDeal.companyId) !== params.bitrixCompanyId) {
       fieldsToUpdate.COMPANY_ID = params.bitrixCompanyId;
+    }
+    if (plain(currentDeal.ASSIGNED_BY_ID || currentDeal.assignedById) !== params.assignedById) {
+      fieldsToUpdate.ASSIGNED_BY_ID = params.assignedById;
     }
 
     const currentCity = plain(currentDeal.UF_CRM_1772560175 || currentDeal.UF_CRM_CITY);
@@ -1292,6 +1340,7 @@ async function upsertDeal(params: {
     const fields: Record<string, unknown> = {
       TITLE: params.dealTitle,
       COMPANY_ID: params.bitrixCompanyId,
+      ASSIGNED_BY_ID: params.assignedById,
     };
     if (params.company.city) {
       fields["UF_CRM_1772560175"] = params.company.city;
@@ -1333,6 +1382,7 @@ async function upsertDeal(params: {
 async function createSmartProcessItem(params: {
   dealId: string;
   companyId: string;
+  assignedById: string;
   fields: Record<string, unknown>;
 }): Promise<string> {
   const relationVariants: Array<Record<string, unknown>> = [
@@ -1351,6 +1401,7 @@ async function createSmartProcessItem(params: {
         entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID,
         fields: {
           ...params.fields,
+          assignedById: params.assignedById,
           ...relation,
         },
       });
@@ -1490,6 +1541,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const auth = await requireActiveProfile(req);
+    const responsibleBitrixUserId = plain(auth.profile.bitrix_user_id);
     const body = await req.json();
     const questionnaireId = plain(body?.questionnaireId);
     const paymentFieldCode = plain(body?.paymentFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FIELD") || "");
@@ -1498,6 +1551,9 @@ Deno.serve(async (req: Request) => {
 
     if (!questionnaireId) {
       return jsonResponse(req, 400, { error: "questionnaireId is required" });
+    }
+    if (!responsibleBitrixUserId) {
+      return jsonResponse(req, 400, { error: "Current user is not mapped to a Bitrix employee" });
     }
 
     const supabase = adminClient();
@@ -1567,6 +1623,7 @@ Deno.serve(async (req: Request) => {
       company,
       bitrixCompanyId,
       dealTitle,
+      assignedById: responsibleBitrixUserId,
       paymentFieldCode,
       paymentStatusFieldCode,
       paymentFileFieldCode,
@@ -1639,6 +1696,7 @@ Deno.serve(async (req: Request) => {
         participant: task.participant,
         courseName: task.courseName,
         expectedTitle,
+        responsibleBitrixUserId,
         existingCertificate,
         currentItem: currentBitrixItem,
         enumMaps,
@@ -1661,6 +1719,7 @@ Deno.serve(async (req: Request) => {
         itemId = await createSmartProcessItem({
           dealId: bitrixDealId,
           companyId: bitrixCompanyId,
+          assignedById: responsibleBitrixUserId,
           fields: desiredFields,
         });
         shouldAttachPhoto = Boolean(task.participant.photo_url);
@@ -1757,6 +1816,7 @@ Deno.serve(async (req: Request) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
+    const status = /unauthorized|inactive|profile not found/i.test(message) ? 401 : 500;
     try {
       const body = await req.clone().json();
       const questionnaireId = plain(body?.questionnaireId);
@@ -1769,6 +1829,6 @@ Deno.serve(async (req: Request) => {
     } catch {
       // ignore error persistence failure
     }
-    return jsonResponse(req, 500, { error: message });
+    return jsonResponse(req, status, { error: message });
   }
 });

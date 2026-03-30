@@ -1,0 +1,5 @@
+[functions.bitrix-hr-days-spell]
+verify_jwt = false
+
+[functions.reference-sync]
+verify_jwt = false

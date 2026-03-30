@@ -327,6 +327,7 @@ export async function createSmartProcessItem(params: {
   entityTypeId: number;
   dealId: string;
   companyId: string;
+  assignedById?: string;
   fields: Record<string, unknown>;
 }): Promise<string> {
   const variants: Array<Record<string, unknown>> = [
@@ -344,6 +345,7 @@ export async function createSmartProcessItem(params: {
         entityTypeId: params.entityTypeId,
         fields: {
           ...params.fields,
+          ...(params.assignedById ? { assignedById: params.assignedById } : {}),
           ...relationFields,
         },
       });
@@ -440,12 +442,16 @@ export async function resolveSmartProcessEnumId(params: {
 export async function updateSmartProcessItem(params: {
   entityTypeId: number;
   itemId: string;
+  assignedById?: string;
   fields: Record<string, unknown>;
 }): Promise<void> {
   await callBitrix('crm.item.update', {
     entityTypeId: params.entityTypeId,
     id: params.itemId,
-    fields: params.fields,
+    fields: {
+      ...params.fields,
+      ...(params.assignedById ? { assignedById: params.assignedById } : {}),
+    },
   });
 }
 

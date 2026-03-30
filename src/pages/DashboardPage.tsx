@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import type { QuestionnaireLink, Company } from '../types';
+import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 import CreateLinkModal from '../components/CreateLinkModal';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -13,6 +14,7 @@ interface QuestionnaireRow {
   questionnaire: QuestionnaireLink;
   company: Company | null;
   participantCount: number;
+  creatorProfile: ProfileDirectoryEntry | null;
 }
 
 type ParticipantQuestionnaireRef = {
@@ -48,15 +50,23 @@ function resolveCompanyRecord(companies: Company[]): Company | null {
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [rows, setRows] = useState<QuestionnaireRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'mine'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | QuestionnaireLink['status']>('all');
+  const [companySearch, setCompanySearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
+  const currentUserId = user?.id || '';
+  const currentUserEmail = user?.email || '';
+  const currentProfileEmail = profile?.email || '';
+  const currentProfileFullName = profile?.full_name || '';
+  const currentProfileRole = profile?.role || null;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -79,7 +89,13 @@ export default function DashboardPage() {
     }
 
     const questionnaireIds = questionnaireList.map(q => q.id);
-    const [companiesRes, participantsRes, dealsRes] = await Promise.all([
+    const creatorIds = Array.from(new Set(
+      questionnaireList
+        .map(q => String(q.created_by || '').trim())
+        .filter(Boolean)
+    ));
+
+    const [companiesRes, participantsRes, dealsRes, creatorProfiles] = await Promise.all([
       supabase
         .from('companies')
         .select('*')
@@ -94,6 +110,7 @@ export default function DashboardPage() {
         .from('deals')
         .select('questionnaire_id, sync_status')
         .in('questionnaire_id', questionnaireIds),
+      loadProfileDirectory(creatorIds),
     ]);
 
     if (companiesRes.error || participantsRes.error || dealsRes.error) {
@@ -124,6 +141,20 @@ export default function DashboardPage() {
       dealSyncStatusByQuestionnaire.set(deal.questionnaire_id, deal.sync_status);
     }
 
+    const creatorByUserId = new Map<string, ProfileDirectoryEntry>();
+    for (const creatorProfile of creatorProfiles) {
+      creatorByUserId.set(creatorProfile.user_id, creatorProfile);
+    }
+
+    if (currentUserId && currentProfileRole && !creatorByUserId.has(currentUserId)) {
+      creatorByUserId.set(currentUserId, {
+        user_id: currentUserId,
+        email: currentProfileEmail || currentUserEmail,
+        full_name: currentProfileFullName,
+        role: currentProfileRole,
+      });
+    }
+
     const result: QuestionnaireRow[] = questionnaireList.map(q => {
       const isExpired = q.expires_at && new Date(q.expires_at) < new Date();
       const syncStatus = dealSyncStatusByQuestionnaire.get(q.id);
@@ -137,25 +168,49 @@ export default function DashboardPage() {
         questionnaire: { ...q, status },
         company: resolveCompanyRecord(companiesByQuestionnaire.get(q.id) || []),
         participantCount: participantCountByQuestionnaire.get(q.id) || 0,
+        creatorProfile: q.created_by ? creatorByUserId.get(q.created_by) || null : null,
       };
     });
 
     setRows(result);
     setLoading(false);
-  }, [showToast]);
+  }, [currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, showToast]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [pageSize]);
+  }, [companySearch, ownershipFilter, pageSize, statusFilter]);
+
+  const normalizedCompanySearch = companySearch.trim().toLowerCase();
+  const filteredRows = useMemo(
+    () => rows.filter(({ questionnaire, company }) => {
+      if (ownershipFilter === 'mine' && questionnaire.created_by !== currentUserId) {
+        return false;
+      }
+
+      if (statusFilter !== 'all' && questionnaire.status !== statusFilter) {
+        return false;
+      }
+
+      if (normalizedCompanySearch) {
+        const companyName = String(company?.name || '').trim().toLowerCase();
+        if (!companyName.includes(normalizedCompanySearch)) {
+          return false;
+        }
+      }
+
+      return true;
+    }),
+    [currentUserId, normalizedCompanySearch, ownershipFilter, rows, statusFilter],
+  );
 
   useEffect(() => {
-    const nextTotalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    const nextTotalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
     if (currentPage > nextTotalPages) {
       setCurrentPage(nextTotalPages);
     }
-  }, [rows.length, pageSize, currentPage]);
+  }, [filteredRows.length, pageSize, currentPage]);
 
   function getFormUrl(token: string) {
     return `${window.location.origin}/form/${token}`;
@@ -190,18 +245,28 @@ export default function DashboardPage() {
     return new Date(str).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   }
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const hasActiveFilters = ownershipFilter !== 'all' || statusFilter !== 'all' || companySearch.trim() !== '';
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = useMemo(
-    () => rows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [rows, currentPage, pageSize],
+    () => filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filteredRows, currentPage, pageSize],
   );
-  const paginationStart = rows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const paginationEnd = Math.min(currentPage * pageSize, rows.length);
+  const paginationStart = filteredRows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const paginationEnd = Math.min(currentPage * pageSize, filteredRows.length);
+
+  function resetFilters() {
+    setOwnershipFilter('all');
+    setStatusFilter('all');
+    setCompanySearch('');
+  }
 
   function renderPaginationControls(borderClassName: string) {
     return (
       <div className={`flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between ${borderClassName}`}>
         <div className="text-sm text-gray-500">
+          {hasActiveFilters && (
+            <div className="mb-1 text-xs text-blue-600">После фильтрации: {filteredRows.length}</div>
+          )}
           Показано {paginationStart}-{paginationEnd} из {rows.length}
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -289,6 +354,59 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
+          <div className="border-b border-gray-100 px-5 py-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Показывать</span>
+                  <select
+                    value={ownershipFilter}
+                    onChange={(event) => setOwnershipFilter(event.target.value as 'all' | 'mine')}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все анкеты</option>
+                    <option value="mine">Только мои</option>
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Статус</span>
+                  <select
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value as 'all' | QuestionnaireLink['status'])}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все статусы</option>
+                    {Object.entries(STATUS_CONFIG).map(([statusKey, statusConfig]) => (
+                      <option key={statusKey} value={statusKey}>
+                        {statusConfig.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Компания</span>
+                  <input
+                    value={companySearch}
+                    onChange={(event) => setCompanySearch(event.target.value)}
+                    placeholder="Поиск по названию компании"
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </label>
+              </div>
+
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition-colors hover:border-blue-200 hover:text-blue-600"
+                >
+                  Сбросить фильтры
+                </button>
+              )}
+            </div>
+          </div>
           {renderPaginationControls('border-b border-gray-100')}
           <table className="w-full text-sm">
             <thead>
@@ -299,13 +417,25 @@ export default function DashboardPage() {
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Создана</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Срок</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Ответственный</th>
                 <th className="px-4 py-3.5" />
               </tr>
             </thead>
             <tbody>
-              {pagedRows.map(({ questionnaire: q, company, participantCount }, index) => {
+              {pagedRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
+                    По выбранным фильтрам анкеты не найдены.
+                  </td>
+                </tr>
+              ) : pagedRows.map(({ questionnaire: q, company, participantCount, creatorProfile }, index) => {
                 const cfg = STATUS_CONFIG[q.status] || STATUS_CONFIG.active;
                 const rowNumber = (currentPage - 1) * pageSize + index + 1;
+                const responsibleRole = creatorProfile?.role || (q.created_by === currentUserId ? currentProfileRole : null);
+                const responsibleName = getProfileDisplayName(
+                  creatorProfile,
+                  q.created_by === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
+                );
                 return (
                   <tr
                     key={q.id}
@@ -333,6 +463,12 @@ export default function DashboardPage() {
                           {formatDate(q.expires_at)}
                         </span>
                       ) : <span className="text-gray-400">Бессрочно</span>}
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="font-medium text-gray-900">{responsibleName}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {responsibleRole ? APP_ROLE_LABELS[responsibleRole] : 'Не указан'}
+                      </div>
                     </td>
                     <td className="px-4 py-4" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1 justify-end">
