@@ -84,6 +84,61 @@ export interface RefDocumentValidityRule {
   updated_at: string;
 }
 
+export interface RefBitrixListItem {
+  id: string;
+  list_key: string;
+  list_name: string;
+  iblock_id: number;
+  bitrix_item_id: string;
+  name: string;
+  bitrix_value: string;
+  code: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReferenceSyncStatus {
+  scope: string;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_success_at: string | null;
+  last_source: string;
+  last_event: string;
+  last_status: 'idle' | 'running' | 'success' | 'error';
+  last_error: string;
+  stats: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AppRole = 'admin' | 'coordinator' | 'user';
+
+export interface AppProfile {
+  user_id: string;
+  email: string;
+  full_name: string;
+  role: AppRole;
+  is_active: boolean;
+  bitrix_user_id: string | null;
+  bitrix_user_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BitrixEmployee {
+  bitrix_user_id: string;
+  email: string;
+  full_name: string;
+  active: boolean;
+  work_position: string | null;
+  department_ids: unknown;
+  raw_payload: unknown;
+  last_synced_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Deal {
   id: string;
   questionnaire_id: string;

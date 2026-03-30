@@ -1,13 +1,28 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock } from 'lucide-react';
+﻿import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock, FileBadge2, Award, CheckCircle2, ClipboardCheck, ShieldCheck } from 'lucide-react';
+import { useRef } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
-import { supabase } from '../lib/supabase';
-import { fetchCompanyDirectorySnapshotFromBitrix, fetchCoursesFromFields, fetchCategoryValues, findSmartProcessEntityTypeId } from '../lib/bitrix';
+import { getFreshAccessToken, supabase } from '../lib/supabase';
+import {
+  BITRIX_REFERENCE_LISTS,
+} from '../lib/bitrix';
 import { useToast } from '../context/ToastContext';
-import { buildDocumentValidityDefaults, formatDurationLabel } from '../lib/documentValidity';
-import type { RefCompanyDirectory, RefDocumentValidityRule } from '../types';
+import { formatDurationLabel } from '../lib/documentValidity';
+import type { RefBitrixListItem, RefCompanyDirectory, RefDocumentValidityRule, ReferenceSyncStatus } from '../types';
 
-type Tab = 'categories' | 'courses' | 'companies' | 'document-validity';
+type Tab =
+  | 'categories'
+  | 'courses'
+  | 'document-validity'
+  | 'document-types'
+  | 'grade'
+  | 'employee-status'
+  | 'marker-pass'
+  | 'type-learn'
+  | 'commis-concl'
+  | 'companies';
+
+type TabGroup = 'main' | 'secondary';
 
 interface RefItem {
   id: string;
@@ -16,11 +31,41 @@ interface RefItem {
   sort_order: number;
 }
 
+function toRefItems(items: RefBitrixListItem[]): RefItem[] {
+  return items.map(item => ({
+    id: item.id,
+    name: item.name,
+    bitrix_value: item.bitrix_value,
+    sort_order: item.sort_order,
+  }));
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return 'Еще не синхронизировалось';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+}
+
+function buildSyncStatusKey(status: ReferenceSyncStatus | null): string {
+  if (!status) return '';
+  return `${status.last_success_at || ''}|${status.updated_at || ''}|${status.last_status || ''}`;
+}
+
 export default function ReferencePage() {
   const { showToast } = useToast();
-  const [tab, setTab] = useState<Tab>('categories');
+  const [tabGroup, setTabGroup] = useState<TabGroup>('main');
+  const [tab, setTab] = useState<Tab>('courses');
   const [categories, setCategories] = useState<RefItem[]>([]);
   const [courses, setCourses] = useState<RefItem[]>([]);
+  const [bitrixListItems, setBitrixListItems] = useState<RefBitrixListItem[]>([]);
   const [companiesDirectory, setCompaniesDirectory] = useState<RefCompanyDirectory[]>([]);
   const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,46 +75,71 @@ export default function ReferencePage() {
   const [companySearch, setCompanySearch] = useState('');
   const [documentRuleSearch, setDocumentRuleSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<ReferenceSyncStatus | null>(null);
+  const syncStatusKeyRef = useRef('');
+  const lastResumeCheckAtRef = useRef(0);
 
-  async function ensureDocumentValidityRules(courseItems: RefItem[], categoryItems: RefItem[], existingRules: RefDocumentValidityRule[]) {
-    const missingRules = buildDocumentValidityDefaults({
-      courseNames: courseItems.map(item => item.name),
-      categoryNames: categoryItems.map(item => item.name),
-      existingRules,
-    });
+  const documentTypeItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'DOCUMENT_TYPE')),
+    [bitrixListItems]
+  );
+  const gradeItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'GRADE')),
+    [bitrixListItems]
+  );
+  const employeeStatusItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'EMPLOYEE_STATUS')),
+    [bitrixListItems]
+  );
+  const markerPassItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'MARKER_PASS')),
+    [bitrixListItems]
+  );
+  const typeLearnItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'TYPE_LEARN')),
+    [bitrixListItems]
+  );
+  const commisConclItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'COMMIS_CONCL')),
+    [bitrixListItems]
+  );
+  const tabDefinitions = [
+    { key: 'courses' as Tab, group: 'main' as TabGroup, label: 'Названия курсов', icon: <BookOpen size={15} />, count: courses.length },
+    { key: 'companies' as Tab, group: 'main' as TabGroup, label: 'Справочник компаний', icon: <Building2 size={15} />, count: companiesDirectory.length },
+    { key: 'document-validity' as Tab, group: 'main' as TabGroup, label: 'Правила сроков', icon: <Clock size={15} />, count: documentValidityRules.length },
+    { key: 'document-types' as Tab, group: 'secondary' as TabGroup, label: 'Тип документа', icon: <FileBadge2 size={15} />, count: documentTypeItems.length },
+    { key: 'categories' as Tab, group: 'secondary' as TabGroup, label: 'Категории', icon: <Tag size={15} />, count: categories.length },
+    { key: 'employee-status' as Tab, group: 'secondary' as TabGroup, label: 'Статус сотрудника', icon: <Building2 size={15} />, count: employeeStatusItems.length },
+    { key: 'grade' as Tab, group: 'secondary' as TabGroup, label: 'Оценка', icon: <Award size={15} />, count: gradeItems.length },
+    { key: 'marker-pass' as Tab, group: 'secondary' as TabGroup, label: 'Отметка проверки знаний', icon: <CheckCircle2 size={15} />, count: markerPassItems.length },
+    { key: 'type-learn' as Tab, group: 'secondary' as TabGroup, label: 'Вид проверки / тип обучения', icon: <ClipboardCheck size={15} />, count: typeLearnItems.length },
+    { key: 'commis-concl' as Tab, group: 'secondary' as TabGroup, label: 'Заключение комиссии', icon: <ShieldCheck size={15} />, count: commisConclItems.length },
+  ];
+  const visibleTabs = tabDefinitions.filter(item => item.group === tabGroup);
 
-    if (missingRules.length === 0) {
-      return existingRules;
-    }
-
-    const now = new Date().toISOString();
-    const payload = missingRules.map(rule => ({
-      ...rule,
-      created_at: now,
-      updated_at: now,
-    }));
-    const { data, error } = await supabase.from('ref_document_validity_rules').insert(payload).select('*');
-    if (error) throw error;
-    return [...existingRules, ...(data || [])];
-  }
-
-  async function loadData() {
-    setLoading(true);
-    const [catRes, courseRes, companyDirRes, documentRuleRes] = await Promise.all([
+  async function loadData(showSpinner = true) {
+    if (showSpinner) setLoading(true);
+    const [catRes, courseRes, bitrixListRes, companyDirRes, documentRuleRes, syncStatusRes] = await Promise.all([
       supabase.from('ref_categories').select('*').order('sort_order').order('name'),
       supabase.from('ref_courses').select('*').order('sort_order').order('name'),
+      supabase.from('ref_bitrix_list_items').select('*').order('list_key').order('sort_order').order('name'),
       supabase.from('ref_company_directory').select('*').order('contract_is_active', { ascending: false }).order('name'),
       supabase.from('ref_document_validity_rules').select('*').order('sort_order').order('course_name').order('category'),
+      supabase.from('reference_sync_status').select('*').eq('scope', 'reference_lists').maybeSingle(),
     ]);
     const categoryRows = catRes.data || [];
     const courseRows = courseRes.data || [];
-    const ensuredRules = await ensureDocumentValidityRules(courseRows, categoryRows, documentRuleRes.data || []);
+    const documentRules = (documentRuleRes.data || []) as RefDocumentValidityRule[];
+    const nextSyncStatus = (syncStatusRes.data || null) as ReferenceSyncStatus | null;
 
     setCategories(categoryRows);
     setCourses(courseRows);
+    setBitrixListItems((bitrixListRes.data || []) as RefBitrixListItem[]);
     setCompaniesDirectory(companyDirRes.data || []);
+    setSyncStatus(nextSyncStatus);
+    syncStatusKeyRef.current = buildSyncStatusKey(nextSyncStatus);
     setDocumentValidityRules(
-      [...ensuredRules].sort((left, right) => {
+      [...documentRules].sort((left, right) => {
         if (left.sort_order !== right.sort_order) return left.sort_order - right.sort_order;
         const courseCompare = left.course_name.localeCompare(right.course_name, 'ru');
         if (courseCompare !== 0) return courseCompare;
@@ -80,61 +150,78 @@ export default function ReferencePage() {
   }
 
   useEffect(() => { void loadData(); }, []);
+  async function checkForBackgroundSync() {
+    const { data, error } = await supabase
+      .from('reference_sync_status')
+      .select('*')
+      .eq('scope', 'reference_lists')
+      .maybeSingle();
+
+    if (error) return;
+
+    const nextStatus = (data || null) as ReferenceSyncStatus | null;
+    const nextKey = buildSyncStatusKey(nextStatus);
+
+    if (nextKey && nextKey !== syncStatusKeyRef.current) {
+      await loadData(false);
+      return;
+    }
+
+    setSyncStatus(nextStatus);
+  }
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void checkForBackgroundSync();
+    }, 15000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastResumeCheckAtRef.current < 5000) return;
+      lastResumeCheckAtRef.current = now;
+      void checkForBackgroundSync();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   async function syncCoursesAndCategoriesFromBitrix() {
     setSyncing(true);
     try {
-      const [catValues, entityTypeId] = await Promise.all([
-        fetchCategoryValues(),
-        findSmartProcessEntityTypeId(),
-      ]);
-      const courseValues = await fetchCoursesFromFields(entityTypeId);
+      const accessToken = await getFreshAccessToken();
 
-      let catCount = 0;
-      for (let i = 0; i < catValues.length; i++) {
-        const name = catValues[i];
-        const { error } = await supabase.from('ref_categories').upsert(
-          { name, bitrix_value: name, sort_order: i + 1, updated_at: new Date().toISOString() },
-          { onConflict: 'name' }
-        );
-        if (!error) catCount++;
+      const { data, error } = await supabase.functions.invoke('reference-sync', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: {
+          source: 'manual-ui',
+          trigger: 'manual-sync',
+        },
+      });
+      if (error) throw error;
+      if (data && typeof data === 'object' && 'error' in data && data.error) {
+        throw new Error(String(data.error || 'Ошибка серверной синхронизации'));
       }
 
-      let courseCount = 0;
-      for (let i = 0; i < courseValues.length; i++) {
-        const name = courseValues[i];
-        const { error } = await supabase.from('ref_courses').upsert(
-          { name, bitrix_value: name, sort_order: i + 1, updated_at: new Date().toISOString() },
-          { onConflict: 'name' }
-        );
-        if (!error) courseCount++;
-      }
-
-      showToast('success', `Синхронизировано: ${catCount} категорий, ${courseCount} курсов`);
-      await loadData();
+      const stats = data && typeof data === 'object' && 'stats' in data
+        ? (data.stats as Record<string, number>)
+        : null;
+      showToast(
+        'success',
+        `Синхронизировано: ${stats?.lists_count || 0} списков, ${stats?.items_count || 0} элементов, ${stats?.companies_count || 0} компаний, ${stats?.contracts_count || 0} договоров`
+      );
+      await loadData(false);
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : 'Ошибка синхронизации');
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  async function syncCompaniesDirectoryFromBitrix() {
-    setSyncing(true);
-    try {
-      const snapshot = await fetchCompanyDirectorySnapshotFromBitrix();
-
-      if (snapshot.rows.length > 0) {
-        const now = new Date().toISOString();
-        const payload = snapshot.rows.map(row => ({ ...row, updated_at: now }));
-        const { error } = await supabase.from('ref_company_directory').upsert(payload, { onConflict: 'bitrix_company_id' });
-        if (error) throw error;
-      }
-
-      showToast('success', `Синхронизировано: ${snapshot.companiesCount} компаний, ${snapshot.contractsCount} договоров`);
-      await loadData();
-    } catch (e) {
-      showToast('error', e instanceof Error ? e.message : 'Ошибка синхронизации справочника компаний');
+      await checkForBackgroundSync();
     } finally {
       setSyncing(false);
     }
@@ -212,37 +299,58 @@ export default function ReferencePage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Справочник</h1>
-            <p className="text-sm text-gray-500 mt-1">Категории, курсы, сроки документов и справочник компаний/договоров из Bitrix24</p>
+            <p className="text-sm text-gray-500 mt-1">Все данные из Bitrix Lists и справочника компаний синхронизируются в Supabase и дальше доступны локально внутри приложения</p>
           </div>
-          <button
-            onClick={() => {
-              if (tab === 'companies') void syncCompaniesDirectoryFromBitrix();
-              else void syncCoursesAndCategoriesFromBitrix();
-            }}
-            disabled={syncing}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg text-sm font-medium transition-all shadow-sm"
-          >
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing
-              ? 'Загрузка...'
-              : tab === 'companies'
-                ? 'Синхронизировать компании и договоры'
-                : 'Обновить категории и курсы'}
-          </button>
+          <div className="flex flex-col items-end gap-2">
+            <button
+              onClick={() => {
+                void syncCoursesAndCategoriesFromBitrix();
+              }}
+              disabled={syncing}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg text-sm font-medium transition-all shadow-sm"
+            >
+              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+              {syncing ? 'Синхронизация...' : 'Синхронизировать все данные из Bitrix'}
+            </button>
+            <div className="text-right text-xs text-gray-500">
+              Последнее обновление данных:{' '}
+              <span className="font-medium text-gray-700">
+                {formatDateTime(syncStatus?.last_success_at)}
+              </span>
+            </div>
+          </div>
         </div>
 
         <div className="w-fit min-w-full bg-white rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex gap-1 border-b border-gray-200 px-4 pt-4">
+          <div className="flex gap-2 px-4 pt-4">
             {([
-              { key: 'categories' as Tab, label: 'Категории', icon: <Tag size={15} />, count: categories.length },
-              { key: 'courses' as Tab, label: 'Названия курсов', icon: <BookOpen size={15} />, count: courses.length },
-              { key: 'document-validity' as Tab, label: 'Срок документа', icon: <Clock size={15} />, count: documentValidityRules.length },
-              { key: 'companies' as Tab, label: 'Справочник компаний', icon: <Building2 size={15} />, count: companiesDirectory.length },
-            ]).map(t => (
+              { key: 'main' as TabGroup, label: 'Основное' },
+              { key: 'secondary' as TabGroup, label: 'Дополнительно' },
+            ]).map(group => (
+              <button
+                key={group.key}
+                onClick={() => {
+                  setTabGroup(group.key);
+                  const nextTab = tabDefinitions.find(item => item.group === group.key)?.key;
+                  if (nextTab) setTab(nextTab);
+                }}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
+                  tabGroup === group.key
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
+                }`}
+              >
+                {group.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-1 border-b border-gray-200 px-4 pt-4 overflow-x-auto">
+            {visibleTabs.map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px ${
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
                   tab === t.key
                     ? 'border-blue-600 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -280,6 +388,36 @@ export default function ReferencePage() {
                 onDelete={deleteCourse}
                 onUpdate={updateCourseName}
                 saving={saving}
+              />
+            ) : tab === 'document-types' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.DOCUMENT_TYPE.name}
+                items={documentTypeItems}
+              />
+            ) : tab === 'grade' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.GRADE.name}
+                items={gradeItems}
+              />
+            ) : tab === 'employee-status' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.EMPLOYEE_STATUS.name}
+                items={employeeStatusItems}
+              />
+            ) : tab === 'marker-pass' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.MARKER_PASS.name}
+                items={markerPassItems}
+              />
+            ) : tab === 'type-learn' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.TYPE_LEARN.name}
+                items={typeLearnItems}
+              />
+            ) : tab === 'commis-concl' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.COMMIS_CONCL.name}
+                items={commisConclItems}
               />
             ) : tab === 'document-validity' ? (
               <DocumentValidityTab
@@ -326,7 +464,7 @@ function CategoryTab({ items, newName, setNewName, onAdd, onDelete, onUpdate, sa
       allowAdd={false}
       allowEdit={false}
       placeholder="Например: ИТР"
-      emptyText="Нет категорий. Добавьте вручную или загрузите из Bitrix24."
+      emptyText="Нет категорий. Синхронизируйте их из Bitrix Lists."
     />
   );
 }
@@ -344,8 +482,38 @@ function CourseTab({ items, newName, setNewName, onAdd, onDelete, onUpdate, savi
       allowAdd={false}
       allowEdit={false}
       placeholder="Например: Промышленная безопасность"
-      emptyText="Нет курсов. Добавьте вручную или загрузите из Bitrix24."
+      emptyText="Нет курсов. Синхронизируйте их из Bitrix Lists."
     />
+  );
+}
+
+function ReadonlyReferenceTab({
+  title,
+  items,
+}: {
+  title: string;
+  items: RefItem[];
+}) {
+  return (
+    <div className="space-y-4 w-fit min-w-full">
+      <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm text-blue-900">
+        Источник данных: Bitrix List `{title}`. Изменения нужно вносить в Bitrix, а здесь показывается локальная копия после синхронизации.
+      </div>
+
+      <ItemList
+        items={items}
+        newName=""
+        setNewName={() => undefined}
+        onAdd={() => undefined}
+        onDelete={() => undefined}
+        onUpdate={() => undefined}
+        saving={false}
+        allowAdd={false}
+        allowEdit={false}
+        placeholder=""
+        emptyText="Нет данных. Нажмите синхронизацию, чтобы подтянуть значения из Bitrix."
+      />
+    </div>
   );
 }
 
@@ -421,9 +589,11 @@ function ItemList({ items, newName, setNewName, onAdd, onDelete, onUpdate, savin
                     <Save size={13} />
                   </button>
                 )}
-                <button onClick={() => onDelete(item.id)} className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all">
-                  <Trash2 size={13} />
-                </button>
+                {(allowEdit || allowAdd) && (
+                  <button onClick={() => onDelete(item.id)} className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all">
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -461,8 +631,8 @@ function DocumentValidityTab({
   return (
     <div className="space-y-4 w-fit min-w-full">
       <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm text-blue-900">
-        Курсы и категории на этой вкладке подтягиваются автоматически из вкладок `Названия курсов` и `Категории`.
-        На этой вкладке данные отображаются только для просмотра.
+        Источник данных: Bitrix List `Сроки документов`. Здесь показывается только локальная копия после синхронизации,
+        без автодобавления правил внутри веб-приложения.
       </div>
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -481,13 +651,14 @@ function DocumentValidityTab({
       </div>
 
       {filteredItems.length === 0 ? (
-        <div className="text-center py-10 text-sm text-gray-400">Нет правил. Добавьте курсы и категории в соседних вкладках.</div>
+        <div className="text-center py-10 text-sm text-gray-400">Нет правил. Нажмите синхронизацию, чтобы подтянуть их из Bitrix.</div>
       ) : (
         <div className="border border-gray-200 rounded-xl overflow-hidden">
           <div className="overflow-auto">
-            <table className="w-full min-w-[980px] text-sm">
+            <table className="w-full min-w-[1040px] text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Курс</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Категория</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Тип документа</th>
@@ -495,9 +666,12 @@ function DocumentValidityTab({
                 </tr>
               </thead>
               <tbody>
-                {filteredItems.map(item => {
+                {filteredItems.map((item, index) => {
                   return (
                     <tr key={item.id} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">
+                        {index + 1}
+                      </td>
                       <td className="px-4 py-2">
                         <span className="text-sm text-gray-800">{item.course_name}</span>
                       </td>
@@ -550,16 +724,14 @@ function CompanyDirectoryTab({
   search: string;
   onSearchChange: (v: string) => void;
 }) {
-  const MIN_TABLE_WIDTH = 1220;
   const MIN_TABLE_HEIGHT = 380;
-  const DEFAULT_TABLE_HEIGHT = 540;
-  const MAX_TABLE_WIDTH = 2600;
+  const TABLE_HEADER_HEIGHT = 44;
+  const TABLE_ROW_HEIGHT = 56;
+  const TABLE_FOOTER_HEIGHT = 42;
+  const TABLE_EXTRA_HEIGHT = 12;
 
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
-  const [tableWidth, setTableWidth] = useState(MIN_TABLE_WIDTH);
-  const [tableHeight, setTableHeight] = useState(DEFAULT_TABLE_HEIGHT);
-  const resizeStateRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number } | null>(null);
 
   const normalized = search.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -578,41 +750,10 @@ function CompanyDirectoryTab({
     const start = (safePage - 1) * pageSize;
     return filtered.slice(start, start + pageSize);
   }, [filtered, pageSize, safePage]);
-
-  useEffect(() => {
-    function onPointerMove(e: PointerEvent) {
-      if (!resizeStateRef.current) return;
-      const { startX, startY, startWidth, startHeight } = resizeStateRef.current;
-      const widthDelta = e.clientX - startX;
-      const heightDelta = e.clientY - startY;
-      const maxHeight = Math.max(MIN_TABLE_HEIGHT, Math.floor(window.innerHeight * 0.78));
-      setTableWidth(Math.min(MAX_TABLE_WIDTH, Math.max(MIN_TABLE_WIDTH, startWidth + widthDelta)));
-      setTableHeight(Math.min(maxHeight, Math.max(MIN_TABLE_HEIGHT, startHeight + heightDelta)));
-    }
-
-    function stopResize() {
-      resizeStateRef.current = null;
-    }
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', stopResize);
-    window.addEventListener('pointercancel', stopResize);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', stopResize);
-      window.removeEventListener('pointercancel', stopResize);
-    };
-  }, []);
-
-  function startResize(e: React.PointerEvent<HTMLButtonElement>) {
-    e.preventDefault();
-    resizeStateRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startWidth: tableWidth,
-      startHeight: tableHeight,
-    };
-  }
+  const tableHeight = Math.max(
+    MIN_TABLE_HEIGHT,
+    TABLE_HEADER_HEIGHT + TABLE_FOOTER_HEIGHT + (pageSize * TABLE_ROW_HEIGHT) + TABLE_EXTRA_HEIGHT
+  );
 
   if (rows.length === 0) {
     return <div className="text-center py-10 text-sm text-gray-400">Справочник компаний пуст. Нажмите кнопку синхронизации.</div>;
@@ -654,17 +795,16 @@ function CompanyDirectoryTab({
       <div
         className="border border-gray-200 rounded-lg relative bg-white flex flex-col"
         style={{
-          width: tableWidth,
           minWidth: '100%',
           height: tableHeight,
           minHeight: MIN_TABLE_HEIGHT,
-          maxHeight: '78vh',
         }}
       >
-        <div className="w-full flex-1 overflow-auto">
+        <div className="w-full flex-1 overflow-x-auto">
           <table className="w-full text-sm min-w-[1220px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
+                <th className="text-left px-3 py-2 w-14">№</th>
                 <th className="text-left px-3 py-2">Компания</th>
                 <th className="text-left px-3 py-2">БИН/ИИН</th>
                 <th className="text-left px-3 py-2">Телефон</th>
@@ -677,8 +817,11 @@ function CompanyDirectoryTab({
               </tr>
             </thead>
             <tbody>
-              {pagedRows.map(row => (
+              {pagedRows.map((row, index) => (
                 <tr key={row.id} className="border-b last:border-b-0 border-gray-100">
+                  <td className="px-3 py-2 text-sm text-gray-500 align-top">
+                    {(safePage - 1) * pageSize + index + 1}
+                  </td>
                   <td className="px-3 py-2">
                     <div className="font-medium text-gray-900">{row.name || '—'}</div>
                     <div className="text-xs text-gray-500">Bitrix ID: {row.bitrix_company_id}</div>
@@ -716,16 +859,7 @@ function CompanyDirectoryTab({
           </table>
         </div>
 
-        <button
-          type="button"
-          onPointerDown={startResize}
-          className="absolute bottom-1 right-1 h-4 w-4 cursor-se-resize rounded-sm border border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300"
-          aria-label="Изменить размер таблицы"
-          title="Потяните, чтобы изменить размер"
-        >
-          <span className="block text-[10px] leading-none">::</span>
-        </button>
-        <div className="border-t border-gray-100 px-3 py-2 pr-8 flex items-center justify-between gap-3 flex-wrap text-xs text-gray-500">
+        <div className="border-t border-gray-100 px-3 py-2 flex items-center justify-between gap-3 flex-wrap text-xs text-gray-500">
           <span>
             Показано: {filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} из {filtered.length}
             {filtered.length !== rows.length ? ` (всего ${rows.length})` : ''}

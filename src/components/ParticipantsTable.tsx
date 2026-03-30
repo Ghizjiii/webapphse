@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, Upload, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import SortableHeader from './SortableHeader';
 import ResizableTableContainer from './ResizableTableContainer';
@@ -72,8 +72,10 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [courseSearch, setCourseSearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
+  const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetId = useRef<string | null>(null);
+  const lastResumeRefreshAtRef = useRef(0);
 
   function handleSort(key: string) {
     setSortConfig(prev =>
@@ -138,6 +140,17 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     onRefresh();
   }
 
+  async function saveParticipantPatch(participantId: string, patch: Partial<Participant>) {
+    setSaving(true);
+    const { error } = await supabase
+      .from('participants')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', participantId);
+    if (error) showToast('error', UI.saveError);
+    setSaving(false);
+    onRefresh();
+  }
+
   async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !uploadTargetId.current) return;
@@ -173,6 +186,61 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     onRefresh();
   }
 
+  async function loadReferenceCategories() {
+    const { data } = await supabase
+      .from('ref_categories')
+      .select('name')
+      .order('sort_order')
+      .order('name');
+    setReferenceCategories((data || []).map(item => String(item.name || '').trim()).filter(Boolean));
+  }
+
+  useEffect(() => {
+    void loadReferenceCategories();
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void loadReferenceCategories();
+    }, 30000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastResumeRefreshAtRef.current < 5000) return;
+      lastResumeRefreshAtRef.current = now;
+      void loadReferenceCategories();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
+  const categoryOptions = useMemo(() => {
+    const unique = new Set<string>();
+    const result: string[] = [];
+    const push = (value: string) => {
+      const normalized = String(value || '').trim();
+      if (!normalized) return;
+      const key = normalized.toLocaleLowerCase('ru');
+      if (unique.has(key)) return;
+      unique.add(key);
+      result.push(normalized);
+    };
+
+    if (referenceCategories.length > 0) {
+      referenceCategories.forEach(push);
+    } else {
+      ['ИТР', 'Обычный'].forEach(push);
+    }
+
+    participants.forEach(participant => push(participant.category));
+    return result;
+  }, [participants, referenceCategories]);
+
   function EditableCell({ p, field, value }: { p: Participant; field: string; value: string }) {
     const isEditing = editCell?.participantId === p.id && editCell?.field === field;
     if (isEditing) {
@@ -199,6 +267,26 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       >
         {value || <span className="text-gray-300">{UI.empty}</span>}
       </div>
+    );
+  }
+
+  function CategoryCell({ participant }: { participant: Participant }) {
+    return (
+      <select
+        value={participant.category || ''}
+        onChange={event => {
+          void saveParticipantPatch(participant.id, { category: event.target.value });
+        }}
+        className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        disabled={saving}
+      >
+        <option value="">{UI.empty}</option>
+        {categoryOptions.map(category => (
+          <option key={category} value={category}>
+            {category}
+          </option>
+        ))}
+      </select>
     );
   }
 
@@ -290,7 +378,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
                 <td className="px-4 py-3"><EditableCell p={p} field="first_name" value={p.first_name} /></td>
                 <td className="px-4 py-3"><EditableCell p={p} field="patronymic" value={p.patronymic} /></td>
                 <td className="px-4 py-3"><EditableCell p={p} field="position" value={p.position} /></td>
-                <td className="px-4 py-3"><EditableCell p={p} field="category" value={p.category} /></td>
+                <td className="px-4 py-3"><CategoryCell participant={p} /></td>
                 <td className="px-4 py-3">
                   <div className="relative">
                     <div className="flex min-h-[24px] flex-wrap gap-1">

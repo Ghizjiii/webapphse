@@ -1,14 +1,129 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared/cors.ts";
 
 const BITRIX_WEBHOOK_URL = Deno.env.get("BITRIX_WEBHOOK_URL") || Deno.env.get("BITRIX_WEBHOOK") || "";
 const OUTGOING_TOKEN = Deno.env.get("BITRIX_OUTGOING_TOKEN") || "";
 
 const TARGET_ENTITY_TYPE_ID = Number(Deno.env.get("BITRIX_HR_ENTITY_TYPE_ID") || "1050");
+const START_DATE_FIELD = Deno.env.get("BITRIX_HR_START_DATE_FIELD") || "ufCrm10_1771778909";
+const END_DATE_FIELD = Deno.env.get("BITRIX_HR_END_DATE_FIELD") || "ufCrm10_1771778942";
 const DAYS_NUMBER_FIELD = Deno.env.get("BITRIX_HR_DAYS_NUMBER_FIELD") || "ufCrm10_1772124949853";
 const DAYS_WORDS_FIELD = Deno.env.get("BITRIX_HR_DAYS_WORDS_FIELD") || "ufCrm10_1772131937986";
 
 type PlainObject = Record<string, unknown>;
+
+const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
+const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
+
+function normalizeOriginRule(value: string): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "*") return "*";
+  return trimmed.replace(/\/+$/, "");
+}
+
+function configuredOrigins(envValue: string): string[] {
+  return String(envValue || "")
+    .split(",")
+    .map(v => normalizeOriginRule(v))
+    .filter(Boolean);
+}
+
+function fallbackAllowedOrigin(configured: string[]): string {
+  const firstExact = configured.find(v => v && !v.includes("*"));
+  return firstExact || "*";
+}
+
+function isOriginRuleMatch(requestOrigin: string, rule: string): boolean {
+  const normalizedRequestOrigin = normalizeOriginRule(requestOrigin);
+  const normalizedRule = normalizeOriginRule(rule);
+
+  if (!normalizedRequestOrigin || !normalizedRule) return false;
+  if (normalizedRule === "*") return true;
+  if (normalizedRule === normalizedRequestOrigin) return true;
+  if (!normalizedRule.includes("*")) return false;
+
+  try {
+    const requestUrl = new URL(normalizedRequestOrigin);
+    const hasScheme = normalizedRule.includes("://");
+    const protocolPrefix = hasScheme ? `${requestUrl.protocol}//` : "";
+    const hostPattern = hasScheme ? normalizedRule.split("://")[1] : normalizedRule;
+    const normalizedHostPattern = hostPattern.startsWith("*.") ? hostPattern.slice(2) : hostPattern;
+
+    if (!normalizedHostPattern) return false;
+    if (hasScheme && !normalizedRule.startsWith(protocolPrefix)) return false;
+
+    return requestUrl.hostname === normalizedHostPattern || requestUrl.hostname.endsWith(`.${normalizedHostPattern}`);
+  } catch {
+    return false;
+  }
+}
+
+function isOriginAllowed(requestOrigin: string, envValue = Deno.env.get("ALLOWED_ORIGIN") || ""): boolean {
+  const configured = configuredOrigins(envValue);
+  if (configured.length === 0) return false;
+  return configured.some(rule => isOriginRuleMatch(requestOrigin, rule));
+}
+
+function resolveAllowedOrigin(requestOrigin: string, envValue = Deno.env.get("ALLOWED_ORIGIN") || ""): string {
+  const normalizedRequestOrigin = normalizeOriginRule(requestOrigin);
+  const configured = configuredOrigins(envValue);
+
+  if (configured.length === 0) return normalizedRequestOrigin || "*";
+  if (normalizedRequestOrigin && configured.some(rule => isOriginRuleMatch(normalizedRequestOrigin, rule))) {
+    return normalizedRequestOrigin;
+  }
+
+  return fallbackAllowedOrigin(configured);
+}
+
+function corsHeaders(req: Request, extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const allowedOriginEnv = Deno.env.get("ALLOWED_ORIGIN") || "";
+  const requestOrigin = req.headers.get("origin") || "";
+
+  return {
+    "Access-Control-Allow-Origin": resolveAllowedOrigin(requestOrigin, allowedOriginEnv),
+    "Access-Control-Allow-Methods": DEFAULT_ALLOWED_METHODS,
+    "Access-Control-Allow-Headers": DEFAULT_ALLOWED_HEADERS,
+    "Vary": "Origin",
+    ...extraHeaders,
+  };
+}
+
+function jsonResponse(
+  req: Request,
+  status: number,
+  payload: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      ...corsHeaders(req, extraHeaders),
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function preflightResponse(req: Request): Response {
+  return new Response(null, {
+    status: 200,
+    headers: corsHeaders(req),
+  });
+}
+
+function validateCorsRequest(req: Request): Response | null {
+  const allowedOriginEnv = Deno.env.get("ALLOWED_ORIGIN") || "";
+  if (!allowedOriginEnv) {
+    return jsonResponse(req, 500, { error: "ALLOWED_ORIGIN is not configured" });
+  }
+
+  const requestOrigin = req.headers.get("origin") || "";
+  if (requestOrigin && !isOriginAllowed(requestOrigin, allowedOriginEnv)) {
+    return jsonResponse(req, 403, { error: "Origin is not allowed" });
+  }
+
+  return null;
+}
 
 function bitrixMethodUrl(base: string, method: string): string {
   return `${base.replace(/\/+$/, "")}/${method}.json`;
@@ -97,7 +212,7 @@ function findFieldValue(source: PlainObject, code: string): unknown {
   for (const variant of variants) {
     if (variant in source) return source[variant];
     const target = normalizedKey(variant);
-    const foundKey = keys.find(k => normalizedKey(k) === target);
+    const foundKey = keys.find(key => normalizedKey(key) === target);
     if (foundKey) return source[foundKey];
   }
   return undefined;
@@ -112,14 +227,13 @@ function resolveUpdateFieldKey(item: PlainObject, code: string): string {
   const itemKeys = Object.keys(item);
   for (const variant of variants) {
     const target = normalizedKey(variant);
-    const found = itemKeys.find(k => normalizedKey(k) === target);
+    const found = itemKeys.find(key => normalizedKey(key) === target);
     if (found) return found;
   }
 
-  // Safe default for Smart Process API
   const cleaned = normalizeFieldCode(code);
-  const m = cleaned.match(/^(?:U|u)fCrm(\d{2})(\d+)$/);
-  if (m) return `ufCrm${m[1]}_${m[2]}`;
+  const smartField = cleaned.match(/^(?:U|u)fCrm(\d{2})(\d+)$/);
+  if (smartField) return `ufCrm${smartField[1]}_${smartField[2]}`;
   return cleaned;
 }
 
@@ -134,6 +248,81 @@ function parseNumberValue(value: unknown): number | null {
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed)) return null;
   return Math.trunc(parsed);
+}
+
+function firstScalarValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = firstScalarValue(item);
+      if (candidate) return candidate;
+    }
+    return "";
+  }
+
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value as PlainObject)) {
+      const candidate = firstScalarValue(nested);
+      if (candidate) return candidate;
+    }
+  }
+
+  return "";
+}
+
+function parseDateValue(value: unknown): string | null {
+  const raw = firstScalarValue(value);
+  if (!raw) return null;
+
+  const isoDateMatch = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/);
+  if (isoDateMatch) return isoDateMatch[1];
+
+  const ruDateMatch = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:[T\s].*)?$/);
+  if (ruDateMatch) return `${ruDateMatch[3]}-${ruDateMatch[2]}-${ruDateMatch[1]}`;
+
+  return null;
+}
+
+function parseIsoDateToUtcTimestamp(value: string): number | null {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return timestamp;
+}
+
+function calculateInclusiveDays(startDate: string, endDate: string): number | null {
+  const startTimestamp = parseIsoDateToUtcTimestamp(startDate);
+  const endTimestamp = parseIsoDateToUtcTimestamp(endDate);
+
+  if (startTimestamp === null || endTimestamp === null) return null;
+
+  const diffDays = Math.round((endTimestamp - startTimestamp) / 86_400_000) + 1;
+  return diffDays > 0 ? diffDays : null;
+}
+
+function normalizeComparableText(value: unknown): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function pickFormOrJson(body: PlainObject, paths: string[]): unknown {
@@ -258,8 +447,34 @@ async function parseRequestPayload(req: Request): Promise<PlainObject> {
   const text = await req.text();
   const params = new URLSearchParams(text);
   const out: PlainObject = {};
-  for (const [k, v] of params.entries()) out[k] = v;
+  for (const [key, value] of params.entries()) out[key] = value;
   return out;
+}
+
+function startDatePaths(): string[] {
+  return [
+    "startDate",
+    "start_date",
+    "dateStart",
+    "date_start",
+    "beginDate",
+    "begin_date",
+    START_DATE_FIELD,
+    ...fieldCodeVariants(START_DATE_FIELD),
+  ];
+}
+
+function endDatePaths(): string[] {
+  return [
+    "endDate",
+    "end_date",
+    "dateEnd",
+    "date_end",
+    "finishDate",
+    "finish_date",
+    END_DATE_FIELD,
+    ...fieldCodeVariants(END_DATE_FIELD),
+  ];
 }
 
 Deno.serve(async (req: Request) => {
@@ -340,41 +555,67 @@ Deno.serve(async (req: Request) => {
     const itemResult = await callBitrix("crm.item.get", { entityTypeId, id: itemId });
     const item = ((itemResult.item || itemResult) as PlainObject) || {};
 
-    const inputDays =
-      pickFormOrJson(body, [
-        "days",
-        "vacationDays",
-        "vacation_days",
-        DAYS_NUMBER_FIELD,
-        ...fieldCodeVariants(DAYS_NUMBER_FIELD),
-      ]) ??
-      findFieldValue(item, DAYS_NUMBER_FIELD);
+    const rawStartDate = pickFormOrJson(body, startDatePaths()) ?? findFieldValue(item, START_DATE_FIELD);
+    const rawEndDate = pickFormOrJson(body, endDatePaths()) ?? findFieldValue(item, END_DATE_FIELD);
 
-    const days = parseNumberValue(inputDays);
+    const startDate = parseDateValue(rawStartDate);
+    if (!startDate) {
+      return jsonResponse(req, 400, {
+        error: "Cannot read start date",
+        field: START_DATE_FIELD,
+      });
+    }
+
+    const endDate = parseDateValue(rawEndDate);
+    if (!endDate) {
+      return jsonResponse(req, 400, {
+        error: "Cannot read end date",
+        field: END_DATE_FIELD,
+      });
+    }
+
+    const days = calculateInclusiveDays(startDate, endDate);
     if (days === null) {
       return jsonResponse(req, 400, {
-        error: "Cannot read vacation days number",
-        field: DAYS_NUMBER_FIELD,
+        error: "End date must be the same as or later than start date",
+        startDate,
+        endDate,
       });
     }
 
     const daysWords = numberToWordsRu(days);
-    const currentWords = String(findFieldValue(item, DAYS_WORDS_FIELD) || "").trim().toLowerCase();
-    if (currentWords === daysWords.toLowerCase()) {
+    const currentDays = parseNumberValue(findFieldValue(item, DAYS_NUMBER_FIELD));
+    const currentWords = normalizeComparableText(findFieldValue(item, DAYS_WORDS_FIELD));
+
+    const numberFieldKey = resolveUpdateFieldKey(item, DAYS_NUMBER_FIELD);
+    const wordsFieldKey = resolveUpdateFieldKey(item, DAYS_WORDS_FIELD);
+    const fieldsToUpdate: PlainObject = {};
+
+    if (currentDays !== days) {
+      fieldsToUpdate[numberFieldKey] = days;
+    }
+
+    if (currentWords !== normalizeComparableText(daysWords)) {
+      fieldsToUpdate[wordsFieldKey] = daysWords;
+    }
+
+    if (Object.keys(fieldsToUpdate).length === 0) {
       return jsonResponse(req, 200, {
         ok: true,
         updated: false,
         itemId,
+        entityTypeId,
+        startDate,
+        endDate,
         days,
         daysWords,
       });
     }
 
-    const updateFieldKey = resolveUpdateFieldKey(item, DAYS_WORDS_FIELD);
     await callBitrix("crm.item.update", {
       entityTypeId,
       id: itemId,
-      fields: { [updateFieldKey]: daysWords },
+      fields: fieldsToUpdate,
     });
 
     return jsonResponse(req, 200, {
@@ -382,12 +623,14 @@ Deno.serve(async (req: Request) => {
       updated: true,
       itemId,
       entityTypeId,
+      startDate,
+      endDate,
       days,
       daysWords,
-      updateFieldKey,
+      updateFieldKeys: Object.keys(fieldsToUpdate),
     });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return jsonResponse(req, 500, { error: msg });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return jsonResponse(req, 500, { error: message });
   }
 });
