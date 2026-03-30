@@ -133,7 +133,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     () => Object.values(columnWidths).reduce((total, width) => total + width, 0),
     [columnWidths]
   );
-  const minimumVisibleRows = 10;
+  const minimumVisibleRows = 3;
   const estimatedRowHeight = 76;
   const estimatedHeaderHeight = 52;
   const tableViewportMinHeight = estimatedHeaderHeight + Math.max(minimumVisibleRows, pagedParticipants.length) * estimatedRowHeight;
@@ -435,7 +435,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
           type="button"
           onClick={onAddParticipant}
           disabled={!canEditParticipants}
-          className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 text-gray-500 rounded-xl text-sm hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all w-full justify-center disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl border border-dashed border-gray-300 px-4 py-2.5 text-sm text-gray-500 transition-all hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus size={16} /> Добавить ещё сотрудника
         </button>

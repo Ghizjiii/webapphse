@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import type { QuestionnaireLink, Company } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
+import { getPublicFormUrl } from '../lib/publicFormUrl';
 import CreateLinkModal from '../components/CreateLinkModal';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -14,6 +15,8 @@ interface QuestionnaireRow {
   questionnaire: QuestionnaireLink;
   company: Company | null;
   participantCount: number;
+  requestCount: number;
+  totalAmount: number;
   creatorProfile: ProfileDirectoryEntry | null;
 }
 
@@ -21,9 +24,18 @@ type ParticipantQuestionnaireRef = {
   questionnaire_id: string | null;
 };
 
+type ParticipantCourseQuestionnaireRef = {
+  questionnaire_id: string | null;
+};
+
 type DealQuestionnaireSyncRef = {
   questionnaire_id: string;
   sync_status: 'pending' | 'in_progress' | 'success' | 'error' | null;
+};
+
+type CertificateAmountRef = {
+  questionnaire_id: string | null;
+  price: number | string | null;
 };
 
 const STATUS_CONFIG = {
@@ -95,7 +107,7 @@ export default function DashboardPage() {
         .filter(Boolean)
     ));
 
-    const [companiesRes, participantsRes, dealsRes, creatorProfiles] = await Promise.all([
+    const [companiesRes, participantsRes, participantCoursesRes, certificatesRes, dealsRes, creatorProfiles] = await Promise.all([
       supabase
         .from('companies')
         .select('*')
@@ -107,13 +119,21 @@ export default function DashboardPage() {
         .select('questionnaire_id')
         .in('questionnaire_id', questionnaireIds),
       supabase
+        .from('participant_courses')
+        .select('questionnaire_id')
+        .in('questionnaire_id', questionnaireIds),
+      supabase
+        .from('certificates')
+        .select('questionnaire_id, price')
+        .in('questionnaire_id', questionnaireIds),
+      supabase
         .from('deals')
         .select('questionnaire_id, sync_status')
         .in('questionnaire_id', questionnaireIds),
       loadProfileDirectory(creatorIds),
     ]);
 
-    if (companiesRes.error || participantsRes.error || dealsRes.error) {
+    if (companiesRes.error || participantsRes.error || participantCoursesRes.error || certificatesRes.error || dealsRes.error) {
       showToast('error', 'Ошибка загрузки связанных данных');
       setLoading(false);
       return;
@@ -132,6 +152,27 @@ export default function DashboardPage() {
       participantCountByQuestionnaire.set(
         participant.questionnaire_id,
         (participantCountByQuestionnaire.get(participant.questionnaire_id) || 0) + 1
+      );
+    }
+
+    const requestCountByQuestionnaire = new Map<string, number>();
+    for (const course of (participantCoursesRes.data || []) as ParticipantCourseQuestionnaireRef[]) {
+      if (!course.questionnaire_id) continue;
+      requestCountByQuestionnaire.set(
+        course.questionnaire_id,
+        (requestCountByQuestionnaire.get(course.questionnaire_id) || 0) + 1
+      );
+    }
+
+    const totalAmountByQuestionnaire = new Map<string, number>();
+    for (const certificate of (certificatesRes.data || []) as CertificateAmountRef[]) {
+      if (!certificate.questionnaire_id) continue;
+      const parsedPrice = Number(certificate.price);
+      if (!Number.isFinite(parsedPrice)) continue;
+
+      totalAmountByQuestionnaire.set(
+        certificate.questionnaire_id,
+        (totalAmountByQuestionnaire.get(certificate.questionnaire_id) || 0) + parsedPrice
       );
     }
 
@@ -168,6 +209,8 @@ export default function DashboardPage() {
         questionnaire: { ...q, status },
         company: resolveCompanyRecord(companiesByQuestionnaire.get(q.id) || []),
         participantCount: participantCountByQuestionnaire.get(q.id) || 0,
+        requestCount: requestCountByQuestionnaire.get(q.id) || 0,
+        totalAmount: totalAmountByQuestionnaire.get(q.id) || 0,
         creatorProfile: q.created_by ? creatorByUserId.get(q.created_by) || null : null,
       };
     });
@@ -213,7 +256,7 @@ export default function DashboardPage() {
   }, [filteredRows.length, pageSize, currentPage]);
 
   function getFormUrl(token: string) {
-    return `${window.location.origin}/form/${token}`;
+    return getPublicFormUrl(token);
   }
 
   async function copyLink(token: string) {
@@ -243,6 +286,10 @@ export default function DashboardPage() {
   function formatTime(str: string | null) {
     if (!str) return '—';
     return new Date(str).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatMoney(value: number) {
+    return `${value.toLocaleString('ru-RU')} ₸`;
   }
 
   const hasActiveFilters = ownershipFilter !== 'all' || statusFilter !== 'all' || companySearch.trim() !== '';
@@ -415,6 +462,8 @@ export default function DashboardPage() {
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявка / Название компании</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Статус</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявок</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Общая сумма</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Создана</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Срок</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Ответственный</th>
@@ -424,11 +473,11 @@ export default function DashboardPage() {
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
+                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">
                     По выбранным фильтрам анкеты не найдены.
                   </td>
                 </tr>
-              ) : pagedRows.map(({ questionnaire: q, company, participantCount, creatorProfile }, index) => {
+              ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile }, index) => {
                 const cfg = STATUS_CONFIG[q.status] || STATUS_CONFIG.active;
                 const rowNumber = (currentPage - 1) * pageSize + index + 1;
                 const responsibleRole = creatorProfile?.role || (q.created_by === currentUserId ? currentProfileRole : null);
@@ -453,6 +502,14 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="px-4 py-4 text-gray-600">{participantCount}</td>
+                    <td className="px-4 py-4 text-gray-600">{requestCount}</td>
+                    <td className="px-4 py-4">
+                      {totalAmount > 0 ? (
+                        <span className="font-medium text-gray-900 whitespace-nowrap">{formatMoney(totalAmount)}</span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-4 text-gray-500">
                       <div>{formatDate(q.created_at)}</div>
                       <div className="text-xs text-gray-400 mt-0.5">{formatTime(q.created_at)}</div>

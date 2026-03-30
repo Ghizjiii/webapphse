@@ -8,6 +8,9 @@ const START_DATE_FIELD = Deno.env.get("BITRIX_HR_START_DATE_FIELD") || "ufCrm10_
 const END_DATE_FIELD = Deno.env.get("BITRIX_HR_END_DATE_FIELD") || "ufCrm10_1771778942";
 const DAYS_NUMBER_FIELD = Deno.env.get("BITRIX_HR_DAYS_NUMBER_FIELD") || "ufCrm10_1772124949853";
 const DAYS_WORDS_FIELD = Deno.env.get("BITRIX_HR_DAYS_WORDS_FIELD") || "ufCrm10_1772131937986";
+const POSITION_FIELD = Deno.env.get("BITRIX_HR_POSITION_FIELD") || "ufCrm10_1772992837";
+const POSITION_GENITIVE_FIELD = Deno.env.get("BITRIX_HR_POSITION_GENITIVE_FIELD") || "ufCrm10_1771778817";
+const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 
 type PlainObject = Record<string, unknown>;
 
@@ -155,6 +158,41 @@ async function callBitrix(method: string, params: PlainObject): Promise<PlainObj
   }
 
   return (parsed.result as PlainObject) || {};
+}
+
+async function toGenitiveCase(value: string): Promise<string> {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const url = new URL("https://ws3.morpher.ru/russian/declension");
+  url.searchParams.set("s", text);
+  url.searchParams.set("format", "json");
+
+  const headers: Record<string, string> = {};
+  if (MORPHER_API_TOKEN) {
+    headers.authorization = `Bearer ${MORPHER_API_TOKEN}`;
+  }
+
+  const res = await fetch(url, { method: "GET", headers });
+  const raw = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`Morpher HTTP ${res.status}: ${raw || "empty response"}`);
+  }
+
+  let parsed: PlainObject = {};
+  try {
+    parsed = raw ? JSON.parse(raw) as PlainObject : {};
+  } catch {
+    parsed = {};
+  }
+
+  const genitive = String(parsed["\u0420"] || parsed.r || "").trim();
+  if (!genitive) {
+    throw new Error("Morpher did not return genitive form");
+  }
+
+  return genitive;
 }
 
 function normalizeFieldCode(code: string): string {
@@ -555,60 +593,136 @@ Deno.serve(async (req: Request) => {
     const itemResult = await callBitrix("crm.item.get", { entityTypeId, id: itemId });
     const item = ((itemResult.item || itemResult) as PlainObject) || {};
 
+    const fieldsToUpdate: PlainObject = {};
+    const warnings: string[] = [];
+
     const rawStartDate = pickFormOrJson(body, startDatePaths()) ?? findFieldValue(item, START_DATE_FIELD);
     const rawEndDate = pickFormOrJson(body, endDatePaths()) ?? findFieldValue(item, END_DATE_FIELD);
+    const rawPosition =
+      pickFormOrJson(body, [
+        "position",
+        "jobTitle",
+        "job_title",
+        POSITION_FIELD,
+        ...fieldCodeVariants(POSITION_FIELD),
+      ]) ?? findFieldValue(item, POSITION_FIELD);
 
-    const startDate = parseDateValue(rawStartDate);
-    if (!startDate) {
-      return jsonResponse(req, 400, {
-        error: "Cannot read start date",
-        field: START_DATE_FIELD,
-      });
+    const startDateValue = firstScalarValue(rawStartDate);
+    const endDateValue = firstScalarValue(rawEndDate);
+    const sourcePosition = firstScalarValue(rawPosition);
+
+    let startDate: string | null = null;
+    let endDate: string | null = null;
+    let days: number | null = null;
+    let daysWords = "";
+    let daysError = "";
+    let updateDaysNumberFieldKey = "";
+    let updateDaysWordsFieldKey = "";
+
+    if (startDateValue || endDateValue) {
+      startDate = parseDateValue(rawStartDate);
+      endDate = parseDateValue(rawEndDate);
+
+      if (!startDate) {
+        daysError = `Cannot read start date from ${START_DATE_FIELD}`;
+      } else if (!endDate) {
+        daysError = `Cannot read end date from ${END_DATE_FIELD}`;
+      } else {
+        days = calculateInclusiveDays(startDate, endDate);
+        if (days === null) {
+          daysError = "End date must be the same as or later than start date";
+        } else {
+          daysWords = numberToWordsRu(days);
+          const currentDays = parseNumberValue(findFieldValue(item, DAYS_NUMBER_FIELD));
+          const currentWords = normalizeComparableText(findFieldValue(item, DAYS_WORDS_FIELD));
+
+          updateDaysNumberFieldKey = resolveUpdateFieldKey(item, DAYS_NUMBER_FIELD);
+          updateDaysWordsFieldKey = resolveUpdateFieldKey(item, DAYS_WORDS_FIELD);
+
+          if (currentDays !== days) {
+            fieldsToUpdate[updateDaysNumberFieldKey] = days;
+          }
+
+          if (currentWords !== normalizeComparableText(daysWords)) {
+            fieldsToUpdate[updateDaysWordsFieldKey] = daysWords;
+          }
+        }
+      }
+    } else {
+      warnings.push("Days sync skipped because start and end dates are empty");
     }
 
-    const endDate = parseDateValue(rawEndDate);
-    if (!endDate) {
-      return jsonResponse(req, 400, {
-        error: "Cannot read end date",
-        field: END_DATE_FIELD,
-      });
+    let genitivePosition = "";
+    let positionError = "";
+    let updatePositionFieldKey = "";
+
+    if (sourcePosition) {
+      try {
+        genitivePosition = await toGenitiveCase(sourcePosition);
+        const currentGenitive = normalizeComparableText(findFieldValue(item, POSITION_GENITIVE_FIELD));
+
+        if (currentGenitive !== normalizeComparableText(genitivePosition)) {
+          updatePositionFieldKey = resolveUpdateFieldKey(item, POSITION_GENITIVE_FIELD);
+          fieldsToUpdate[updatePositionFieldKey] = genitivePosition;
+        }
+      } catch (error) {
+        positionError = error instanceof Error ? error.message : String(error);
+      }
+    } else {
+      warnings.push("Position genitive sync skipped because position field is empty");
     }
 
-    const days = calculateInclusiveDays(startDate, endDate);
-    if (days === null) {
+    const daysAttempted = Boolean(startDateValue || endDateValue);
+    const positionAttempted = Boolean(sourcePosition);
+    const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
+    const hasPositionSuccess = Boolean(positionAttempted && !positionError);
+
+    if (daysError && !hasPositionSuccess) {
       return jsonResponse(req, 400, {
-        error: "End date must be the same as or later than start date",
+        error: daysError,
+        itemId,
+        entityTypeId,
         startDate,
         endDate,
+        sourcePosition,
+        positionError,
       });
     }
 
-    const daysWords = numberToWordsRu(days);
-    const currentDays = parseNumberValue(findFieldValue(item, DAYS_NUMBER_FIELD));
-    const currentWords = normalizeComparableText(findFieldValue(item, DAYS_WORDS_FIELD));
-
-    const numberFieldKey = resolveUpdateFieldKey(item, DAYS_NUMBER_FIELD);
-    const wordsFieldKey = resolveUpdateFieldKey(item, DAYS_WORDS_FIELD);
-    const fieldsToUpdate: PlainObject = {};
-
-    if (currentDays !== days) {
-      fieldsToUpdate[numberFieldKey] = days;
+    if (positionError && !hasDaysSuccess) {
+      return jsonResponse(req, 502, {
+        error: positionError,
+        itemId,
+        entityTypeId,
+        startDate,
+        endDate,
+        sourcePosition,
+        daysError,
+      });
     }
 
-    if (currentWords !== normalizeComparableText(daysWords)) {
-      fieldsToUpdate[wordsFieldKey] = daysWords;
+    if (daysError) {
+      warnings.push(daysError);
+    }
+
+    if (positionError) {
+      warnings.push(positionError);
     }
 
     if (Object.keys(fieldsToUpdate).length === 0) {
       return jsonResponse(req, 200, {
         ok: true,
         updated: false,
+        partial: Boolean(daysError || positionError),
         itemId,
         entityTypeId,
         startDate,
         endDate,
         days,
         daysWords,
+        sourcePosition,
+        genitivePosition,
+        warnings,
       });
     }
 
@@ -621,13 +735,20 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(req, 200, {
       ok: true,
       updated: true,
+      partial: Boolean(daysError || positionError),
       itemId,
       entityTypeId,
       startDate,
       endDate,
       days,
       daysWords,
+      sourcePosition,
+      genitivePosition,
+      warnings,
       updateFieldKeys: Object.keys(fieldsToUpdate),
+      updateDaysNumberFieldKey,
+      updateDaysWordsFieldKey,
+      updatePositionFieldKey,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

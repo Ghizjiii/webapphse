@@ -5,6 +5,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const BITRIX_WEBHOOK_URL = (Deno.env.get("BITRIX_WEBHOOK_URL") || "").replace(/\/+$/, "");
 const BITRIX_DEAL_BASE_URL = Deno.env.get("BITRIX_DEAL_BASE_URL") || "https://hsecompany.bitrix24.kz/crm/deal/details";
+const DEFAULT_DEAL_CURRENCY_ID = plainEnv("BITRIX_DEAL_CURRENCY_ID") || "KZT";
 const SMART_PROCESS_ENTITY_TYPE_ID = Number(Deno.env.get("BITRIX_SMART_PROCESS_ENTITY_TYPE_ID") || "1056");
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
 const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
@@ -185,6 +186,10 @@ type AppProfileAuthRow = {
 
 const preparedPhotoCache = new Map<string, Promise<PreparedFile>>();
 let photoContractCache: PhotoContract | null = null;
+
+function plainEnv(name: string): string {
+  return String(Deno.env.get(name) || "").trim();
+}
 
 function normalizeOriginRule(value: string): string {
   const trimmed = String(value || "").trim();
@@ -1058,6 +1063,89 @@ function buildDesiredSmartProcessFieldEntries(params: {
   return entries;
 }
 
+function extractScalarValues(value: unknown): string[] {
+  if (value == null) return [];
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(item => extractScalarValues(item));
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if ("VALUE" in obj || "value" in obj) {
+      return extractScalarValues(obj.VALUE ?? obj.value);
+    }
+    return Object.values(obj).flatMap(item => extractScalarValues(item));
+  }
+  return [];
+}
+
+function companyBinFieldVariants(): string[] {
+  const out = new Set<string>();
+  for (const code of COMPANY_BIN_FIELD_CANDIDATES) {
+    const normalized = plain(code);
+    if (!normalized) continue;
+    out.add(normalized);
+    out.add(normalized.toUpperCase());
+    out.add(normalized.toLowerCase());
+    const camel = companyCamel(normalized);
+    if (camel) out.add(camel);
+  }
+  return Array.from(out);
+}
+
+function companyHasMatchingBin(data: Record<string, unknown>, expectedBin: string): boolean {
+  const expectedDigits = digits(expectedBin);
+  if (!expectedDigits) return false;
+  const expectedNoZero = expectedDigits.replace(/^0+/, "");
+
+  for (const key of companyBinFieldVariants()) {
+    for (const rawValue of extractScalarValues(data[key])) {
+      const currentDigits = digits(rawValue);
+      if (!currentDigits) continue;
+      const currentNoZero = currentDigits.replace(/^0+/, "");
+      if (currentDigits === expectedDigits || (expectedNoZero && currentNoZero === expectedNoZero)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function normalizePhoneForCompare(value: unknown): string {
+  const normalizedDigits = digits(value);
+  return normalizedDigits || plain(value);
+}
+
+function normalizeEmailForCompare(value: unknown): string {
+  return plain(value).toLowerCase();
+}
+
+function crmMultiValues(value: unknown): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const item of extractScalarValues(value)) {
+    const normalized = plain(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+
+  return out;
+}
+
+function crmMultiValuesEqual(value: unknown, expected: string[], kind: "phone" | "email"): boolean {
+  const normalize = kind === "phone" ? normalizePhoneForCompare : normalizeEmailForCompare;
+  const currentValues = crmMultiValues(value).map(normalize).filter(Boolean).sort();
+  const expectedValues = expected.map(normalize).filter(Boolean).sort();
+
+  if (currentValues.length !== expectedValues.length) return false;
+  return currentValues.every((current, index) => current === expectedValues[index]);
+}
+
 async function findExistingCompanyIdByBin(binIin: string, companyName: string): Promise<string | null> {
   const searchValues = Array.from(new Set([plain(binIin), digits(binIin), digits(binIin).replace(/^0+/, "")].filter(Boolean)));
   const candidates = new Map<string, Record<string, unknown>>();
@@ -1069,7 +1157,7 @@ async function findExistingCompanyIdByBin(binIin: string, companyName: string): 
         const result = await callBitrix("crm.company.list", {
           filter: { [fieldCode]: value },
           order: { ID: "ASC" },
-          select: ["ID", "TITLE", "UF_*"],
+          select: ["ID", "TITLE", "PHONE", "EMAIL", "UF_*"],
         });
         const rows = Array.isArray(result) ? result : Array.isArray(result?.items) ? result.items : [];
         for (const row of rows as Array<Record<string, unknown>>) {
@@ -1082,7 +1170,8 @@ async function findExistingCompanyIdByBin(binIin: string, companyName: string): 
     }
   }
 
-  const best = Array.from(candidates.values()).sort((left, right) => {
+  const matchingRows = Array.from(candidates.values()).filter(row => companyHasMatchingBin(row, binIin));
+  const best = matchingRows.sort((left, right) => {
     const leftTitle = plain(left.TITLE || left.title).toLowerCase();
     const rightTitle = plain(right.TITLE || right.title).toLowerCase();
     const leftExact = Number(normalizedName !== "" && leftTitle === normalizedName);
@@ -1095,20 +1184,23 @@ async function findExistingCompanyIdByBin(binIin: string, companyName: string): 
 }
 
 async function fetchCompanyFields(bitrixCompanyId: string): Promise<Record<string, unknown>> {
-  const raw = await callBitrix("crm.company.get", { id: bitrixCompanyId });
-  return (raw || {}) as Record<string, unknown>;
-}
-
-function crmMultiPrimaryValue(value: unknown): string {
-  if (!Array.isArray(value)) return plain(value);
-  for (const item of value as Array<Record<string, unknown>>) {
-    const current = plain(item?.VALUE || item?.value);
-    if (current) return current;
+  try {
+    const raw = await callBitrix("crm.company.get", {
+      id: bitrixCompanyId,
+      select: ["ID", "TITLE", "PHONE", "EMAIL", "INDUSTRY", "UF_*"],
+    });
+    return (raw || {}) as Record<string, unknown>;
+  } catch {
+    const raw = await callBitrix("crm.company.list", {
+      filter: { ID: bitrixCompanyId },
+      select: ["ID", "TITLE", "PHONE", "EMAIL", "INDUSTRY", "UF_*"],
+    });
+    const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : [];
+    return ((rows[0] || {}) as Record<string, unknown>);
   }
-  return "";
 }
 
-async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise<string> {
+function buildCompanyFields(company: CompanyRow): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     TITLE: company.name,
     PHONE: company.phone ? [{ VALUE: company.phone, VALUE_TYPE: "WORK" }] : [],
@@ -1121,63 +1213,60 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
     const camel = companyCamel(code);
     if (camel) fields[camel] = binValue;
   }
+  return fields;
+}
 
-  const currentId = plain(deal?.bitrix_company_id || company.bitrix_company_id || "");
-  if (currentId) {
-    const currentCompany = await fetchCompanyFields(currentId);
-    const fieldsToUpdate: Record<string, unknown> = {};
+function buildCompanyFieldsToUpdate(currentCompany: Record<string, unknown>, company: CompanyRow, fields: Record<string, unknown>): Record<string, unknown> {
+  const fieldsToUpdate: Record<string, unknown> = {};
+  const binValue = digits(company.bin_iin) || plain(company.bin_iin);
 
-    if (plain(currentCompany.TITLE || currentCompany.title) !== plain(company.name)) {
-      fieldsToUpdate.TITLE = fields.TITLE;
+  if (plain(currentCompany.TITLE || currentCompany.title) !== plain(company.name)) {
+    fieldsToUpdate.TITLE = fields.TITLE;
+  }
+  if (!crmMultiValuesEqual(currentCompany.PHONE, company.phone ? [company.phone] : [], "phone")) {
+    fieldsToUpdate.PHONE = fields.PHONE;
+  }
+  if (!crmMultiValuesEqual(currentCompany.EMAIL, company.email ? [company.email] : [], "email")) {
+    fieldsToUpdate.EMAIL = fields.EMAIL;
+  }
+  if (plain(currentCompany.INDUSTRY) !== "") {
+    fieldsToUpdate.INDUSTRY = "";
+  }
+  for (const code of COMPANY_BIN_FIELD_CANDIDATES) {
+    if (plain(getFieldValue(currentCompany, code)) !== binValue) {
+      fieldsToUpdate[code] = fields[code];
+      const camel = companyCamel(code);
+      if (camel) fieldsToUpdate[camel] = fields[camel];
     }
-    if (crmMultiPrimaryValue(currentCompany.PHONE) !== plain(company.phone)) {
-      fieldsToUpdate.PHONE = fields.PHONE;
-    }
-    if (crmMultiPrimaryValue(currentCompany.EMAIL) !== plain(company.email)) {
-      fieldsToUpdate.EMAIL = fields.EMAIL;
-    }
-    if (plain(currentCompany.INDUSTRY) !== "") {
-      fieldsToUpdate.INDUSTRY = "";
-    }
-    for (const code of COMPANY_BIN_FIELD_CANDIDATES) {
-      if (plain(getFieldValue(currentCompany, code)) !== binValue) {
-        fieldsToUpdate[code] = fields[code];
-        const camel = companyCamel(code);
-        if (camel) fieldsToUpdate[camel] = fields[camel];
-      }
+  }
+
+  return fieldsToUpdate;
+}
+
+async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise<string> {
+  const fields = buildCompanyFields(company);
+  const persistedIds = Array.from(new Set([
+    plain(deal?.bitrix_company_id),
+    plain(company.bitrix_company_id),
+  ].filter(Boolean)));
+
+  for (const persistedId of persistedIds) {
+    const currentCompany = await fetchCompanyFields(persistedId);
+    if (!companyHasMatchingBin(currentCompany, company.bin_iin)) {
+      continue;
     }
 
+    const fieldsToUpdate = buildCompanyFieldsToUpdate(currentCompany, company, fields);
     if (Object.keys(fieldsToUpdate).length > 0) {
-      await callBitrix("crm.company.update", { id: currentId, fields: fieldsToUpdate });
+      await callBitrix("crm.company.update", { id: persistedId, fields: fieldsToUpdate });
     }
-    return currentId;
+    return persistedId;
   }
 
   const existingId = await findExistingCompanyIdByBin(company.bin_iin, company.name);
   if (existingId) {
     const currentCompany = await fetchCompanyFields(existingId);
-    const fieldsToUpdate: Record<string, unknown> = {};
-
-    if (plain(currentCompany.TITLE || currentCompany.title) !== plain(company.name)) {
-      fieldsToUpdate.TITLE = fields.TITLE;
-    }
-    if (crmMultiPrimaryValue(currentCompany.PHONE) !== plain(company.phone)) {
-      fieldsToUpdate.PHONE = fields.PHONE;
-    }
-    if (crmMultiPrimaryValue(currentCompany.EMAIL) !== plain(company.email)) {
-      fieldsToUpdate.EMAIL = fields.EMAIL;
-    }
-    if (plain(currentCompany.INDUSTRY) !== "") {
-      fieldsToUpdate.INDUSTRY = "";
-    }
-    for (const code of COMPANY_BIN_FIELD_CANDIDATES) {
-      if (plain(getFieldValue(currentCompany, code)) !== binValue) {
-        fieldsToUpdate[code] = fields[code];
-        const camel = companyCamel(code);
-        if (camel) fieldsToUpdate[camel] = fields[camel];
-      }
-    }
-
+    const fieldsToUpdate = buildCompanyFieldsToUpdate(currentCompany, company, fields);
     if (Object.keys(fieldsToUpdate).length > 0) {
       await callBitrix("crm.company.update", { id: existingId, fields: fieldsToUpdate });
     }
@@ -1272,6 +1361,8 @@ async function upsertDeal(params: {
   company: CompanyRow;
   bitrixCompanyId: string;
   dealTitle: string;
+  dealAmount: number;
+  dealCurrencyId: string;
   assignedById: string;
   paymentFieldCode: string;
   paymentStatusFieldCode: string;
@@ -1297,6 +1388,15 @@ async function upsertDeal(params: {
     }
     if (plain(currentDeal.ASSIGNED_BY_ID || currentDeal.assignedById) !== params.assignedById) {
       fieldsToUpdate.ASSIGNED_BY_ID = params.assignedById;
+    }
+    if (normalizeBitrixNumber(getDealFieldValue(currentDeal, "OPPORTUNITY")) !== params.dealAmount) {
+      fieldsToUpdate.OPPORTUNITY = params.dealAmount;
+    }
+    if (plain(getDealFieldValue(currentDeal, "CURRENCY_ID")) !== params.dealCurrencyId) {
+      fieldsToUpdate.CURRENCY_ID = params.dealCurrencyId;
+    }
+    if (plain(getDealFieldValue(currentDeal, "IS_MANUAL_OPPORTUNITY")) !== "Y") {
+      fieldsToUpdate.IS_MANUAL_OPPORTUNITY = "Y";
     }
 
     const currentCity = plain(currentDeal.UF_CRM_1772560175 || currentDeal.UF_CRM_CITY);
@@ -1341,6 +1441,9 @@ async function upsertDeal(params: {
       TITLE: params.dealTitle,
       COMPANY_ID: params.bitrixCompanyId,
       ASSIGNED_BY_ID: params.assignedById,
+      OPPORTUNITY: params.dealAmount,
+      CURRENCY_ID: params.dealCurrencyId,
+      IS_MANUAL_OPPORTUNITY: "Y",
     };
     if (params.company.city) {
       fields["UF_CRM_1772560175"] = params.company.city;
@@ -1548,6 +1651,7 @@ Deno.serve(async (req: Request) => {
     const paymentFieldCode = plain(body?.paymentFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FIELD") || "");
     const paymentStatusFieldCode = plain(body?.paymentStatusFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_STATUS_FIELD") || "");
     const paymentFileFieldCode = plain(body?.paymentFileFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FILE_FIELD") || "");
+    const dealCurrencyId = plain(body?.dealCurrencyId || DEFAULT_DEAL_CURRENCY_ID) || "KZT";
 
     if (!questionnaireId) {
       return jsonResponse(req, 400, { error: "questionnaireId is required" });
@@ -1597,6 +1701,18 @@ Deno.serve(async (req: Request) => {
       .in("participant_id", participants.map(item => item.id));
     if (coursesResult.error) throw coursesResult.error;
 
+    const existingCertsResult = await supabase
+      .from("certificates")
+      .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
+      .eq("questionnaire_id", questionnaireId);
+    if (existingCertsResult.error) throw existingCertsResult.error;
+
+    const existingCertificates = (existingCertsResult.data || []) as ExistingCertificateRow[];
+    const dealAmount = existingCertificates.reduce((sum, cert) => {
+      const price = typeof cert.price === "number" ? cert.price : Number(cert.price);
+      return Number.isFinite(price) ? sum + price : sum;
+    }, 0);
+
     const coursesByParticipant = new Map<string, string[]>();
     for (const row of (coursesResult.data || []) as Array<{ participant_id: string; course_name: string }>) {
       const bucket = coursesByParticipant.get(row.participant_id) || [];
@@ -1623,6 +1739,8 @@ Deno.serve(async (req: Request) => {
       company,
       bitrixCompanyId,
       dealTitle,
+      dealAmount,
+      dealCurrencyId,
       assignedById: responsibleBitrixUserId,
       paymentFieldCode,
       paymentStatusFieldCode,
@@ -1646,13 +1764,6 @@ Deno.serve(async (req: Request) => {
       await supabase.from("deals").insert(dealPayload);
     }
 
-    const existingCertsResult = await supabase
-      .from("certificates")
-      .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
-      .eq("questionnaire_id", questionnaireId);
-    if (existingCertsResult.error) throw existingCertsResult.error;
-
-    const existingCertificates = (existingCertsResult.data || []) as ExistingCertificateRow[];
     const existingCertificateByKey = new Map<string, ExistingCertificateRow>();
     for (const cert of existingCertificates) {
       const key = taskKey(cert.participant_id, cert.course_name);

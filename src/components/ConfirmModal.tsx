@@ -5,26 +5,44 @@ interface Props {
   message: string;
   confirmLabel?: string;
   danger?: boolean;
+  confirmDisabled?: boolean;
+  cancelDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function ConfirmModal({ title, message, confirmLabel = 'Подтвердить', danger, onConfirm, onCancel }: Props) {
+export default function ConfirmModal({
+  title,
+  message,
+  confirmLabel = 'Подтвердить',
+  danger,
+  confirmDisabled = false,
+  cancelDisabled = false,
+  onConfirm,
+  onCancel,
+}: Props) {
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${danger ? 'bg-red-50' : 'bg-amber-50'}`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+        <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-xl ${danger ? 'bg-red-50' : 'bg-amber-50'}`}>
           <AlertTriangle size={22} className={danger ? 'text-red-500' : 'text-amber-500'} />
         </div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-2">{title}</h2>
-        <p className="text-sm text-gray-500 mb-6 leading-relaxed">{message}</p>
+        <h2 className="mb-2 text-lg font-semibold text-gray-900">{title}</h2>
+        <p className="mb-6 text-sm leading-relaxed text-gray-500">{message}</p>
         <div className="flex gap-3">
-          <button onClick={onCancel} className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all">
-            Отмена
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={cancelDisabled}
+            className="flex-1 rounded-lg border border-gray-300 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Отменить
           </button>
           <button
+            type="button"
             onClick={onConfirm}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-medium text-white transition-all ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+            disabled={confirmDisabled}
+            className={`flex-1 rounded-lg py-2.5 text-sm font-medium text-white transition-all disabled:cursor-not-allowed disabled:opacity-50 ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
           >
             {confirmLabel}
           </button>

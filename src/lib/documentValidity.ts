@@ -47,7 +47,7 @@ function normalizeCourse(value: string | null | undefined): string {
   return normalizeText(value);
 }
 
-function defaultDocumentType(category: string | null | undefined, courseName: string | null | undefined): string {
+export function defaultDocumentType(category: string | null | undefined, courseName: string | null | undefined): string {
   const categoryKey = normalizeCategory(category);
   const courseKey = normalizeCourse(courseName);
   const preset = PRESET_RULES.find(rule => (

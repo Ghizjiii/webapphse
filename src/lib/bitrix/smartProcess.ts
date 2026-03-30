@@ -4,6 +4,8 @@ import { SMART_PROCESS_ENTITY_TYPE_ID } from './config';
 import {
   BITRIX_FIELDS_RAW,
   BITRIX_FIELDS,
+  BITRIX_PROTOCOL_REFERENCE_FIELDS,
+  BITRIX_PROTOCOL_REFERENCE_FIELDS_RAW,
   COMPANY_FIELD_TITLE_ALIASES,
   findFieldByName,
   extractEnumFromField,
@@ -125,6 +127,7 @@ export async function resolveProtocolSmartProcessFieldMap(entityTypeId: number):
   number?: SmartProcessFieldDescriptor;
   date?: SmartProcessFieldDescriptor;
   course?: SmartProcessFieldDescriptor;
+  courseReference?: SmartProcessFieldDescriptor;
   file?: SmartProcessFieldDescriptor;
   isPrinted?: SmartProcessFieldDescriptor;
 }> {
@@ -135,6 +138,10 @@ export async function resolveProtocolSmartProcessFieldMap(entityTypeId: number):
     number: findSmartProcessFieldDescriptor(descriptors, { titles: ['Номер протокола'] }),
     date: findSmartProcessFieldDescriptor(descriptors, { titles: ['Дата протокола'] }),
     course: findSmartProcessFieldDescriptor(descriptors, { titles: ['Курс'] }),
+    courseReference: findSmartProcessFieldDescriptor(descriptors, {
+      rawCode: BITRIX_PROTOCOL_REFERENCE_FIELDS_RAW.COURSE,
+      camelCode: BITRIX_PROTOCOL_REFERENCE_FIELDS.COURSE,
+    }),
     file: findSmartProcessFieldDescriptor(descriptors, { titles: ['Файл протокола'] }),
     isPrinted: findSmartProcessFieldDescriptor(descriptors, { titles: ['Распечатан', 'Печатать', 'Печать'] }),
   };
