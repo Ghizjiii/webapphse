@@ -1,8 +1,14 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+export default function ProtectedRoute({
+  children,
+  requireAdmin = false,
+}: {
+  children: React.ReactNode;
+  requireAdmin?: boolean;
+}) {
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return (
@@ -13,5 +19,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }
 
   if (!user) return <Navigate to="/login" replace />;
+  if (profile && !profile.is_active) return <Navigate to="/login" replace />;
+  if (requireAdmin && profile?.role !== 'admin') return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }

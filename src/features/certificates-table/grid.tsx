@@ -1,6 +1,5 @@
-﻿import type { MouseEvent as ReactMouseEvent } from 'react';
-import { CheckCircle, ChevronDown, ChevronUp, ChevronsUpDown, Plus, Trash2, XCircle } from 'lucide-react';
-import ResizableTableContainer from '../../components/ResizableTableContainer';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { CheckCircle, ChevronDown, ChevronUp, ChevronsUpDown, Trash2, XCircle } from 'lucide-react';
 import type { Certificate, SortConfig } from '../../types';
 import {
   AUX_COLUMN_LABELS,
@@ -11,6 +10,7 @@ import {
 
 interface CertificatesGridProps {
   certificates: Certificate[];
+  rowStartIndex: number;
   orderedVisibleColumnKeys: Array<keyof Certificate | 'start_date' | 'expiry_date' | 'is_printed'>;
   columnWidths: Record<string, number>;
   draggingColumn: string | null;
@@ -69,7 +69,6 @@ interface CertificatesGridProps {
   onSaveEdit: () => void;
   onSaveDirectPatch: (certId: string, patch: Partial<Certificate>) => void;
   onDeleteCertificate: (id: string) => void;
-  onAddCertificate: () => void;
 }
 
 function repairDisplayText(value: string): string {
@@ -92,6 +91,7 @@ function repairDisplayText(value: string): string {
 export function CertificatesGrid(props: CertificatesGridProps) {
   const {
     certificates,
+    rowStartIndex,
     orderedVisibleColumnKeys,
     columnWidths,
     draggingColumn,
@@ -150,7 +150,6 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onSaveEdit,
     onSaveDirectPatch,
     onDeleteCertificate,
-    onAddCertificate,
   } = props;
 
   function SortIcon({ keyName }: { keyName: string }) {
@@ -504,10 +503,10 @@ export function CertificatesGrid(props: CertificatesGridProps) {
 
   return (
     <div>
-      <ResizableTableContainer className="bg-white">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full bg-white text-sm" style={{ minWidth: `${tableMinWidth}px` }}>
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50/80">
+          <thead className="sticky top-0 z-20 bg-white shadow-[0_1px_0_rgba(229,231,235,1)]">
+            <tr className="border-b border-gray-200 bg-gray-50/95">
               <th className="w-14 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">
                 №
               </th>
@@ -553,7 +552,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
               })}
               <th className="w-10 px-4 py-3.5" />
             </tr>
-            <tr className="border-b border-gray-100 bg-white">
+            <tr className="border-b border-gray-100 bg-white/95">
               <th />
               {orderedVisibleColumnKeys.map(columnKey => {
                 const key = String(columnKey);
@@ -574,7 +573,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
             {certificates.map((cert, index) => (
               <tr key={cert.id} className="border-b border-gray-50 transition-colors hover:bg-gray-50/50">
                 <td className="px-4 py-2 text-xs font-medium text-gray-500">
-                  {index + 1}
+                  {rowStartIndex + index + 1}
                 </td>
                 {orderedVisibleColumnKeys.map(columnKey => {
                   const key = String(columnKey);
@@ -687,14 +686,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
             )}
           </tbody>
         </table>
-      </ResizableTableContainer>
-
-      <button
-        onClick={onAddCertificate}
-        className="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-gray-300 px-4 py-2 text-sm text-gray-500 transition-all hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-600"
-      >
-        <Plus size={15} /> Добавить запись
-      </button>
+      </div>
     </div>
   );
 }

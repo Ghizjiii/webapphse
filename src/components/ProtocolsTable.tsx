@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import {
   BITRIX_PROTOCOL_FIELDS,
@@ -116,6 +117,7 @@ export default function ProtocolsTable({
   certificates,
   onRefresh,
 }: Props) {
+  const { profile } = useAuth();
   const { showToast } = useToast();
 
   const [localProtocols, setLocalProtocols] = useState<Protocol[]>(protocols);
@@ -395,6 +397,10 @@ export default function ProtocolsTable({
       showToast('error', 'Нет связи со сделкой и компанией Bitrix24');
       return;
     }
+    if (!String(profile?.bitrix_user_id || '').trim()) {
+      showToast('error', 'Для текущего пользователя не назначен сотрудник Bitrix');
+      return;
+    }
     if (visibleRows.length === 0) {
       showToast('warning', 'Нет строк протоколов для синхронизации');
       return;
@@ -463,6 +469,7 @@ export default function ProtocolsTable({
               await updateSmartProcessItem({
                 entityTypeId: PROTOCOL_SMART_PROCESS_ENTITY_TYPE_ID,
                 itemId: bitrixItemId,
+                assignedById: String(profile?.bitrix_user_id || '').trim(),
                 fields: payload,
               });
               return;
@@ -472,6 +479,7 @@ export default function ProtocolsTable({
               entityTypeId: PROTOCOL_SMART_PROCESS_ENTITY_TYPE_ID,
               dealId: bitrixDealId,
               companyId: bitrixCompanyId,
+              assignedById: String(profile?.bitrix_user_id || '').trim(),
               fields: payload,
             });
           };

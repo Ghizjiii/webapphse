@@ -67,13 +67,13 @@ export function CertificatesToolbar(props: CertificatesToolbarProps) {
 
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-xs text-gray-600">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
           <span>Фильтр по курсам:</span>
           <select
             value={courseFilter}
             onChange={event => onCourseFilterChange(event.target.value)}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs"
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px]"
           >
             <option value="all">Все курсы</option>
             {courseOptions.map(course => (
@@ -84,12 +84,12 @@ export function CertificatesToolbar(props: CertificatesToolbarProps) {
           </select>
         </label>
 
-        <label className="flex items-center gap-2 text-xs text-gray-600">
+        <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
           <span>Категория:</span>
           <select
             value={categoryFilter}
             onChange={event => onCategoryFilterChange(event.target.value)}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs"
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px]"
           >
             <option value="all">Все категории</option>
             {categoryOptions.map(category => (
@@ -100,12 +100,12 @@ export function CertificatesToolbar(props: CertificatesToolbarProps) {
           </select>
         </label>
 
-        <label className="flex items-center gap-2 text-xs text-gray-600">
+        <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
           <span>Напечатан:</span>
           <select
             value={printedFilter}
             onChange={event => onPrintedFilterChange(event.target.value)}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs"
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px]"
           >
             <option value="all">Все</option>
             {printedFilterOptions.map(option => (
@@ -116,14 +116,14 @@ export function CertificatesToolbar(props: CertificatesToolbarProps) {
           </select>
         </label>
 
-        <span className="text-xs text-gray-500">
+        <span className="text-[11px] text-gray-500">
           Массовое заполнение применяется к: <b>{targetRowsInfo}</b> ({visibleRowsCount} строк)
         </span>
 
         <button
           onClick={onGenerateDocuments}
           disabled={generatingDocs || bulkSaving}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
         >
           <FileOutput size={13} />
           {generatingDocs ? 'Генерация...' : 'Сгенерировать документы'}
@@ -132,7 +132,7 @@ export function CertificatesToolbar(props: CertificatesToolbarProps) {
         <button
           onClick={onSyncBitrix}
           disabled={syncingBitrix || bulkSaving}
-          className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+          className="rounded-lg border border-blue-300 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
         >
           {syncingBitrix ? 'Синхронизация...' : hasBitrixRows ? 'Обновить данные в Bitrix' : 'Отправить в Bitrix'}
         </button>
@@ -140,7 +140,7 @@ export function CertificatesToolbar(props: CertificatesToolbarProps) {
         <div className="relative" ref={columnsMenuRef}>
           <button
             onClick={onColumnsMenuToggle}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-2.5 py-1.5 text-[11px] font-medium text-gray-700 hover:bg-gray-50"
             title="Настройка столбцов"
           >
             <Settings2 size={13} />

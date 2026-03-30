@@ -1,8 +1,7 @@
-﻿import { useEffect, useState, useCallback } from 'react';
+﻿import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useRef } from 'react';
 import { uploadPaymentOrder } from '../lib/cloudinary';
-import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock } from 'lucide-react';
+import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock, Pencil, Check, X, Link2 } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import ParticipantsTable from '../components/ParticipantsTable';
 import CertificatesTable from '../components/CertificatesTable';
@@ -12,8 +11,10 @@ import BitrixSyncModal from '../components/BitrixSyncModal';
 import { supabase } from '../lib/supabase';
 import { buildProtocolDraftRows, reconcileProtocolsFromCertificates } from '../lib/protocolGeneration';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
 import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol } from '../types';
+import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 
 type Tab = 'participants' | 'certificates' | 'protocols' | 'printed_documents';
 
@@ -48,12 +49,89 @@ function normalizeAmountInput(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function TopSectionCard({
+  icon,
+  title,
+  description,
+  actions,
+  children,
+  className = '',
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm ${className}`.trim()}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600">
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold leading-5 text-gray-900">{title}</h2>
+            <p className="mt-0.5 text-xs leading-5 text-gray-500">{description}</p>
+          </div>
+        </div>
+        {actions ? <div className="flex flex-wrap items-center gap-2 justify-end">{actions}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SummaryBadge({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white/90 px-3 py-2.5">
+      <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="mt-1 text-base font-semibold text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+function CompactField({
+  label,
+  children,
+  className = '',
+  valueClassName = '',
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className={`rounded-xl border border-gray-200 bg-slate-50/80 px-3 py-2.5 ${className}`.trim()}>
+      <div className="text-[11px] leading-4 text-gray-500">{label}</div>
+      <div className={`mt-1.5 text-sm font-medium leading-5 text-gray-900 ${valueClassName}`.trim()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function QuestionnairePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { user, profile } = useAuth();
+  const currentUserId = user?.id || '';
+  const currentUserEmail = user?.email || '';
+  const currentProfileEmail = profile?.email || '';
+  const currentProfileFullName = profile?.full_name || '';
+  const currentProfileRole = profile?.role || null;
 
   const [questionnaire, setQuestionnaire] = useState<QuestionnaireLink | null>(null);
+  const [creatorProfile, setCreatorProfile] = useState<ProfileDirectoryEntry | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [deal, setDeal] = useState<Deal | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -71,6 +149,9 @@ export default function QuestionnairePage() {
   const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
   const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadData = useCallback(async () => {
@@ -83,8 +164,25 @@ export default function QuestionnairePage() {
     ]);
 
     if (qRes.error || !qRes.data) {
+      setCreatorProfile(null);
       navigate('/dashboard');
       return;
+    }
+
+    let nextCreatorProfile: ProfileDirectoryEntry | null = null;
+    const creatorId = String(qRes.data.created_by || '').trim();
+    if (creatorId) {
+      const creatorProfiles = await loadProfileDirectory([creatorId]);
+      nextCreatorProfile = creatorProfiles[0] || null;
+    }
+
+    if (!nextCreatorProfile && creatorId && creatorId === currentUserId && currentProfileRole) {
+      nextCreatorProfile = {
+        user_id: currentUserId,
+        email: currentProfileEmail || currentUserEmail,
+        full_name: currentProfileFullName,
+        role: currentProfileRole,
+      };
     }
 
     const companyRows = companiesRes.data || [];
@@ -111,6 +209,7 @@ export default function QuestionnairePage() {
       : resolvedDeal;
 
     setQuestionnaire(qRes.data);
+    setCreatorProfile(nextCreatorProfile);
     setCompany(resolvedCompany);
     setDeal(resolvedDealWithUrl);
 
@@ -175,7 +274,7 @@ export default function QuestionnairePage() {
     setGeneratedDocuments(docsData || []);
 
     setLoading(false);
-  }, [id, navigate, showToast]);
+  }, [currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
 
   useEffect(() => {
     loadData();
@@ -187,6 +286,12 @@ export default function QuestionnairePage() {
       }
     });
   }, [loadData]);
+
+  useEffect(() => {
+    if (!titleEditing) {
+      setTitleDraft(questionnaire?.title || '');
+    }
+  }, [questionnaire?.title, titleEditing]);
 
   async function saveCompany() {
     if (!company) return;
@@ -285,11 +390,49 @@ export default function QuestionnairePage() {
     loadData();
   }
 
+  async function saveQuestionnaireTitle() {
+    if (!questionnaire) return;
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle) {
+      showToast('warning', 'Введите название анкеты');
+      return;
+    }
+
+    setSavingTitle(true);
+    const updatedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from('questionnaires')
+      .update({
+        title: nextTitle,
+        updated_at: updatedAt,
+      })
+      .eq('id', questionnaire.id);
+
+    if (error) {
+      showToast('error', 'Не удалось сохранить название анкеты');
+      setSavingTitle(false);
+      return;
+    }
+
+    setQuestionnaire(prev => (prev ? { ...prev, title: nextTitle, updated_at: updatedAt } : prev));
+    setTitleEditing(false);
+    setSavingTitle(false);
+    showToast('success', 'Название анкеты сохранено');
+  }
+
   async function saveExpiry() {
     if (!questionnaire) return;
     const expires_at = expiryDraft ? new Date(expiryDraft + 'T23:59:59').toISOString() : null;
     await supabase.from('questionnaires').update({ expires_at }).eq('id', questionnaire.id);
     showToast('success', 'Срок действия обновлен');
+    setLinkEditing(false);
+    loadData();
+  }
+
+  async function clearExpiry() {
+    if (!questionnaire) return;
+    await supabase.from('questionnaires').update({ expires_at: null }).eq('id', questionnaire.id);
+    showToast('success', 'Срок действия снят');
     setLinkEditing(false);
     loadData();
   }
@@ -303,6 +446,71 @@ export default function QuestionnairePage() {
     showToast('success', 'Ссылка скопирована');
   }
 
+  function startCompanyEditing() {
+    if (!company) return;
+    setCompanyDraft({ ...company });
+    setCompanyEditing(true);
+  }
+
+  function cancelCompanyEditing() {
+    setCompanyEditing(false);
+    setCompanyDraft({});
+  }
+
+  function renderCompanyActions(editLabel = 'Редактировать') {
+    if (company) {
+      if (companyEditing) {
+        return (
+          <>
+            <button
+              type="button"
+              onClick={() => void saveCompany()}
+              disabled={savingCompany}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 disabled:opacity-60"
+            >
+              <Check size={14} />
+              {savingCompany ? 'Сохраняем...' : 'Сохранить'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelCompanyEditing}
+              disabled={savingCompany}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50 disabled:opacity-60"
+            >
+              <X size={14} />
+              Отмена
+            </button>
+          </>
+        );
+      }
+
+      return (
+        <button
+          type="button"
+          onClick={startCompanyEditing}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50"
+        >
+          <Pencil size={14} />
+          {editLabel}
+        </button>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={createCompanyRecord}
+        className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50"
+      >
+        <Building2 size={14} />
+        Добавить компанию
+      </button>
+    );
+  }
+
+  const secondaryButtonClass =
+    'inline-flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50';
+
   if (loading) {
     return (
       <DashboardLayout breadcrumbs={[{ label: 'Анкеты', to: '/dashboard' }, { label: '...' }]}>
@@ -315,6 +523,24 @@ export default function QuestionnairePage() {
 
   if (!questionnaire) return null;
   const isExpired = questionnaire.expires_at && new Date(questionnaire.expires_at) < new Date();
+  const uniqueCoursesCount = new Set(
+    participants.flatMap(participant => (participant.courses || []).map(course => String(course.course_name || '').trim()).filter(Boolean))
+  ).size;
+  const totalCourseRequests = participants.reduce((sum, participant) => sum + (participant.courses?.length || 0), 0);
+  const canSyncToBitrix = Boolean(company && participants.length > 0);
+  const responsibleRole = creatorProfile?.role || (questionnaire.created_by === currentUserId ? currentProfileRole : null);
+  const responsibleName = getProfileDisplayName(
+    creatorProfile,
+    questionnaire.created_by === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
+  );
+  const paymentSource = companyEditing ? companyDraft : company;
+  const paymentOrderUrl = String(paymentSource?.payment_order_url || '').trim();
+  const paymentOrderName = String(paymentSource?.payment_order_name || '').trim();
+  const paymentOrderNumber = String(paymentSource?.payment_order_number || '').trim();
+  const paymentOrderDate = String(paymentSource?.payment_order_date || '').trim();
+  const paymentOrderAmount = paymentSource?.payment_order_amount ?? null;
+  const paymentUploadedAt = String(paymentSource?.payment_order_uploaded_at || '').trim();
+  const paymentIsPaid = Boolean(paymentSource?.payment_is_paid);
 
   return (
     <DashboardLayout
@@ -323,358 +549,449 @@ export default function QuestionnairePage() {
         { label: questionnaire.title || 'Без названия' },
       ]}
     >
-      <div className="space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{questionnaire.title || 'Без названия'}</h1>
-            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                questionnaire.is_active && !isExpired
-                  ? 'bg-green-50 text-green-700 border-green-200'
-                  : 'bg-gray-50 text-gray-500 border-gray-200'
-              }`}>
-                {questionnaire.is_active && !isExpired ? 'Активна' : 'Неактивна'}
-              </span>
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                questionnaire.payment_order_optional
-                  ? 'bg-slate-50 text-slate-700 border-slate-200'
-                  : 'bg-blue-50 text-blue-700 border-blue-200'
-              }`}>
-                {questionnaire.payment_order_optional ? 'Платежка не обязательна' : 'Платежка обязательна'}
-              </span>
-              {questionnaire.expires_at && (
-                <span className={`text-xs flex items-center gap-1 ${isExpired ? 'text-red-500' : 'text-gray-500'}`}>
-                  <Clock size={12} /> Срок: {formatDate(questionnaire.expires_at)}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
-            <button
-              onClick={copyFormUrl}
-              className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-all"
-            >
-              <Copy size={14} /> Скопировать ссылку
-            </button>
-            <button
-              onClick={() => window.open(getFormUrl(), '_blank')}
-              className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-all"
-            >
-              <ExternalLink size={14} /> Открыть форму
-            </button>
-            <button
-              onClick={toggleActive}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                questionnaire.is_active
-                  ? 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
-                  : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
-              }`}
-            >
-              {questionnaire.is_active ? <><PowerOff size={14} /> Деактивировать</> : <><Power size={14} /> Активировать</>}
-            </button>
-            {deal?.bitrix_deal_id && deal?.deal_url && (
-              <a
-                href={deal.deal_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-sm font-medium hover:bg-blue-100 transition-all"
-              >
-                <ExternalLink size={14} /> Сделка #{deal.bitrix_deal_id}
-              </a>
-            )}
-            {company && participants.length > 0 && (
-              <button
-                onClick={() => setShowSyncModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all shadow-sm"
-              >
-                {deal?.bitrix_deal_id ? <><RefreshCw size={14} /> Обновить в Битрикс24</> : <><RefreshCw size={14} /> Отправить в Битрикс24</>}
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900 text-sm uppercase tracking-wide flex items-center gap-2">
-              <Clock size={15} className="text-gray-400" /> Управление ссылкой
-            </h2>
-            <button
-              onClick={() => {
-                setLinkEditing(p => !p);
-                setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
-              }}
-              className="text-xs text-blue-600 hover:underline"
-            >
-              {linkEditing ? 'Отмена' : 'Изменить срок'}
-            </button>
-          </div>
-          {linkEditing ? (
-            <div className="flex items-center gap-3">
-              <input
-                type="date"
-                value={expiryDraft}
-                onChange={e => setExpiryDraft(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <button onClick={saveExpiry} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-all">
-                Сохранить
-              </button>
-              <button
-                onClick={() => {
-                  if (questionnaire) {
-                    supabase.from('questionnaires').update({ expires_at: null }).eq('id', questionnaire.id).then(() => {
-                      setLinkEditing(false);
-                      loadData();
-                    });
-                  }
-                }}
-                className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-all"
-              >
-                Снять срок
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3 text-sm">
-              <input
-                readOnly
-                value={getFormUrl()}
-                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-gray-600 bg-gray-50 text-xs font-mono"
-              />
-              <button onClick={copyFormUrl} className="p-2 border border-gray-200 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-all">
-                <Copy size={15} />
-              </button>
-            </div>
-          )}
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <div>
-              <div className="text-xs text-gray-500 mb-1">Создана</div>
-              <div className="text-sm font-medium text-gray-900">{formatDateTime(questionnaire.created_at)}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 mb-1">Заполнена клиентом</div>
-              <div className="text-sm font-medium text-gray-900">
-                {questionnaire.submitted_at ? formatDateTime(questionnaire.submitted_at) : 'Еще не заполнена'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 mb-1">Срок действия</div>
-              <div className="text-sm font-medium text-gray-900">
-                {questionnaire.expires_at ? formatDateTime(questionnaire.expires_at) : 'Бессрочно'}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900 text-sm uppercase tracking-wide flex items-center gap-2">
-              <FileText size={15} className="text-gray-400" /> Сделка в Битрикс24
-            </h2>
-            {deal?.deal_url && (
-              <a
-                href={deal.deal_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg text-sm font-medium transition-all"
-              >
-                <ExternalLink size={13} /> Открыть в Битрикс24
-              </a>
-            )}
-          </div>
-          {deal?.bitrix_deal_id ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <div className="text-xs text-gray-500 mb-0.5">ID сделки</div>
-                <div className="font-semibold text-gray-900">#{deal.bitrix_deal_id}</div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500 mb-0.5">ID компании</div>
-                <div className="font-medium text-gray-900">{deal.bitrix_company_id || '?'}</div>
-              </div>
-              <div className="col-span-2">
-                <div className="text-xs text-gray-500 mb-0.5">Название сделки</div>
-                <div className="font-medium text-gray-900">{deal.deal_title || '?'}</div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-sm text-gray-400">
-              Сделка еще не создана в Битрикс24. Нажмите «Отправить в Битрикс24», чтобы создать.
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900 text-sm uppercase tracking-wide flex items-center gap-2">
-              <Building2 size={15} className="text-gray-400" /> Информация о компании
-            </h2>
-            <div className="flex items-center gap-2">
-              {deal?.deal_url && (
-                <a
-                  href={deal.deal_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Открыть сделку в Битрикс24"
-                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all border border-gray-200"
-                >
-                  <ExternalLink size={15} />
-                </a>
-              )}
-              {company ? (
-                <button
-                  onClick={() => {
-                    if (companyEditing) saveCompany();
-                    else {
-                      setCompanyDraft({ ...company });
-                      setCompanyEditing(true);
-                    }
-                  }}
-                  disabled={savingCompany}
-                  className={`text-sm font-medium transition-all px-3 py-1.5 rounded-lg ${
-                    companyEditing ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {savingCompany ? 'Сохраняем...' : companyEditing ? 'Сохранить' : 'Редактировать'}
-                </button>
+      <div className="min-w-0 space-y-3">
+        <div className="min-w-0 rounded-2xl border border-gray-200 bg-gradient-to-br from-white via-white to-slate-50 p-4 shadow-sm">
+          <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.95fr)]">
+            <div className="min-w-0 space-y-3">
+              {titleEditing ? (
+                <div className="flex flex-wrap items-start gap-2">
+                  <input
+                    autoFocus
+                    value={titleDraft}
+                    onChange={event => setTitleDraft(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') void saveQuestionnaireTitle();
+                      if (event.key === 'Escape') {
+                        setTitleEditing(false);
+                        setTitleDraft(questionnaire.title || '');
+                      }
+                    }}
+                    placeholder="Название анкеты"
+                    className="min-w-[280px] flex-1 rounded-xl border border-gray-300 px-4 py-2.5 text-2xl font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveQuestionnaireTitle()}
+                    disabled={savingTitle}
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    <Check size={15} />
+                    {savingTitle ? 'Сохраняем...' : 'Сохранить'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTitleEditing(false);
+                      setTitleDraft(questionnaire.title || '');
+                    }}
+                    disabled={savingTitle}
+                    className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    <X size={15} />
+                    Отмена
+                  </button>
+                </div>
               ) : (
-                <button onClick={createCompanyRecord} className="text-sm font-medium text-blue-600 hover:underline">
-                  Добавить компанию
-                </button>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <h1 className="max-w-3xl break-words text-[30px] font-bold tracking-tight text-gray-900">
+                      {questionnaire.title || 'Без названия'}
+                    </h1>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTitleDraft(questionnaire.title || '');
+                        setTitleEditing(true);
+                      }}
+                      className={`${secondaryButtonClass} shrink-0 self-start`}
+                    >
+                      <Pencil size={14} />
+                      Изменить название
+                    </button>
+                  </div>
+                  <p className="text-xs leading-5 text-gray-500">
+                    Короткая сводка по анкете: статус, ссылка, сделка Bitrix24 и данные клиента.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  questionnaire.is_active && !isExpired
+                    ? 'border-green-200 bg-green-50 text-green-700'
+                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                }`}>
+                  {questionnaire.is_active && !isExpired ? 'Активна' : 'Неактивна'}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  questionnaire.payment_order_optional
+                    ? 'border-slate-200 bg-slate-50 text-slate-700'
+                    : 'border-blue-200 bg-blue-50 text-blue-700'
+                }`}>
+                  {questionnaire.payment_order_optional ? 'Платежка не обязательна' : 'Платежка обязательна'}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  questionnaire.submitted_at
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-amber-200 bg-amber-50 text-amber-700'
+                }`}>
+                  {questionnaire.submitted_at ? 'Заполнена клиентом' : 'Ожидает заполнения'}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  questionnaire.expires_at
+                    ? isExpired
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-700'
+                }`}>
+                  <Clock size={12} />
+                  {questionnaire.expires_at ? `Срок: ${formatDate(questionnaire.expires_at)}` : 'Без срока'}
+                </span>
+              </div>
+
+              <div className="grid max-w-3xl gap-2 sm:grid-cols-3">
+                <SummaryBadge label="Сотрудники" value={participants.length} />
+                <SummaryBadge label="Курсы" value={uniqueCoursesCount} />
+                <SummaryBadge label="Заявки" value={totalCourseRequests} />
+              </div>
+
+              {!canSyncToBitrix && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Чтобы отправить анкету в Bitrix24, заполните компанию и добавьте хотя бы одного сотрудника.
+                </div>
               )}
             </div>
-          </div>
 
-          {company ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {[
-                { key: 'name', label: 'Название компании' },
-                { key: 'phone', label: 'Телефон' },
-                { key: 'email', label: 'Email' },
-                { key: 'bin_iin', label: 'БИН/ИИН компании' },
-                { key: 'city', label: 'Город' },
-                { key: 'bitrix_company_id', label: 'ID компании в Битрикс' },
-              ].map(({ key, label }) => (
-                <div key={key}>
-                  <div className="text-xs text-gray-500 mb-1">{label}</div>
-                  {companyEditing ? (
-                    <input
-                      value={getRecordValue(companyDraft, key)}
-                      onChange={e => setCompanyDraft(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    />
-                  ) : (
-                    <div className="text-sm font-medium text-gray-900">{getRecordValue(company, key) || '?'}</div>
+            <div className="flex min-w-0 flex-col gap-3 xl:items-end">
+              <div className="flex w-full min-w-0 flex-col gap-3 xl:max-w-[370px]">
+                <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
+                  <button
+                    onClick={toggleActive}
+                    className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
+                      questionnaire.is_active
+                        ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                        : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                    }`}
+                  >
+                    {questionnaire.is_active ? <><PowerOff size={14} /> Деактивировать</> : <><Power size={14} /> Активировать</>}
+                  </button>
+                  {canSyncToBitrix && (
+                    <button
+                      onClick={() => setShowSyncModal(true)}
+                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700"
+                    >
+                      {deal?.bitrix_deal_id ? <><RefreshCw size={14} /> Обновить в Битрикс24</> : <><RefreshCw size={14} /> Отправить в Битрикс24</>}
+                    </button>
                   )}
                 </div>
-              ))}
-              {!questionnaire.payment_order_optional && (
-                <>
-                  <div>
-                    <div className="text-xs text-gray-500 mb-1">Платежное поручение</div>
+
+                <div className="rounded-2xl border border-blue-100 bg-gradient-to-l from-blue-100/70 via-blue-50 to-white px-4 py-3 text-center shadow-sm">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-600">Ответственный</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-900">{responsibleName}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    {responsibleRole ? APP_ROLE_LABELS[responsibleRole] : 'Не указан'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid min-w-0 gap-3 xl:grid-cols-2">
+          <TopSectionCard
+            icon={<Link2 size={18} />}
+            title="Управление ссылкой"
+            description="Публичная форма и статус заполнения"
+            className="h-full"
+            actions={linkEditing ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void saveExpiry()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700"
+                >
+                  <Check size={14} />
+                  Сохранить
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLinkEditing(false);
+                    setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
+                  }}
+                  className={secondaryButtonClass}
+                >
+                  <X size={14} />
+                  Отмена
+                </button>
+                <button type="button" onClick={() => void clearExpiry()} className={secondaryButtonClass}>
+                  Снять срок
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={copyFormUrl} className={secondaryButtonClass}>
+                  <Copy size={14} />
+                  Скопировать
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.open(getFormUrl(), '_blank')}
+                  className={secondaryButtonClass}
+                >
+                  <ExternalLink size={14} />
+                  Открыть форму
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLinkEditing(true);
+                    setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
+                  }}
+                  className={secondaryButtonClass}
+                >
+                  <Pencil size={14} />
+                  Изменить срок
+                </button>
+              </>
+            )}
+          >
+            {linkEditing ? (
+              <CompactField label="Дата окончания действия" className="min-h-[86px]">
+                <div className="space-y-2">
+                  <input
+                    type="date"
+                    value={expiryDraft}
+                    onChange={e => setExpiryDraft(e.target.value)}
+                    className="w-full max-w-sm rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  <div className="text-xs text-gray-500">Оставьте поле пустым, если ссылка должна быть бессрочной.</div>
+                </div>
+              </CompactField>
+            ) : (
+              <CompactField label="Публичная ссылка" valueClassName="font-mono text-xs text-gray-700">
+                <div className="truncate" title={getFormUrl()}>
+                  {getFormUrl()}
+                </div>
+              </CompactField>
+            )}
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <CompactField label="Создана">{formatDateTime(questionnaire.created_at)}</CompactField>
+              <CompactField label="Заполнена клиентом">
+                {questionnaire.submitted_at ? formatDateTime(questionnaire.submitted_at) : 'Еще не заполнена'}
+              </CompactField>
+              <CompactField label="Срок действия">
+                {questionnaire.expires_at ? formatDateTime(questionnaire.expires_at) : 'Бессрочно'}
+              </CompactField>
+            </div>
+          </TopSectionCard>
+
+          <TopSectionCard
+            icon={<FileText size={18} />}
+            title="Сделка в Битрикс24"
+            description="Связанная сделка и статус синхронизации"
+            className="h-full"
+            actions={deal?.deal_url ? (
+              <a
+                href={deal.deal_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-all hover:bg-blue-100"
+              >
+                <ExternalLink size={14} />
+                Открыть в Битрикс24
+              </a>
+            ) : null}
+          >
+            {deal?.bitrix_deal_id ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <CompactField label="ID сделки">#{deal.bitrix_deal_id}</CompactField>
+                <CompactField label="ID компании">{deal.bitrix_company_id || '—'}</CompactField>
+                <CompactField label="Статус синхронизации">{deal.sync_status || '—'}</CompactField>
+                <CompactField label="Обновлена">{formatDateTime(deal.updated_at)}</CompactField>
+                <CompactField label="Название сделки" className="sm:col-span-2" valueClassName="break-words">
+                  {deal.deal_title || '—'}
+                </CompactField>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">
+                Сделка еще не создана в Bitrix24. Используйте кнопку отправки в верхней панели.
+              </div>
+            )}
+          </TopSectionCard>
+
+          <TopSectionCard
+            icon={<Building2 size={18} />}
+            title="Информация о компании"
+            description="Основные реквизиты клиента"
+            className="h-full"
+            actions={renderCompanyActions('Редактировать')}
+          >
+            {company ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[
+                  { key: 'name', label: 'Название компании' },
+                  { key: 'bin_iin', label: 'БИН/ИИН компании' },
+                  { key: 'phone', label: 'Телефон' },
+                  { key: 'city', label: 'Город' },
+                  { key: 'email', label: 'Email' },
+                  { key: 'bitrix_company_id', label: 'ID компании в Битрикс' },
+                ].map(({ key, label }) => (
+                  <CompactField key={key} label={label} valueClassName="break-words">
                     {companyEditing ? (
-                      <div className="space-y-2">
-                        {String(companyDraft.payment_order_url || '').trim() ? (
-                          <>
-                            <a
-                              href={String(companyDraft.payment_order_url || '')}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-sm text-blue-600 hover:underline"
-                            >
-                              {String(companyDraft.payment_order_name || 'Открыть файл')}
-                            </a>
-                            <div className="text-xs text-gray-600">
-                              № {String(companyDraft.payment_order_number || '—')} · {String(companyDraft.payment_order_date || '—')} · {companyDraft.payment_order_amount ?? '—'}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-sm text-gray-500">Файл не загружен</div>
-                        )}
-                        <input
-                          ref={paymentOrderInputRef}
-                          type="file"
-                          accept=".pdf,image/*"
-                          className="hidden"
-                          onChange={event => {
-                            const file = event.target.files?.[0];
-                            if (file) void handleAdminPaymentOrderSelect(file);
-                          }}
-                        />
-                        <div className="flex flex-wrap gap-2">
+                      <input
+                        value={getRecordValue(companyDraft, key)}
+                        onChange={e => setCompanyDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    ) : (
+                      getRecordValue(company, key) || '—'
+                    )}
+                  </CompactField>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">
+                Клиент еще не заполнил форму, поэтому данные компании пока отсутствуют.
+              </div>
+            )}
+          </TopSectionCard>
+
+          <TopSectionCard
+            icon={<FileText size={18} />}
+            title="Оплата и документы"
+            description={questionnaire.payment_order_optional ? 'Платежка для этой анкеты не обязательна' : 'Платежное поручение и статус оплаты'}
+            className="h-full"
+            actions={company ? renderCompanyActions('Редактировать оплату') : undefined}
+          >
+            {!company ? (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">
+                Блок оплаты появится после заполнения данных компании.
+              </div>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <CompactField label="Платежное поручение" className="sm:col-span-2" valueClassName="text-sm font-medium">
+                  {companyEditing ? (
+                    <div className="space-y-2">
+                      {paymentOrderUrl ? (
+                        <>
+                          <a
+                            href={paymentOrderUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:underline"
+                          >
+                            {paymentOrderName || 'Открыть файл'}
+                          </a>
+                          <div className="text-xs text-gray-600">
+                            {paymentUploadedAt ? `Загружено: ${formatDateTime(paymentUploadedAt)}` : 'Файл уже прикреплен'}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-sm text-gray-500">
+                          {questionnaire.payment_order_optional ? 'Файл можно не прикладывать.' : 'Файл еще не загружен.'}
+                        </div>
+                      )}
+
+                      <input
+                        ref={paymentOrderInputRef}
+                        type="file"
+                        accept=".pdf,image/*"
+                        className="hidden"
+                        onChange={event => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleAdminPaymentOrderSelect(file);
+                        }}
+                      />
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => paymentOrderInputRef.current?.click()}
+                          disabled={uploadingPaymentOrder}
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 transition-all hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          {paymentOrderUrl ? 'Заменить файл' : 'Загрузить файл'}
+                        </button>
+                        {paymentOrderUrl && (
                           <button
                             type="button"
-                            onClick={() => paymentOrderInputRef.current?.click()}
+                            onClick={clearPaymentOrderDraft}
                             disabled={uploadingPaymentOrder}
-                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 transition-all hover:bg-gray-50 disabled:opacity-50"
+                            className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm text-red-600 transition-all hover:bg-red-50 disabled:opacity-50"
                           >
-                            {String(companyDraft.payment_order_url || '').trim() ? 'Заменить файл' : 'Загрузить файл'}
+                            Удалить файл
                           </button>
-                          {String(companyDraft.payment_order_url || '').trim() && (
-                            <button
-                              type="button"
-                              onClick={clearPaymentOrderDraft}
-                              disabled={uploadingPaymentOrder}
-                              className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 transition-all hover:bg-red-50 disabled:opacity-50"
-                            >
-                              Удалить файл
-                            </button>
-                          )}
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-3">
-                          <input
-                            value={String(companyDraft.payment_order_number || '')}
-                            onChange={event => setCompanyDraft(prev => ({ ...prev, payment_order_number: event.target.value }))}
-                            placeholder="Номер поручения"
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                          <input
-                            type="date"
-                            value={String(companyDraft.payment_order_date || '')}
-                            onChange={event => setCompanyDraft(prev => ({ ...prev, payment_order_date: event.target.value || null }))}
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                          <input
-                            value={companyDraft.payment_order_amount == null ? '' : String(companyDraft.payment_order_amount)}
-                            onChange={event => setCompanyDraft(prev => ({
-                              ...prev,
-                              payment_order_amount: normalizeAmountInput(event.target.value),
-                            }))}
-                            placeholder="Сумма оплаты"
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                        </div>
-                        {uploadingPaymentOrder && <div className="text-xs text-blue-600">Загружаем платежное поручение...</div>}
+                        )}
                       </div>
-                    ) : String(company.payment_order_url || '').trim() ? (
-                      <div className="space-y-1">
-                        <a
-                          href={String(company.payment_order_url || '')}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-blue-600 hover:underline"
-                        >
-                          {String(company.payment_order_name || 'Открыть файл')}
-                        </a>
-                        <div className="text-xs text-gray-600">
-                          № {String(company.payment_order_number || '—')} · {String(company.payment_order_date || '—')} · {company.payment_order_amount ?? '—'}
-                        </div>
+
+                      {uploadingPaymentOrder && <div className="text-xs text-blue-600">Загружаем платежное поручение...</div>}
+                    </div>
+                  ) : paymentOrderUrl ? (
+                    <div className="space-y-1">
+                      <a
+                        href={paymentOrderUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 hover:underline"
+                      >
+                        {paymentOrderName || 'Открыть файл'}
+                      </a>
+                      <div className="text-xs text-gray-600">
+                        {paymentUploadedAt ? `Загружено: ${formatDateTime(paymentUploadedAt)}` : 'Файл прикреплен'}
                       </div>
-                    ) : (
-                      <div className="text-sm font-medium text-gray-900">?</div>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500 mb-1">Статус оплаты</div>
+                    </div>
+                  ) : (
+                    <span className="text-sm text-gray-500">
+                      {questionnaire.payment_order_optional ? 'Платежное поручение не требуется.' : 'Файл не загружен.'}
+                    </span>
+                  )}
+                </CompactField>
+
+                <CompactField label="Номер, дата и сумма">
+                  {companyEditing ? (
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <input
+                        value={paymentOrderNumber}
+                        onChange={event => setCompanyDraft(prev => ({ ...prev, payment_order_number: event.target.value }))}
+                        placeholder="Номер"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                      <input
+                        type="date"
+                        value={paymentOrderDate}
+                        onChange={event => setCompanyDraft(prev => ({ ...prev, payment_order_date: event.target.value || null }))}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                      <input
+                        value={paymentOrderAmount == null ? '' : String(paymentOrderAmount)}
+                        onChange={event => setCompanyDraft(prev => ({
+                          ...prev,
+                          payment_order_amount: normalizeAmountInput(event.target.value),
+                        }))}
+                        placeholder="Сумма"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                  ) : (
+                    <span>
+                      № {paymentOrderNumber || '—'} · {paymentOrderDate || '—'} · {paymentOrderAmount ?? '—'}
+                    </span>
+                  )}
+                </CompactField>
+
+                <CompactField label="Статус оплаты">
+                  <div className="space-y-2">
                     <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                      Boolean(companyEditing ? companyDraft.payment_is_paid : company.payment_is_paid)
+                      paymentIsPaid
                         ? 'border-green-200 bg-green-50 text-green-700'
                         : 'border-gray-200 bg-gray-50 text-gray-700'
                     }`}>
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        checked={Boolean(companyEditing ? companyDraft.payment_is_paid : company.payment_is_paid)}
+                        checked={paymentIsPaid}
                         onChange={(e) => {
                           if (companyEditing) {
                             setCompanyDraft(prev => ({ ...prev, payment_is_paid: e.target.checked }));
@@ -684,45 +1001,28 @@ export default function QuestionnairePage() {
                         }}
                         disabled={
                           companyEditing
-                            ? uploadingPaymentOrder || !String(companyDraft.payment_order_url || '').trim()
-                            : savingPaymentStatus || !String(company.payment_order_url || '').trim()
+                            ? uploadingPaymentOrder || !paymentOrderUrl
+                            : savingPaymentStatus || !paymentOrderUrl
                         }
                       />
-                      <span>{Boolean(companyEditing ? companyDraft.payment_is_paid : company.payment_is_paid) ? 'Оплачено' : 'Не оплачено'}</span>
+                      <span>{paymentIsPaid ? 'Оплачено' : 'Не оплачено'}</span>
                     </label>
-                    {!String(companyEditing ? companyDraft.payment_order_url || '' : company.payment_order_url || '').trim() && (
-                      <div className="text-xs text-gray-500 mt-1">Сначала дождитесь загрузки платежного поручения.</div>
+                    {!paymentOrderUrl && (
+                      <div className="text-xs text-gray-500">
+                        {questionnaire.payment_order_optional
+                          ? 'Платежка необязательна, поэтому статус можно не отмечать.'
+                          : 'Сначала загрузите платежное поручение.'}
+                      </div>
                     )}
                   </div>
-                </>
-              )}
-              {deal?.bitrix_deal_id && (
-                <div>
-                  <div className="text-xs text-gray-500 mb-1">ID сделки в Битрикс</div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-medium text-gray-900">#{deal.bitrix_deal_id}</div>
-                    {deal.deal_url && (
-                      <a
-                        href={deal.deal_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:text-blue-700 transition-colors"
-                        title="Открыть сделку"
-                      >
-                        <ExternalLink size={13} />
-                      </a>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm text-gray-400 py-2">Клиент еще не заполнил форму</div>
-          )}
+                </CompactField>
+              </div>
+            )}
+          </TopSectionCard>
         </div>
 
         <div>
-          <div className="flex gap-1 border-b border-gray-200 mb-5">
+          <div className="mb-3 flex flex-wrap gap-1 border-b border-gray-200">
             {([
               { key: 'participants', label: 'Сотрудники', icon: <Users size={15} />, count: participants.length },
               { key: 'certificates', label: 'Удостоверения и сертификаты', icon: <FileText size={15} />, count: certificates.length },
@@ -732,7 +1032,7 @@ export default function QuestionnairePage() {
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px ${
+                className={`flex items-center gap-2 px-3 py-2 text-[13px] font-medium border-b-2 transition-all -mb-px ${
                   tab === t.key
                     ? 'border-blue-600 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'

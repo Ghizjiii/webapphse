@@ -6,7 +6,6 @@ import {
  BITRIX_FIELDS_RAW,
  createSmartProcessItem,
  fetchSmartProcessItem,
- fetchUserFieldEnumValues,
  findSmartProcessEntityTypeId,
  getBitrixFieldValue,
  resolveSmartProcessEnumId,
@@ -15,7 +14,8 @@ import {
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate } from '../../lib/documentGeneration';
 import { resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { useToast } from '../../context/ToastContext';
-import type { Certificate, Participant, RefDocumentValidityRule, SortConfig } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import type { Certificate, Participant, RefBitrixListItem, RefDocumentValidityRule, SortConfig } from '../../types';
 import {
  ALL_COLUMN_KEYS,
  AUX_COLUMN_LABELS,
@@ -52,10 +52,13 @@ export function useCertificatesTableController({
  certificates,
  onRefresh,
 }: CertificatesTableProps) {
- const { showToast } = useToast();
- const canonicalMarkerPassOptions = [
- 'Прошел (-а)',
- 'Не прошел (-а)',
+  const { profile } = useAuth();
+  const { showToast } = useToast();
+  const fallbackCategoryOptions = ['ИТР', 'Обычный'];
+  const fallbackTypeLearnOptions = ['первичная', 'повторная', 'периодическая'];
+  const canonicalMarkerPassOptions = [
+  'Прошел (-а)',
+  'Не прошел (-а)',
  'Подлежит повторной проверке знаний',
  ];
  const canonicalCommisConclOptions = [
@@ -248,22 +251,18 @@ export function useCertificatesTableController({
  const [generatingDocs, setGeneratingDocs] = useState(false);
  const [courseFilter, setCourseFilter] = useState<string>('all');
  const [categoryFilter, setCategoryFilter] = useState<string>('all');
- const [printedFilter, setPrintedFilter] = useState<string>('all');
- const [bulkStartDate, setBulkStartDate] = useState<string>('');
- const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
- const [bulkCategory, setBulkCategory] = useState<string>('');
- const [categoryValueOptions, setCategoryValueOptions] = useState<string[]>([]);
- const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
- const [markerPassOptions, setMarkerPassOptions] = useState<string[]>([]);
- const [bulkTypeLearn, setBulkTypeLearn] = useState<string>('');
- const [typeLearnOptions, setTypeLearnOptions] = useState<string[]>([]);
- const [bulkCommisConcl, setBulkCommisConcl] = useState<string>('');
- const [commisConclOptions, setCommisConclOptions] = useState<string[]>([]);
- const [bulkGrade, setBulkGrade] = useState<string>('');
- const [gradeOptions, setGradeOptions] = useState<string[]>([]);
- const [bulkEmployeeStatus, setBulkEmployeeStatus] = useState<string>('');
- const [employeeStatusOptions, setEmployeeStatusOptions] = useState<string[]>([]);
- const [bulkPrintedStatus, setBulkPrintedStatus] = useState<string>('');
+  const [printedFilter, setPrintedFilter] = useState<string>('all');
+  const [bulkStartDate, setBulkStartDate] = useState<string>('');
+  const [bulkExpiryDate, setBulkExpiryDate] = useState<string>('');
+  const [bulkCategory, setBulkCategory] = useState<string>('');
+  const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
+  const [referenceBitrixListItems, setReferenceBitrixListItems] = useState<RefBitrixListItem[]>([]);
+  const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
+  const [bulkTypeLearn, setBulkTypeLearn] = useState<string>('');
+  const [bulkCommisConcl, setBulkCommisConcl] = useState<string>('');
+  const [bulkGrade, setBulkGrade] = useState<string>('');
+  const [bulkEmployeeStatus, setBulkEmployeeStatus] = useState<string>('');
+  const [bulkPrintedStatus, setBulkPrintedStatus] = useState<string>('');
  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
  const columnsMenuRef = useRef<HTMLDivElement>(null);
  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
@@ -284,6 +283,7 @@ export function useCertificatesTableController({
  skipped: number;
  failed: number;
  } | null>(null);
+ const lastResumeRefreshAtRef = useRef(0);
 
  useEffect(() => {
  setLocalCertificates(certificates.map(cert => ({
@@ -308,7 +308,7 @@ export function useCertificatesTableController({
  });
  }, []);
 
- function mergeSelectOptions(...lists: string[][]): string[] {
+  function mergeSelectOptions(...lists: string[][]): string[] {
  const result: string[] = [];
  const seen = new Set<string>();
 
@@ -326,38 +326,132 @@ export function useCertificatesTableController({
  return result;
  }
 
- useEffect(() => {
- void (async () => {
- const fallbackCategoryOptions = ['ИТР', 'Обычный'];
- const fallbackTypeLearnOptions = ['первичная', 'повторная', 'периодическая'];
+  async function loadReferenceSelects() {
+  const [categoriesRes, bitrixListsRes] = await Promise.all([
+  supabase.from('ref_categories').select('name').order('sort_order').order('name'),
+  supabase
+  .from('ref_bitrix_list_items')
+  .select('*')
+  .in('list_key', ['MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS'])
+  .order('list_key')
+  .order('sort_order')
+  .order('name'),
+  ]);
 
- try {
- const entityTypeId = await findSmartProcessEntityTypeId();
- const entityId = `CRM_SPA_12_${entityTypeId}`;
- const [categoryValues, typeLearnValues] = await Promise.all([
- fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.CATEGORY, entityId),
- fetchUserFieldEnumValues(BITRIX_FIELDS_RAW.TYPE_LEARN, entityId),
- ]);
+  if (!categoriesRes.error) {
+  setReferenceCategories((categoriesRes.data || []).map(item => String(item.name || '').trim()).filter(Boolean));
+  }
+  if (!bitrixListsRes.error) {
+  setReferenceBitrixListItems((bitrixListsRes.data || []) as RefBitrixListItem[]);
+  }
+  }
 
- setCategoryValueOptions(mergeSelectOptions(categoryValues, fallbackCategoryOptions));
- setMarkerPassOptions(canonicalMarkerPassOptions);
- setTypeLearnOptions(mergeSelectOptions(typeLearnValues, fallbackTypeLearnOptions));
- setCommisConclOptions(canonicalCommisConclOptions);
- setGradeOptions(canonicalGradeOptions);
- setEmployeeStatusOptions(canonicalEmployeeStatusOptions);
- return;
- } catch {
- // best effort
- }
+  useEffect(() => {
+  void loadReferenceSelects();
 
- setCategoryValueOptions(fallbackCategoryOptions);
- setMarkerPassOptions(canonicalMarkerPassOptions);
- setTypeLearnOptions(fallbackTypeLearnOptions);
- setCommisConclOptions(canonicalCommisConclOptions);
- setGradeOptions(canonicalGradeOptions);
- setEmployeeStatusOptions(canonicalEmployeeStatusOptions);
- })();
- }, []);
+  const intervalId = window.setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  void loadReferenceSelects();
+  }, 30000);
+
+  const onVisibilityChange = () => {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (now - lastResumeRefreshAtRef.current < 5000) return;
+  lastResumeRefreshAtRef.current = now;
+  void loadReferenceSelects();
+  };
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
+  return () => {
+  window.clearInterval(intervalId);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  };
+  }, []);
+
+  function normalizeSelectValues(
+  values: string[],
+  normalizeValue?: (value: string) => string,
+  ): string[] {
+  return mergeSelectOptions(
+  values.map(value => {
+  const normalized = normalizeValue ? normalizeValue(String(value || '')) : String(value || '').trim();
+  return String(normalized || '').trim();
+  }),
+  );
+  }
+
+  function buildReferenceOptions(referenceValues: string[], currentValues: string[], fallbackValues: string[]): string[] {
+  if (referenceValues.length > 0) {
+  return mergeSelectOptions(referenceValues, currentValues);
+  }
+  return mergeSelectOptions(currentValues, fallbackValues);
+  }
+
+  function getReferenceListValues(
+  listKey: RefBitrixListItem['list_key'],
+  normalizeValue?: (value: string) => string,
+  ): string[] {
+  return normalizeSelectValues(
+  referenceBitrixListItems
+  .filter(item => item.list_key === listKey)
+  .map(item => item.name),
+  normalizeValue,
+  );
+  }
+
+  const categoryValueOptions = useMemo(
+  () => buildReferenceOptions(
+  referenceCategories,
+  normalizeSelectValues([
+  ...participants.map(participant => participant.category),
+  ...localCertificates.map(cert => cert.category),
+  ]),
+  fallbackCategoryOptions,
+  ),
+  [localCertificates, participants, referenceCategories]
+  );
+  const markerPassOptions = useMemo(
+  () => buildReferenceOptions(
+  getReferenceListValues('MARKER_PASS', normalizeMarkerPassValue),
+  normalizeSelectValues(localCertificates.map(cert => cert.marker_pass), normalizeMarkerPassValue),
+  canonicalMarkerPassOptions,
+  ),
+  [localCertificates, referenceBitrixListItems]
+  );
+  const typeLearnOptions = useMemo(
+  () => buildReferenceOptions(
+  getReferenceListValues('TYPE_LEARN', normalizeTypeLearnValue),
+  normalizeSelectValues(localCertificates.map(cert => cert.type_learn), normalizeTypeLearnValue),
+  fallbackTypeLearnOptions,
+  ),
+  [localCertificates, referenceBitrixListItems]
+  );
+  const commisConclOptions = useMemo(
+  () => buildReferenceOptions(
+  getReferenceListValues('COMMIS_CONCL', normalizeCommisConclValue),
+  normalizeSelectValues(localCertificates.map(cert => cert.commis_concl), normalizeCommisConclValue),
+  canonicalCommisConclOptions,
+  ),
+  [localCertificates, referenceBitrixListItems]
+  );
+  const gradeOptions = useMemo(
+  () => buildReferenceOptions(
+  getReferenceListValues('GRADE', normalizeGradeValue),
+  normalizeSelectValues(localCertificates.map(cert => cert.grade), normalizeGradeValue),
+  canonicalGradeOptions,
+  ),
+  [localCertificates, referenceBitrixListItems]
+  );
+  const employeeStatusOptions = useMemo(
+  () => buildReferenceOptions(
+  getReferenceListValues('EMPLOYEE_STATUS', normalizeEmployeeStatusValue),
+  normalizeSelectValues(localCertificates.map(cert => cert.employee_status), normalizeEmployeeStatusValue),
+  canonicalEmployeeStatusOptions,
+  ),
+  [localCertificates, referenceBitrixListItems]
+  );
 
  const orderedVisibleColumnKeys = useMemo(
  () => columnOrder.filter(key => visibleColumns[String(key)] !== false),
@@ -383,14 +477,11 @@ export function useCertificatesTableController({
  }, []);
 
  const sorted = useMemo(() => sortCerts(localCertificates, sortConfig), [localCertificates, sortConfig]);
- const courseOptions = useMemo(
- () => Array.from(new Set(localCertificates.map(cert => String(cert.course_name || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
- [localCertificates]
- );
- const categoryOptions = useMemo(
- () => Array.from(new Set(localCertificates.map(cert => String(cert.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
- [localCertificates]
- );
+  const courseOptions = useMemo(
+  () => Array.from(new Set(localCertificates.map(cert => String(cert.course_name || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ru')),
+  [localCertificates]
+  );
+  const categoryOptions = useMemo(() => categoryValueOptions, [categoryValueOptions]);
  const visibleRows = useMemo(
  () => sorted.filter(cert => {
  if (courseFilter !== 'all' && cert.course_name !== courseFilter) return false;
@@ -446,21 +537,24 @@ export function useCertificatesTableController({
  };
  }
 
- const { expiryDate } = resolveDocumentExpiryFromRule({
+ const { expiryDate, usedDefault } = resolveDocumentExpiryFromRule({
  rules: documentValidityRules,
  courseName: nextCourseName,
  category: nextCategory,
  startDate: nextStartDate,
  });
 
- if (expiryDate) {
+ if (expiryDate && !usedDefault) {
  return {
  patch: { ...patch, expiry_date: expiryDate },
  missingRule: false,
  };
  }
 
- return { patch, missingRule: true };
+ return {
+ patch: { ...patch, expiry_date: null },
+ missingRule: true,
+ };
  }
 
  function missingRuleMessage(cert: Pick<Certificate, 'course_name' | 'category'>) {
@@ -1099,6 +1193,10 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  showToast('error', 'Нельзя синхронизировать, пока не заполнены ID сделки и компании в Bitrix24');
  return;
  }
+ if (!String(profile?.bitrix_user_id || '').trim()) {
+ showToast('error', 'Для текущего пользователя не назначен сотрудник Bitrix');
+ return;
+ }
  if (visibleRows.length === 0) {
  showToast('warning', 'Нет строк для выгрузки');
  return;
@@ -1252,6 +1350,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  await updateSmartProcessItem({
  entityTypeId,
  itemId: finalItemId,
+ assignedById: String(profile?.bitrix_user_id || '').trim(),
  fields: changedFields,
  });
  }
@@ -1260,6 +1359,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  entityTypeId,
  dealId: bitrixDealId,
  companyId: bitrixCompanyId,
+ assignedById: String(profile?.bitrix_user_id || '').trim(),
  fields,
  });
  }
