@@ -5,7 +5,7 @@ import DashboardLayout from '../components/DashboardLayout';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import type { QuestionnaireLink, Company } from '../types';
+import type { QuestionnaireLink, Company, AppRole } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 import { getPublicFormUrl } from '../lib/publicFormUrl';
 import CreateLinkModal from '../components/CreateLinkModal';
@@ -18,6 +18,13 @@ interface QuestionnaireRow {
   requestCount: number;
   totalAmount: number;
   creatorProfile: ProfileDirectoryEntry | null;
+}
+
+type CreatorFilterValue = 'all' | 'mine' | `user:${string}`;
+
+interface CreatorFilterOption {
+  value: `user:${string}`;
+  label: string;
 }
 
 type ParticipantQuestionnaireRef = {
@@ -46,6 +53,24 @@ const STATUS_CONFIG = {
   expired: { label: 'Истекла', icon: <Clock size={12} />, className: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
 
+const APP_ROLE_SORT_ORDER: Record<AppRole, number> = {
+  admin: 0,
+  coordinator: 1,
+  user: 2,
+};
+
+function getCreatorFilterValue(userId: string): `user:${string}` {
+  return `user:${userId}`;
+}
+
+function getCreatorUserId(filterValue: CreatorFilterValue): string | null {
+  return filterValue.startsWith('user:') ? filterValue.slice('user:'.length) : null;
+}
+
+function getRoleSortOrder(role: AppRole | null | undefined): number {
+  return role ? APP_ROLE_SORT_ORDER[role] : Number.MAX_SAFE_INTEGER;
+}
+
 function hasMeaningfulCompanyData(company: Company): boolean {
   return Boolean(
     (company.name || '').trim() ||
@@ -69,7 +94,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'mine'>('all');
+  const [creatorFilter, setCreatorFilter] = useState<CreatorFilterValue>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | QuestionnaireLink['status']>('all');
   const [companySearch, setCompanySearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
@@ -223,13 +248,61 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [companySearch, ownershipFilter, pageSize, statusFilter]);
+  }, [companySearch, creatorFilter, pageSize, statusFilter]);
+
+  const creatorFilterOptions = useMemo<CreatorFilterOption[]>(() => {
+    const creators = new Map<string, { label: string; role: AppRole | null; sortName: string }>();
+
+    for (const { questionnaire, creatorProfile } of rows) {
+      const creatorId = String(questionnaire.created_by || '').trim();
+      if (!creatorId || creators.has(creatorId)) continue;
+
+      const role = creatorProfile?.role || (creatorId === currentUserId ? currentProfileRole : null);
+      const displayName = getProfileDisplayName(
+        creatorProfile,
+        creatorId === currentUserId ? (currentProfileEmail || currentUserEmail) : '',
+      );
+      const roleLabel = role ? APP_ROLE_LABELS[role] : 'Не указан';
+
+      creators.set(creatorId, {
+        label: `${displayName} (${roleLabel})`,
+        role,
+        sortName: displayName.toLocaleLowerCase('ru-RU'),
+      });
+    }
+
+    return Array.from(creators.entries())
+      .sort(([, left], [, right]) => {
+        const roleOrderDiff = getRoleSortOrder(left.role) - getRoleSortOrder(right.role);
+        if (roleOrderDiff !== 0) return roleOrderDiff;
+
+        return left.sortName.localeCompare(right.sortName, 'ru-RU');
+      })
+      .map(([userId, creator]) => ({
+        value: getCreatorFilterValue(userId),
+        label: creator.label,
+      }));
+  }, [currentProfileEmail, currentProfileRole, currentUserEmail, currentUserId, rows]);
+
+  useEffect(() => {
+    const validFilterValues = new Set<CreatorFilterValue>(['all', 'mine', ...creatorFilterOptions.map(option => option.value)]);
+    if (!validFilterValues.has(creatorFilter)) {
+      setCreatorFilter('all');
+    }
+  }, [creatorFilter, creatorFilterOptions]);
 
   const normalizedCompanySearch = companySearch.trim().toLowerCase();
   const filteredRows = useMemo(
     () => rows.filter(({ questionnaire, company }) => {
-      if (ownershipFilter === 'mine' && questionnaire.created_by !== currentUserId) {
-        return false;
+      if (creatorFilter === 'mine') {
+        if (questionnaire.created_by !== currentUserId) {
+          return false;
+        }
+      } else {
+        const creatorUserId = getCreatorUserId(creatorFilter);
+        if (creatorUserId && questionnaire.created_by !== creatorUserId) {
+          return false;
+        }
       }
 
       if (statusFilter !== 'all' && questionnaire.status !== statusFilter) {
@@ -245,7 +318,7 @@ export default function DashboardPage() {
 
       return true;
     }),
-    [currentUserId, normalizedCompanySearch, ownershipFilter, rows, statusFilter],
+    [creatorFilter, currentUserId, normalizedCompanySearch, rows, statusFilter],
   );
 
   useEffect(() => {
@@ -292,7 +365,7 @@ export default function DashboardPage() {
     return `${value.toLocaleString('ru-RU')} ₸`;
   }
 
-  const hasActiveFilters = ownershipFilter !== 'all' || statusFilter !== 'all' || companySearch.trim() !== '';
+  const hasActiveFilters = creatorFilter !== 'all' || statusFilter !== 'all' || companySearch.trim() !== '';
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = useMemo(
     () => filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
@@ -302,7 +375,7 @@ export default function DashboardPage() {
   const paginationEnd = Math.min(currentPage * pageSize, filteredRows.length);
 
   function resetFilters() {
-    setOwnershipFilter('all');
+    setCreatorFilter('all');
     setStatusFilter('all');
     setCompanySearch('');
   }
@@ -407,12 +480,17 @@ export default function DashboardPage() {
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Показывать</span>
                   <select
-                    value={ownershipFilter}
-                    onChange={(event) => setOwnershipFilter(event.target.value as 'all' | 'mine')}
+                    value={creatorFilter}
+                    onChange={(event) => setCreatorFilter(event.target.value as CreatorFilterValue)}
                     className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   >
                     <option value="all">Все анкеты</option>
                     <option value="mine">Только мои</option>
+                    {creatorFilterOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </label>
 
