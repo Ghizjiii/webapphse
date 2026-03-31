@@ -16,6 +16,47 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+type SupabaseAuthClientWithRemoveSession = {
+  _removeSession?: () => Promise<void>;
+};
+
+function getSupabaseAuthStorageKey() {
+  try {
+    const url = new URL(import.meta.env.VITE_SUPABASE_URL || 'https://invalid.supabase.co');
+    return `sb-${url.hostname.split('.')[0]}-auth-token`;
+  } catch {
+    return 'supabase.auth.token';
+  }
+}
+
+async function clearLocalSupabaseSession() {
+  const authClient = supabase.auth as unknown as SupabaseAuthClientWithRemoveSession;
+
+  if (typeof authClient._removeSession === 'function') {
+    try {
+      await authClient._removeSession();
+      return;
+    } catch {
+      // Fall back to direct storage cleanup if the internal helper is unavailable.
+    }
+  }
+
+  if (typeof window === 'undefined') return;
+
+  const storageKey = getSupabaseAuthStorageKey();
+  const storageKeys = [storageKey, `${storageKey}-code-verifier`, `${storageKey}-user`];
+
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    for (const key of storageKeys) {
+      try {
+        storage.removeItem(key);
+      } catch {
+        // Ignore storage cleanup issues and continue clearing the rest.
+      }
+    }
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -86,7 +127,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(nextProfile);
 
         if (nextProfile && !nextProfile.is_active) {
-          await supabase.auth.signOut();
+          await clearLocalSupabaseSession();
+          applySession(null);
+          profileLoadedUserIdRef.current = null;
+          setProfile(null);
+          return;
         }
       } catch {
         if (!mounted || currentRequestId !== requestId) return;
@@ -145,7 +190,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await clearLocalSupabaseSession();
+    profileLoadedUserIdRef.current = null;
+    setSession(null);
+    setUser(null);
+    setProfile(null);
+    setLoading(false);
   }
 
   async function refreshProfile() {
