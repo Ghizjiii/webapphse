@@ -14,16 +14,25 @@ export interface BitrixDocumentValidityDetails {
   duration_unit: 'year';
 }
 
+export interface BitrixCoursePriceDetails {
+  course_name: string;
+  qualification: string;
+  electrical_safety_group: string;
+  category: string;
+  price: number | null;
+}
+
 export interface BitrixListElement {
   id: string;
   iblockId: number;
   name: string;
   code: string;
   sortOrder: number;
-  details: BitrixDocumentValidityDetails | null;
+  details: BitrixDocumentValidityDetails | BitrixCoursePriceDetails | null;
 }
 
 export const BITRIX_REFERENCE_LISTS = {
+  MY_COMPANIES: { iblockId: 60, name: 'Справочник компаний (служебное)' },
   COURSES: { iblockId: 64, name: 'Наименование курсов' },
   DOCUMENT_VALIDITY: { iblockId: 66, name: 'Сроки документов' },
   CATEGORIES: { iblockId: 68, name: 'Категория' },
@@ -33,9 +42,11 @@ export const BITRIX_REFERENCE_LISTS = {
   MARKER_PASS: { iblockId: 76, name: 'Отметка о проверке знаний' },
   TYPE_LEARN: { iblockId: 78, name: 'Вид проверки знаний / тип обучения' },
   COMMIS_CONCL: { iblockId: 80, name: 'Заключение комиссии' },
+  COURSE_PRICES: { iblockId: 84, name: 'Course default prices' },
 } as const satisfies Record<string, BitrixListDefinition>;
 
 export const BITRIX_REFERENCE_LIST_ORDER = [
+  'MY_COMPANIES',
   'CATEGORIES',
   'COURSES',
   'DOCUMENT_VALIDITY',
@@ -45,7 +56,12 @@ export const BITRIX_REFERENCE_LIST_ORDER = [
   'MARKER_PASS',
   'TYPE_LEARN',
   'COMMIS_CONCL',
+  'COURSE_PRICES',
 ] as const satisfies ReadonlyArray<keyof typeof BITRIX_REFERENCE_LISTS>;
+
+function resolveBitrixListTypeId(iblockId: number): string {
+  return iblockId === 60 ? 'bitrix_processes' : 'lists';
+}
 
 interface BitrixListFieldDefinition {
   fieldId: string;
@@ -199,6 +215,50 @@ function resolveFieldNumberValue(rawValue: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function resolveFieldMoneyValue(rawValue: unknown): number | null {
+  const visit = (value: unknown): number | null => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value
+        .split('|')[0]
+        .replace(/\s+/g, '')
+        .replace(',', '.')
+        .replace(/[^\d.-]/g, '');
+      if (!normalized) return null;
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const parsed = visit(item);
+        if (parsed !== null) return parsed;
+      }
+      return null;
+    }
+
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      for (const key of ['VALUE', 'value', 'AMOUNT', 'amount', 'PRICE', 'price']) {
+        if (!(key in record)) continue;
+        const parsed = visit(record[key]);
+        if (parsed !== null) return parsed;
+      }
+      for (const nested of Object.values(record)) {
+        const parsed = visit(nested);
+        if (parsed !== null) return parsed;
+      }
+    }
+
+    return null;
+  };
+
+  return visit(rawValue);
+}
+
 function buildDocumentValidityDetails(
   raw: Record<string, unknown>,
   fields: BitrixListFieldDefinition[]
@@ -217,6 +277,75 @@ function buildDocumentValidityDetails(
   };
 }
 
+function buildCoursePriceDetails(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): BitrixCoursePriceDetails {
+  const courseField = findField(fields, { code: 'NAIMENOVANIE_KURSOV', fieldId: 'PROPERTY_948' });
+  const qualificationField = findField(fields, { code: 'KVALIFIKATSIYA', fieldId: 'PROPERTY_952' });
+  const electricalSafetyGroupField = findField(fields, { code: 'GRUPPA_ELEKTROBEZOPASNOST_', fieldId: 'PROPERTY_960' });
+  const categoryField = findField(fields, { code: 'KATEGORIYA', fieldId: 'PROPERTY_950' });
+  const priceField = findField(fields, { code: 'TSENA', fieldId: 'PROPERTY_946' });
+
+  return {
+    course_name: resolveFieldDisplayValue(courseField, courseField ? raw[courseField.fieldId] : raw.NAME) || String(raw.NAME || '').trim(),
+    qualification: resolveFieldDisplayValue(qualificationField, qualificationField ? raw[qualificationField.fieldId] : ''),
+    electrical_safety_group: resolveFieldDisplayValue(
+      electricalSafetyGroupField,
+      electricalSafetyGroupField ? raw[electricalSafetyGroupField.fieldId] : ''
+    ),
+    category: resolveFieldDisplayValue(categoryField, categoryField ? raw[categoryField.fieldId] : ''),
+    price: resolveFieldMoneyValue(priceField ? raw[priceField.fieldId] : ''),
+  };
+}
+
+function resolveMyCompanyShortName(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): string {
+  const shortNameField = findField(fields, {
+    code: 'KRATKOE_NAZVANIE',
+    name: 'Краткое название',
+    fieldId: 'PROPERTY_456',
+  });
+
+  return resolveFieldDisplayValue(
+    shortNameField,
+    shortNameField ? raw[shortNameField.fieldId] : raw.PROPERTY_456
+  );
+}
+
+function resolveMyCompanyVisibleInApp(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): boolean {
+  const displayField = findField(fields, {
+    code: 'PRILOZHENIE_OTOBR',
+    fieldId: 'PROPERTY_938',
+  });
+  const value = resolveFieldDisplayValue(
+    displayField,
+    displayField ? raw[displayField.fieldId] : raw.PROPERTY_938
+  ).toLocaleLowerCase('ru');
+
+  return value === 'да' || value === 'yes' || value === 'y' || value === 'true' || value === '1';
+}
+
+function resolveMyCompanyChairman(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): string {
+  const chairmanField = findField(fields, {
+    code: 'PREDSEDATEL_PRILOZH_',
+    fieldId: 'PROPERTY_940',
+  });
+
+  return resolveFieldDisplayValue(
+    chairmanField,
+    chairmanField ? raw[chairmanField.fieldId] : raw.PROPERTY_940
+  );
+}
+
 function normalizeListElement(
   raw: Record<string, unknown>,
   index: number,
@@ -224,26 +353,38 @@ function normalizeListElement(
   fields: BitrixListFieldDefinition[]
 ): BitrixListElement | null {
   const id = String(raw.ID || raw.id || '').trim();
-  const name = String(raw.NAME || raw.name || '').trim();
-  if (!id || !name) return null;
+  const baseName = String(raw.NAME || raw.name || '').trim();
+  if (!id || !baseName) return null;
+
+  const isMyCompaniesList = iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId;
+  if (isMyCompaniesList && !resolveMyCompanyVisibleInApp(raw, fields)) return null;
 
   const sortRaw = Number(raw.SORT || raw.sort || 0);
+  const resolvedName = isMyCompaniesList
+    ? resolveMyCompanyShortName(raw, fields) || baseName
+    : baseName;
+  const resolvedChairman = isMyCompaniesList
+    ? resolveMyCompanyChairman(raw, fields)
+    : '';
 
   return {
     id,
     iblockId,
-    name,
-    code: String(raw.CODE || raw.code || '').trim(),
+    name: resolvedName,
+    code: resolvedChairman || String(raw.CODE || raw.code || '').trim(),
     sortOrder: Number.isFinite(sortRaw) && sortRaw > 0 ? sortRaw : index + 1,
-    details: iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId
-      ? buildDocumentValidityDetails(raw, fields)
-      : null,
+    details:
+      iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId
+        ? buildDocumentValidityDetails(raw, fields)
+        : iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
+          ? buildCoursePriceDetails(raw, fields)
+          : null,
   };
 }
 
 async function fetchBitrixListFields(iblockId: number): Promise<BitrixListFieldDefinition[]> {
   const result = await callBitrixListMethod('lists.field.get', {
-    IBLOCK_TYPE_ID: 'lists',
+    IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
     IBLOCK_ID: iblockId,
   });
   const fieldsRecord = toPlainRecord(result);
@@ -253,10 +394,12 @@ async function fetchBitrixListFields(iblockId: number): Promise<BitrixListFieldD
 export async function fetchBitrixListElements(iblockId: number): Promise<BitrixListElement[]> {
   const [result, fields] = await Promise.all([
     callBitrixListMethod('lists.element.get', {
-      IBLOCK_TYPE_ID: 'lists',
+      IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
       IBLOCK_ID: iblockId,
     }),
-    iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId
+    iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
       ? fetchBitrixListFields(iblockId)
       : Promise.resolve([] as BitrixListFieldDefinition[]),
   ]);
