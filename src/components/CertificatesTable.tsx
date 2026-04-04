@@ -192,6 +192,10 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         bulkExpiryDate={controller.bulkExpiryDate}
         bulkCategory={controller.bulkCategory}
         categoryValueOptions={controller.categoryValueOptions}
+        bulkIssuerCompany={controller.bulkIssuerCompany}
+        issuerCompanyOptions={controller.issuerCompanyOptions}
+        bulkCommissionChair={controller.bulkCommissionChair}
+        commissionChairOptions={controller.commissionChairOptions}
         bulkMarkerPass={controller.bulkMarkerPass}
         markerPassOptions={controller.markerPassOptions}
         bulkTypeLearn={controller.bulkTypeLearn}
@@ -225,6 +229,14 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         onBulkCategoryChange={controller.setBulkCategory}
         onBulkFillCategory={() => {
           void controller.bulkFillCategory();
+        }}
+        onBulkIssuerCompanyChange={controller.setBulkIssuerCompany}
+        onBulkFillIssuerCompany={() => {
+          void controller.bulkFillIssuerCompany();
+        }}
+        onBulkCommissionChairChange={controller.setBulkCommissionChair}
+        onBulkFillCommissionChair={() => {
+          void controller.bulkFillCommissionChair();
         }}
         onBulkMarkerPassChange={controller.setBulkMarkerPass}
         onBulkFillMarkerPass={() => {

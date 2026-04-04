@@ -15,7 +15,7 @@ import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCert
 import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
-import type { Certificate, Participant, RefBitrixListItem, RefDocumentValidityRule, SortConfig } from '../../types';
+import type { Certificate, Participant, RefBitrixListItem, RefCoursePrice, RefDocumentValidityRule, SortConfig } from '../../types';
 import {
  ALL_COLUMN_KEYS,
  AUX_COLUMN_LABELS,
@@ -287,6 +287,7 @@ export function useCertificatesTableController({
 
  const [localCertificates, setLocalCertificates] = useState<Certificate[]>(certificates);
  const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
+ const [coursePriceRules, setCoursePriceRules] = useState<RefCoursePrice[]>([]);
 
  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
  const [editCell, setEditCell] = useState<EditCell | null>(null);
@@ -303,6 +304,8 @@ export function useCertificatesTableController({
   const [bulkCategory, setBulkCategory] = useState<string>('');
   const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
   const [referenceBitrixListItems, setReferenceBitrixListItems] = useState<RefBitrixListItem[]>([]);
+  const [bulkIssuerCompany, setBulkIssuerCompany] = useState<string>('');
+  const [bulkCommissionChair, setBulkCommissionChair] = useState<string>('');
   const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
   const [bulkTypeLearn, setBulkTypeLearn] = useState<string>('');
   const [bulkCommisConcl, setBulkCommisConcl] = useState<string>('');
@@ -330,10 +333,13 @@ export function useCertificatesTableController({
  failed: number;
  } | null>(null);
  const lastResumeRefreshAtRef = useRef(0);
+ const autoPriceBackfillAttemptedRef = useRef(false);
 
  useEffect(() => {
  setLocalCertificates(certificates.map(cert => ({
  ...cert,
+ issuer_company: String(cert.issuer_company || '').trim(),
+ commission_chair: String(cert.commission_chair || '').trim(),
  marker_pass: normalizeMarkerPassValue(cert.marker_pass),
  type_learn: normalizeTypeLearnValue(cert.type_learn),
  commis_concl: normalizeCommisConclValue(cert.commis_concl),
@@ -343,14 +349,23 @@ export function useCertificatesTableController({
  }, [certificates]);
 
  useEffect(() => {
- void supabase
+ void Promise.all([
+ supabase
  .from('ref_document_validity_rules')
  .select('*')
  .order('sort_order')
  .order('course_name')
+ .order('category'),
+ supabase
+ .from('ref_course_prices')
+ .select('*')
+ .order('sort_order')
+ .order('course_name')
  .order('category')
- .then(({ data }) => {
- setDocumentValidityRules(data || []);
+ .order('qualification'),
+ ]).then(([documentRulesRes, coursePricesRes]) => {
+ setDocumentValidityRules((documentRulesRes.data || []) as RefDocumentValidityRule[]);
+ setCoursePriceRules((coursePricesRes.data || []) as RefCoursePrice[]);
  });
  }, []);
 
@@ -378,7 +393,7 @@ export function useCertificatesTableController({
   supabase
   .from('ref_bitrix_list_items')
   .select('*')
-  .in('list_key', ['COURSES', 'CATEGORIES', 'DOCUMENT_TYPE', 'MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS'])
+  .in('list_key', ['MY_COMPANIES', 'COURSES', 'CATEGORIES', 'DOCUMENT_TYPE', 'MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS'])
   .order('list_key')
   .order('sort_order')
   .order('name'),
@@ -471,7 +486,7 @@ export function useCertificatesTableController({
   const itemValues = [
   item.name,
   item.bitrix_value,
-  item.code,
+  ...(listKey === 'MY_COMPANIES' ? [] : [item.code]),
   ].map(current => normalizeReferenceLookup(current));
   return itemValues.includes(candidate);
   });
@@ -493,6 +508,187 @@ export function useCertificatesTableController({
   );
   }
 
+  function getMyCompanyChairman(item: RefBitrixListItem): string {
+  return String(item.code || '').trim();
+  }
+
+  function resolveChairmanByIssuerCompany(
+  listItems: RefBitrixListItem[],
+  issuerCompany: string,
+  ): string {
+  const normalizedIssuerCompany = normalizeReferenceLookup(issuerCompany);
+  if (!normalizedIssuerCompany) return '';
+
+  const match = listItems.find(item =>
+  item.list_key === 'MY_COMPANIES' &&
+  [item.name, item.bitrix_value]
+  .map(current => normalizeReferenceLookup(current))
+  .includes(normalizedIssuerCompany)
+  );
+
+  return match ? getMyCompanyChairman(match) : '';
+  }
+
+  function applyIssuerCompanyRelations(
+  listItems: RefBitrixListItem[],
+  patch: Partial<Certificate>,
+  ): Partial<Certificate> {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'issuer_company')) {
+  return patch;
+  }
+
+  const issuerCompany = String(patch.issuer_company || '').trim();
+  const chairman = issuerCompany
+  ? resolveChairmanByIssuerCompany(listItems, issuerCompany)
+  : '';
+
+  return {
+  ...patch,
+  issuer_company: issuerCompany,
+  commission_chair: chairman,
+  };
+  }
+
+  function normalizeCoursePriceLookup(value: string): string {
+  const normalized = String(value || '')
+  .trim()
+  .toLocaleLowerCase('ru')
+  .replace(/ё/g, 'е')
+  .replace(/\s+/g, ' ');
+
+  if (!normalized || normalized === '-' || normalized === 'нет данных' || normalized === 'не установлено') {
+  return '';
+  }
+
+  return normalized;
+  }
+
+  function resolveReferencePrice(
+  courseName: string,
+  category: string,
+  qualification: string,
+  ): number | null {
+  const normalizedCourseName = normalizeCoursePriceLookup(courseName);
+  const normalizedCategory = normalizeCoursePriceLookup(category);
+  const normalizedQualification = normalizeCoursePriceLookup(qualification);
+
+  if (!normalizedCourseName || !normalizedCategory) return null;
+
+  const matchingRows = coursePriceRules.filter(row =>
+  normalizeCoursePriceLookup(row.course_name) === normalizedCourseName &&
+  normalizeCoursePriceLookup(row.category) === normalizedCategory
+  );
+
+  if (matchingRows.length === 0) return null;
+
+  const exactMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === normalizedQualification);
+  if (exactMatch) {
+  const parsed = Number(exactMatch.price);
+  if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const genericMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === '');
+  if (genericMatch) {
+  const parsed = Number(genericMatch.price);
+  if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+  }
+
+  function autoPricePatchForCertificate(cert: Certificate, patch: Partial<Certificate>): Partial<Certificate> {
+  if (Object.prototype.hasOwnProperty.call(patch, 'price')) {
+  return patch;
+  }
+
+  const shouldRecalculate =
+  Object.prototype.hasOwnProperty.call(patch, 'course_name') ||
+  Object.prototype.hasOwnProperty.call(patch, 'category') ||
+  Object.prototype.hasOwnProperty.call(patch, 'qualification');
+
+  if (!shouldRecalculate) {
+  return patch;
+  }
+
+  const nextCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name')
+  ? String(patch.course_name || '')
+  : cert.course_name;
+  const nextCategory = Object.prototype.hasOwnProperty.call(patch, 'category')
+  ? String(patch.category || '')
+  : cert.category;
+  const nextQualification = Object.prototype.hasOwnProperty.call(patch, 'qualification')
+  ? String(patch.qualification || '')
+  : cert.qualification;
+  const nextPrice = resolveReferencePrice(nextCourseName, nextCategory, nextQualification);
+
+  return {
+  ...patch,
+  price: nextPrice,
+  };
+  }
+
+  function normalizeCertificatePatchForSave(
+  cert: Certificate,
+  patch: Partial<Certificate>,
+  ): { patch: Partial<Certificate>; missingRule: boolean } {
+  const patchWithRelations = applyIssuerCompanyRelations(referenceBitrixListItems, patch);
+  const patchWithPrice = autoPricePatchForCertificate(cert, patchWithRelations);
+  return autoExpiryPatchForCertificate(cert, patchWithPrice);
+  }
+
+  useEffect(() => {
+  autoPriceBackfillAttemptedRef.current = false;
+  }, [questionnaireId]);
+
+  useEffect(() => {
+  if (autoPriceBackfillAttemptedRef.current) return;
+  if (coursePriceRules.length === 0 || localCertificates.length === 0) return;
+
+  autoPriceBackfillAttemptedRef.current = true;
+  const updates = localCertificates
+  .filter(cert => cert.price == null)
+  .map(cert => {
+  const price = resolveReferencePrice(cert.course_name, cert.category, cert.qualification);
+  if (price === null) return null;
+  return {
+  id: cert.id,
+  price,
+  };
+  })
+  .filter((item): item is { id: string; price: number } => Boolean(item));
+
+  if (updates.length === 0) return;
+
+  const now = new Date().toISOString();
+  void Promise.all(
+  updates.map(item =>
+  supabase
+  .from('certificates')
+  .update({ price: item.price, updated_at: now })
+  .eq('id', item.id)
+  )
+  ).then(results => {
+  const successIds = new Set(
+  updates
+  .filter((_, index) => !results[index]?.error)
+  .map(item => item.id)
+  );
+  if (successIds.size === 0) return;
+
+  setLocalCertificates(current => current.map(cert => {
+  const updated = updates.find(item => item.id === cert.id);
+  if (!updated || !successIds.has(cert.id)) return cert;
+  return { ...cert, price: updated.price } as Certificate;
+  }));
+  onRefresh();
+  });
+  }, [coursePriceRules, localCertificates, onRefresh, questionnaireId]);
+
+  const myCompanyReferenceItems = useMemo(
+  () => referenceBitrixListItems.filter(item => item.list_key === 'MY_COMPANIES'),
+  [referenceBitrixListItems]
+  );
+
   const categoryValueOptions = useMemo(
   () => buildReferenceOptions(
   referenceCategories,
@@ -503,6 +699,22 @@ export function useCertificatesTableController({
   fallbackCategoryOptions,
   ),
   [localCertificates, participants, referenceCategories]
+  );
+  const issuerCompanyOptions = useMemo(
+  () => {
+  const referenceOptions = normalizeSelectValues(myCompanyReferenceItems.map(item => item.name));
+  if (referenceOptions.length > 0) return referenceOptions;
+  return normalizeSelectValues(localCertificates.map(cert => cert.issuer_company));
+  },
+  [localCertificates, myCompanyReferenceItems]
+  );
+  const commissionChairOptions = useMemo(
+  () => {
+  const referenceOptions = normalizeSelectValues(myCompanyReferenceItems.map(item => getMyCompanyChairman(item)));
+  if (referenceOptions.length > 0) return referenceOptions;
+  return normalizeSelectValues(localCertificates.map(cert => cert.commission_chair));
+  },
+  [localCertificates, myCompanyReferenceItems]
   );
   const markerPassOptions = useMemo(
   () => buildReferenceOptions(
@@ -750,7 +962,7 @@ export function useCertificatesTableController({
  const currentCertificate = localCertificates.find(cert => cert.id === certId);
  if (!currentCertificate) return;
 
- const { patch: normalizedPatch, missingRule } = autoExpiryPatchForCertificate(currentCertificate, { ...patch });
+ const { patch: normalizedPatch, missingRule } = normalizeCertificatePatchForSave(currentCertificate, { ...patch });
  const { error } = await supabase
  .from('certificates')
  .update({ ...normalizedPatch, updated_at: new Date().toISOString() })
@@ -805,7 +1017,7 @@ export function useCertificatesTableController({
  }
 
  const basePatch = { [editCell.field]: valueToSave } as Partial<Certificate>;
- const { patch, missingRule } = autoExpiryPatchForCertificate(currentCertificate, basePatch);
+ const { patch, missingRule } = normalizeCertificatePatchForSave(currentCertificate, basePatch);
  const { error } = await supabase
  .from('certificates')
  .update({ ...patch, updated_at: new Date().toISOString() })
@@ -843,8 +1055,19 @@ export function useCertificatesTableController({
  setBulkSaving(true);
  try {
  const now = new Date().toISOString();
+ const normalizedUpdates = updates.map(({ id, patch }) => {
+ const currentCertificate = localCertificates.find(cert => cert.id === id);
+ if (!currentCertificate) {
+ return { id, patch };
+ }
+ const normalized = normalizeCertificatePatchForSave(currentCertificate, { ...patch });
+ return {
+ id,
+ patch: normalized.patch,
+ };
+ });
  const results = await Promise.all(
- updates.map(({ id, patch }) =>
+ normalizedUpdates.map(({ id, patch }) =>
  supabase
  .from('certificates')
  .update({ ...patch, updated_at: now })
@@ -854,21 +1077,21 @@ export function useCertificatesTableController({
 
  const errorCount = results.filter(result => result.error).length;
  const successIds = new Set(
- updates
+ normalizedUpdates
  .filter((_, index) => !results[index]?.error)
  .map(item => item.id)
  );
  if (successIds.size > 0) {
  setLocalCertificates(current => current.map(cert => {
  if (!successIds.has(cert.id)) return cert;
- const patch = updates.find(item => item.id === cert.id)?.patch || {};
+ const patch = normalizedUpdates.find(item => item.id === cert.id)?.patch || {};
  return { ...cert, ...patch } as Certificate;
  }));
  }
  if (errorCount > 0) {
- showToast('warning', `Массовое заполнение: ${updates.length - errorCount} из ${updates.length}`);
+ showToast('warning', `Массовое заполнение: ${normalizedUpdates.length - errorCount} из ${normalizedUpdates.length}`);
  } else {
- showToast('success', `Заполнено ${updates.length} строк (${targetRowsInfo})`);
+ showToast('success', `Заполнено ${normalizedUpdates.length} строк (${targetRowsInfo})`);
  }
  onRefresh();
  } finally {
@@ -979,6 +1202,36 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  const preview = Array.from(new Set(missingRules)).slice(0, 3).join('; ');
  showToast('warning', `Для части строк срок документа не пересчитан из-за отсутствия правила. ${preview}`);
  }
+ }
+
+ async function bulkFillIssuerCompany() {
+ if (bulkSaving) return;
+ if (!bulkIssuerCompany.trim()) {
+ showToast('warning', 'Выберите значение для поля "Компания, которая выдает удостоверение"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: applyIssuerCompanyRelations(referenceBitrixListItems, { issuer_company: bulkIssuerCompany } as Partial<Certificate>),
+ }))
+ );
+ }
+
+ async function bulkFillCommissionChair() {
+ if (bulkSaving) return;
+ if (!bulkCommissionChair.trim()) {
+ showToast('warning', 'Выберите значение для поля "Председатель"');
+ return;
+ }
+
+ await runBulk(
+ visibleRows.map(row => ({
+ id: row.id,
+ patch: { commission_chair: bulkCommissionChair } as Partial<Certificate>,
+ }))
+ );
  }
 
  async function bulkFillTypeLearn() {
@@ -1307,6 +1560,13 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
 
  for (const cert of visibleRows) {
  try {
+ const issuerCompanyValue = String(cert.issuer_company || '').trim()
+ ? findReferenceBitrixItemId(bitrixListItemsForSync, 'MY_COMPANIES', cert.issuer_company || '')
+ : '';
+ if (String(cert.issuer_company || '').trim() && !issuerCompanyValue) {
+ throw new Error(`Не найдена компания Bitrix для поля "Компания, которая выдает удостоверение": ${cert.issuer_company}`);
+ }
+
  const categoryValue = String(cert.category || '').trim()
  ? findReferenceBitrixItemId(bitrixListItemsForSync, 'CATEGORIES', cert.category || '')
  : '';
@@ -1374,6 +1634,9 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  if (!documentTypeValue) {
  throw new Error(`Не найден элемент Bitrix для поля "Тип документа": ${documentTypeName || 'пустое значение'}`);
  }
+ const effectiveCommissionChair = String(cert.commission_chair || '').trim()
+ ? String(cert.commission_chair || '').trim()
+ : resolveChairmanByIssuerCompany(bitrixListItemsForSync, cert.issuer_company || '');
  const fieldEntries: SmartFieldEntry[] = [
  { code: 'TITLE', kind: 'text', value: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - ') },
  { code: BITRIX_FIELDS.LAST_NAME, kind: 'text', value: cert.last_name || '' },
@@ -1384,7 +1647,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.COURSE_NAME, kind: 'link', value: courseValue || '' },
  { code: BITRIX_FIELDS.COURSE_START_DATE, kind: 'date', value: toBitrixDate(cert.start_date) },
  { code: BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE, kind: 'date', value: toBitrixDate(cert.expiry_date) },
- { code: BITRIX_FIELDS.COMMISSION_CHAIR, kind: 'text', value: cert.commission_chair || '' },
+ { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.ISSUER_COMPANY, kind: 'link', value: issuerCompanyValue || '' },
+ { code: BITRIX_FIELDS.COMMISSION_CHAIR, kind: 'text', value: effectiveCommissionChair },
  { code: BITRIX_FIELDS.PROTOCOL, kind: 'text', value: cert.protocol_number || '' },
  { code: BITRIX_FIELDS.DOCUMENT_NUMBER, kind: 'text', value: cert.document_number || '' },
  { code: BITRIX_FIELDS.COMMISSION_MEMBER_1, kind: 'text', value: cert.commission_member_1 || '' },
@@ -1502,6 +1766,10 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  bulkExpiryDate,
  bulkCategory,
  categoryValueOptions,
+ bulkIssuerCompany,
+ issuerCompanyOptions,
+ bulkCommissionChair,
+ commissionChairOptions,
  bulkMarkerPass,
  markerPassOptions,
  bulkTypeLearn,
@@ -1537,6 +1805,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  setBulkStartDate,
  setBulkExpiryDate,
  setBulkCategory,
+ setBulkIssuerCompany,
+ setBulkCommissionChair,
  setBulkMarkerPass,
  setBulkTypeLearn,
  setBulkCommisConcl,
@@ -1558,6 +1828,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  bulkFillProtocolWithMode,
  bulkFillText,
  bulkFillCategory,
+ bulkFillIssuerCompany,
+ bulkFillCommissionChair,
  bulkFillMarkerPass,
  bulkFillTypeLearn,
  bulkFillCommisConcl,

@@ -9,6 +9,7 @@ export const TEXT_FIELDS: { key: keyof Certificate; label: string }[] = [
   { key: 'course_name', label: 'Наим. курса' },
   { key: 'document_number', label: 'Номер документа' },
   { key: 'protocol_number', label: 'Протокол' },
+  { key: 'issuer_company', label: 'Компания, которая выдает удостоверение' },
   { key: 'commission_chair', label: 'Председатель' },
   { key: 'commission_member_1', label: 'Член комис. 1' },
   { key: 'commission_member_2', label: 'Член комис. 2' },
@@ -27,7 +28,6 @@ export const TEXT_FIELDS: { key: keyof Certificate; label: string }[] = [
 ];
 
 export const BULK_TEXT_FILL_FIELDS: Array<{ key: keyof Certificate; label: string }> = [
-  { key: 'commission_chair', label: 'Председатель' },
   { key: 'commission_member_1', label: 'Член комиссии 1' },
   { key: 'commission_member_2', label: 'Член комиссии 2' },
   { key: 'commission_member_3', label: 'Член комиссии 3' },
@@ -58,6 +58,7 @@ export const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   course_name: 240,
   document_number: 125,
   protocol_number: 110,
+  issuer_company: 220,
   commission_chair: 140,
   commission_member_1: 120,
   commission_member_2: 120,
