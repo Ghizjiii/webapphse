@@ -69,6 +69,10 @@ const BITRIX_FIELDS_RAW = {
   PHOTO: "UF_CRM_12_1772578817",
 } as const;
 
+const BITRIX_CERTIFICATE_REFERENCE_FIELDS = {
+  ISSUER_COMPANY: "ufCrm12_1775320262",
+} as const;
+
 const PHOTO_FIELD_KEY = "ufCrm12_1772578817";
 const COMPANY_BIN_FIELD_CANDIDATES = [
   "UF_CRM_BIN_IIN",
@@ -128,6 +132,7 @@ type ExistingCertificateRow = {
   course_name: string;
   start_date: string | null;
   expiry_date: string | null;
+  issuer_company: string | null;
   commission_chair: string | null;
   protocol_number: string | null;
   document_number: string | null;
@@ -148,12 +153,20 @@ type ExistingCertificateRow = {
   price: number | null;
 };
 
+type RefCoursePriceRow = {
+  course_name: string;
+  qualification: string;
+  category: string;
+  price: number | null;
+  sort_order: number;
+};
+
 type PreparedFile = {
   fileName: string;
   base64: string;
 };
 
-type SmartFieldKind = "text" | "date" | "boolean" | "number";
+type SmartFieldKind = "text" | "date" | "boolean" | "number" | "link";
 
 type SmartFieldEntry = {
   code: string;
@@ -164,6 +177,7 @@ type SmartFieldEntry = {
 type EnumMaps = {
   categoryMap: Map<string, string>;
   courseMap: Map<string, string>;
+  issuerCompanyMap: Map<string, string>;
   markerPassMap: Map<string, string>;
   typeLearnMap: Map<string, string>;
   commisConclMap: Map<string, string>;
@@ -476,6 +490,100 @@ function normalizeEmployeeStatusValue(value: unknown): string {
   return plain(value);
 }
 
+function normalizeReferenceLookup(value: unknown): string {
+  return plain(value)
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\(-a\)/g, "(-а)")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCoursePriceLookup(value: unknown): string {
+  const normalized = plain(value)
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ");
+
+  if (!normalized || normalized === "-" || normalized === "нет данных" || normalized === "не установлено") {
+    return "";
+  }
+
+  return normalized;
+}
+
+function findReferenceCoursePrice(
+  rows: RefCoursePriceRow[],
+  params: { courseName: string; category: string; qualification: string | null | undefined },
+): number | null {
+  const normalizedCourseName = normalizeCoursePriceLookup(params.courseName);
+  const normalizedCategory = normalizeCoursePriceLookup(params.category);
+  const normalizedQualification = normalizeCoursePriceLookup(params.qualification);
+
+  if (!normalizedCourseName || !normalizedCategory) return null;
+
+  const matchingRows = rows.filter(row =>
+    normalizeCoursePriceLookup(row.course_name) === normalizedCourseName &&
+    normalizeCoursePriceLookup(row.category) === normalizedCategory,
+  );
+
+  if (matchingRows.length === 0) return null;
+
+  const exactMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === normalizedQualification);
+  if (exactMatch) {
+    const parsed = Number(exactMatch.price);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const genericMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === "");
+  if (genericMatch) {
+    const parsed = Number(genericMatch.price);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
+function normalizeBitrixLinkTokens(value: unknown): string[] {
+  const tokens = new Set<string>();
+
+  const visit = (candidate: unknown) => {
+    if (candidate === null || candidate === undefined) return;
+
+    if (
+      typeof candidate === "string" ||
+      typeof candidate === "number" ||
+      typeof candidate === "boolean"
+    ) {
+      const normalized = String(candidate).trim();
+      if (normalized) tokens.add(normalized);
+      return;
+    }
+
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+
+    if (typeof candidate === "object") {
+      const record = candidate as Record<string, unknown>;
+      let foundExplicitId = false;
+      for (const key of ["ID", "id", "VALUE", "value", "ITEM_ID", "itemId"]) {
+        const raw = record[key];
+        if (raw === null || raw === undefined) continue;
+        const normalized = String(raw).trim();
+        if (!normalized) continue;
+        tokens.add(normalized);
+        foundExplicitId = true;
+      }
+      if (foundExplicitId) return;
+      for (const nested of Object.values(record)) visit(nested);
+    }
+  };
+
+  visit(value);
+  return Array.from(tokens).sort();
+}
+
 function preferredTextValue(localValue: unknown, currentBitrixValue: unknown): string | undefined {
   const localPlain = plain(localValue);
   if (localPlain) return localPlain;
@@ -550,6 +658,11 @@ function areSmartFieldValuesEqual(kind: SmartFieldKind, currentValue: unknown, d
       return normalizeBitrixBoolean(currentValue) === normalizeBitrixBoolean(desiredValue);
     case "number":
       return normalizeBitrixNumber(currentValue) === normalizeBitrixNumber(desiredValue);
+    case "link": {
+      const currentTokens = normalizeBitrixLinkTokens(currentValue);
+      const desiredTokens = normalizeBitrixLinkTokens(desiredValue);
+      return currentTokens.length === desiredTokens.length && currentTokens.every((value, index) => value === desiredTokens[index]);
+    }
     case "text":
     default:
       return plain(currentValue) === plain(desiredValue);
@@ -884,7 +997,7 @@ async function runInChunks<T>(items: T[], concurrency: number, worker: (item: T)
   }
 }
 
-async function loadEnumMaps() {
+async function loadEnumMaps(supabase: ReturnType<typeof adminClient>) {
   const raw = await callBitrix("crm.item.fields", { entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID });
   const fields = (raw?.fields || raw || {}) as Record<string, unknown>;
   const findField = (rawName: string, camelName: string) => {
@@ -913,9 +1026,25 @@ async function loadEnumMaps() {
     }
     return out;
   };
+  const issuerCompanyMap = new Map<string, string>();
+  const { data: issuerCompanyRows } = await supabase
+    .from("ref_bitrix_list_items")
+    .select("name, bitrix_value, code, bitrix_item_id")
+    .eq("list_key", "MY_COMPANIES");
+
+  for (const row of (issuerCompanyRows || []) as Array<Record<string, unknown>>) {
+    const itemId = plain(row.bitrix_item_id);
+    if (!itemId) continue;
+    for (const candidate of [row.name, row.bitrix_value]) {
+      const normalized = normalizeReferenceLookup(candidate);
+      if (normalized) issuerCompanyMap.set(normalized, itemId);
+    }
+  }
+
   return {
     categoryMap: toMap(findField(BITRIX_FIELDS_RAW.CATEGORY, BITRIX_FIELDS.CATEGORY)),
     courseMap: toMap(findField(BITRIX_FIELDS_RAW.COURSE_NAME, BITRIX_FIELDS.COURSE_NAME)),
+    issuerCompanyMap,
     markerPassMap: toMap(findField(BITRIX_FIELDS_RAW.MARKER_PASS, BITRIX_FIELDS.MARKER_PASS)),
     typeLearnMap: toMap(findField(BITRIX_FIELDS_RAW.TYPE_LEARN, BITRIX_FIELDS.TYPE_LEARN)),
     commisConclMap: toMap(findField(BITRIX_FIELDS_RAW.COMMIS_CONCL, BITRIX_FIELDS.COMMIS_CONCL)),
@@ -932,6 +1061,7 @@ function buildDesiredSmartProcessFieldEntries(params: {
   existingCertificate: ExistingCertificateRow | null;
   currentItem: Record<string, unknown> | null;
   enumMaps: EnumMaps;
+  defaultPrice: number | null;
 }): SmartFieldEntry[] {
   const currentItem = params.currentItem || {};
   const cert = params.existingCertificate;
@@ -969,6 +1099,13 @@ function buildDesiredSmartProcessFieldEntries(params: {
     BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE,
     "date",
     preferredDateValue(cert?.expiry_date, getSmartFieldValue(currentItem, BITRIX_FIELDS.DOCUMENT_EXPIRY_DATE)),
+  );
+  pushIfDefined(
+    BITRIX_CERTIFICATE_REFERENCE_FIELDS.ISSUER_COMPANY,
+    "link",
+    cert?.issuer_company
+      ? params.enumMaps.issuerCompanyMap.get(normalizeReferenceLookup(cert.issuer_company))
+      : undefined,
   );
   pushIfDefined(
     BITRIX_FIELDS.COMMISSION_CHAIR,
@@ -1055,9 +1192,10 @@ function buildDesiredSmartProcessFieldEntries(params: {
     "text",
     preferredEnumValue(cert?.employee_status, getSmartFieldValue(currentItem, BITRIX_FIELDS.EMPLOYEE_STATUS), params.enumMaps.employeeStatusMap, value => normalizeEmployeeStatusValue(value).toLowerCase()),
   );
-  const preferredPrice = preferredNumberValue(cert?.price, getSmartFieldValue(currentItem, BITRIX_FIELDS.PRICE));
-  if (preferredPrice !== undefined) {
-    entries.push({ code: BITRIX_FIELDS.PRICE, kind: "number", value: preferredPrice });
+  const currentBitrixPrice = normalizeBitrixNumber(getSmartFieldValue(currentItem, BITRIX_FIELDS.PRICE));
+  const effectivePrice = cert?.price ?? currentBitrixPrice ?? params.defaultPrice;
+  if (effectivePrice !== null && effectivePrice !== undefined) {
+    entries.push({ code: BITRIX_FIELDS.PRICE, kind: "number", value: effectivePrice });
   }
 
   return entries;
@@ -1701,13 +1839,24 @@ Deno.serve(async (req: Request) => {
       .in("participant_id", participants.map(item => item.id));
     if (coursesResult.error) throw coursesResult.error;
 
-    const existingCertsResult = await supabase
-      .from("certificates")
-      .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
-      .eq("questionnaire_id", questionnaireId);
+    const [existingCertsResult, coursePricesResult] = await Promise.all([
+      supabase
+        .from("certificates")
+        .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
+        .eq("questionnaire_id", questionnaireId),
+      supabase
+        .from("ref_course_prices")
+        .select("course_name, qualification, category, price, sort_order")
+        .order("sort_order")
+        .order("course_name")
+        .order("category")
+        .order("qualification"),
+    ]);
     if (existingCertsResult.error) throw existingCertsResult.error;
+    if (coursePricesResult.error) throw coursePricesResult.error;
 
     const existingCertificates = (existingCertsResult.data || []) as ExistingCertificateRow[];
+    const referenceCoursePrices = (coursePricesResult.data || []) as RefCoursePriceRow[];
     const dealAmount = existingCertificates.reduce((sum, cert) => {
       const price = typeof cert.price === "number" ? cert.price : Number(cert.price);
       return Number.isFinite(price) ? sum + price : sum;
@@ -1772,7 +1921,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const enumMaps = await loadEnumMaps();
+    const enumMaps = await loadEnumMaps(supabase);
     const certificateInserts: Array<Record<string, unknown>> = [];
     const certificateUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
     let photoFailures = 0;
@@ -1803,6 +1952,15 @@ Deno.serve(async (req: Request) => {
         itemId = "";
       }
 
+      const effectiveQualification = plain(
+        existingCertificate?.qualification ||
+        getSmartFieldValue(currentBitrixItem || {}, BITRIX_FIELDS.QUALIFICATION),
+      );
+      const defaultReferencePrice = findReferenceCoursePrice(referenceCoursePrices, {
+        courseName: task.courseName,
+        category: task.participant.category,
+        qualification: effectiveQualification,
+      });
       const desiredFieldEntries = buildDesiredSmartProcessFieldEntries({
         participant: task.participant,
         courseName: task.courseName,
@@ -1811,6 +1969,7 @@ Deno.serve(async (req: Request) => {
         existingCertificate,
         currentItem: currentBitrixItem,
         enumMaps,
+        defaultPrice: defaultReferencePrice,
       });
       const desiredFields = buildSmartProcessFieldRecord(desiredFieldEntries);
 
@@ -1875,6 +2034,11 @@ Deno.serve(async (req: Request) => {
         sync_error: "",
         updated_at: new Date().toISOString(),
       };
+      const currentBitrixPrice = normalizeBitrixNumber(getSmartFieldValue(currentBitrixItem || {}, BITRIX_FIELDS.PRICE));
+      const effectivePrice = existingCertificate?.price ?? currentBitrixPrice ?? defaultReferencePrice;
+      if ((existingCertificate?.price ?? null) == null && effectivePrice !== null && effectivePrice !== undefined) {
+        baseCertificatePatch.price = effectivePrice;
+      }
       if (resolvedPhotoSyncKey) {
         baseCertificatePatch.photo_sync_key = resolvedPhotoSyncKey;
       }

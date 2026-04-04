@@ -22,6 +22,10 @@ interface CertificatesGridProps {
   bulkExpiryDate: string;
   bulkCategory: string;
   categoryValueOptions: string[];
+  bulkIssuerCompany: string;
+  issuerCompanyOptions: string[];
+  bulkCommissionChair: string;
+  commissionChairOptions: string[];
   bulkMarkerPass: string;
   markerPassOptions: string[];
   bulkTypeLearn: string;
@@ -46,6 +50,10 @@ interface CertificatesGridProps {
   onBulkFillText: (fieldKey: keyof Certificate) => void;
   onBulkFillCategory: () => void;
   onBulkCategoryChange: (value: string) => void;
+  onBulkFillIssuerCompany: () => void;
+  onBulkIssuerCompanyChange: (value: string) => void;
+  onBulkFillCommissionChair: () => void;
+  onBulkCommissionChairChange: (value: string) => void;
   onBulkFillMarkerPass: () => void;
   onBulkMarkerPassChange: (value: string) => void;
   onBulkFillTypeLearn: () => void;
@@ -103,6 +111,10 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     bulkExpiryDate,
     bulkCategory,
     categoryValueOptions,
+    bulkIssuerCompany,
+    issuerCompanyOptions,
+    bulkCommissionChair,
+    commissionChairOptions,
     bulkMarkerPass,
     markerPassOptions,
     bulkTypeLearn,
@@ -127,6 +139,10 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onBulkFillText,
     onBulkFillCategory,
     onBulkCategoryChange,
+    onBulkFillIssuerCompany,
+    onBulkIssuerCompanyChange,
+    onBulkFillCommissionChair,
+    onBulkCommissionChairChange,
     onBulkFillMarkerPass,
     onBulkMarkerPassChange,
     onBulkFillTypeLearn,
@@ -305,6 +321,56 @@ export function CertificatesGrid(props: CertificatesGridProps) {
           <button
             onClick={onBulkFillCategory}
             disabled={bulkSaving || !bulkCategory}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'issuer_company') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkIssuerCompany}
+            onChange={event => onBulkIssuerCompanyChange(event.target.value)}
+            className="min-w-[180px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving}
+          >
+            <option value="">Выбрать...</option>
+            {issuerCompanyOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillIssuerCompany}
+            disabled={bulkSaving || !bulkIssuerCompany}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'commission_chair') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkCommissionChair}
+            onChange={event => onBulkCommissionChairChange(event.target.value)}
+            className="min-w-[150px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving}
+          >
+            <option value="">Выбрать...</option>
+            {commissionChairOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillCommissionChair}
+            disabled={bulkSaving || !bulkCommissionChair}
             className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
           >
             Заполнить
@@ -595,6 +661,20 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                             field={textField.key}
                             value={String(cert[textField.key] ?? '')}
                             options={categoryValueOptions}
+                          />
+                        ) : textField.key === 'issuer_company' ? (
+                          <SelectCell
+                            certId={cert.id}
+                            field={textField.key}
+                            value={String(cert[textField.key] ?? '')}
+                            options={issuerCompanyOptions}
+                          />
+                        ) : textField.key === 'commission_chair' ? (
+                          <SelectCell
+                            certId={cert.id}
+                            field={textField.key}
+                            value={String(cert[textField.key] ?? '')}
+                            options={commissionChairOptions}
                           />
                         ) : textField.key === 'type_learn' ? (
                           <SelectCell

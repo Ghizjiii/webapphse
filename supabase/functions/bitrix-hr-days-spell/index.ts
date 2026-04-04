@@ -10,6 +10,16 @@ const DAYS_NUMBER_FIELD = Deno.env.get("BITRIX_HR_DAYS_NUMBER_FIELD") || "ufCrm1
 const DAYS_WORDS_FIELD = Deno.env.get("BITRIX_HR_DAYS_WORDS_FIELD") || "ufCrm10_1772131937986";
 const POSITION_FIELD = Deno.env.get("BITRIX_HR_POSITION_FIELD") || "ufCrm10_1772992837";
 const POSITION_GENITIVE_FIELD = Deno.env.get("BITRIX_HR_POSITION_GENITIVE_FIELD") || "ufCrm10_1771778817";
+const EXTERNAL_EMPLOYEE_FULL_NAME_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_FULL_NAME_FIELD") || "ufCrm10_1775226309";
+const EXTERNAL_EMPLOYEE_INITIALS_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD") || "ufCrm10_1775228369";
+const EXTERNAL_EMPLOYEE_GENITIVE_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD") || "ufCrm10_1775228326";
+const EXTERNAL_POSITION_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_FIELD") || "ufCrm10_1775330493";
+const EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD") || "ufCrm10_1775330315";
 const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 
 type PlainObject = Record<string, unknown>;
@@ -311,6 +321,35 @@ function firstScalarValue(value: unknown): string {
   return "";
 }
 
+function splitFullName(value: string): string[] {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function initialLetter(value: string): string {
+  const chars = Array.from(String(value || "").trim());
+  return chars.length > 0 ? `${chars[0]}.` : "";
+}
+
+function formatSurnameWithInitials(fullName: string): string {
+  const parts = splitFullName(fullName);
+  if (parts.length === 0) return "";
+
+  const surname = parts[0];
+  const nameInitial = initialLetter(parts[1] || "");
+  const patronymicInitial = initialLetter(parts[2] || "");
+  const initials = `${nameInitial}${patronymicInitial}`;
+
+  return initials ? `${surname} ${initials}` : surname;
+}
+
+function toLowerCaseRu(value: string): string {
+  return String(value || "").trim().toLocaleLowerCase("ru-RU");
+}
+
 function parseDateValue(value: unknown): string | null {
   const raw = firstScalarValue(value);
   if (!raw) return null;
@@ -606,10 +645,30 @@ Deno.serve(async (req: Request) => {
         POSITION_FIELD,
         ...fieldCodeVariants(POSITION_FIELD),
       ]) ?? findFieldValue(item, POSITION_FIELD);
+    const rawExternalEmployeeFullName =
+      pickFormOrJson(body, [
+        "externalEmployeeFullName",
+        "external_employee_full_name",
+        "externalEmployeeFio",
+        "external_employee_fio",
+        EXTERNAL_EMPLOYEE_FULL_NAME_FIELD,
+        ...fieldCodeVariants(EXTERNAL_EMPLOYEE_FULL_NAME_FIELD),
+      ]) ?? findFieldValue(item, EXTERNAL_EMPLOYEE_FULL_NAME_FIELD);
+    const rawExternalPosition =
+      pickFormOrJson(body, [
+        "externalEmployeePosition",
+        "external_employee_position",
+        "externalPosition",
+        "external_position",
+        EXTERNAL_POSITION_FIELD,
+        ...fieldCodeVariants(EXTERNAL_POSITION_FIELD),
+      ]) ?? findFieldValue(item, EXTERNAL_POSITION_FIELD);
 
     const startDateValue = firstScalarValue(rawStartDate);
     const endDateValue = firstScalarValue(rawEndDate);
     const sourcePosition = firstScalarValue(rawPosition);
+    const sourceExternalEmployeeFullName = firstScalarValue(rawExternalEmployeeFullName);
+    const sourceExternalPosition = firstScalarValue(rawExternalPosition);
 
     let startDate: string | null = null;
     let endDate: string | null = null;
@@ -672,32 +731,100 @@ Deno.serve(async (req: Request) => {
       warnings.push("Position genitive sync skipped because position field is empty");
     }
 
-    const daysAttempted = Boolean(startDateValue || endDateValue);
-    const positionAttempted = Boolean(sourcePosition);
-    const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
-    const hasPositionSuccess = Boolean(positionAttempted && !positionError);
+    let externalEmployeeInitials = "";
+    let externalEmployeeGenitive = "";
+    let externalEmployeeError = "";
+    let updateExternalEmployeeInitialsFieldKey = "";
+    let updateExternalEmployeeGenitiveFieldKey = "";
+    let hasExternalEmployeeInitialsSuccess = false;
+    let hasExternalEmployeeGenitiveSuccess = false;
 
-    if (daysError && !hasPositionSuccess) {
-      return jsonResponse(req, 400, {
-        error: daysError,
-        itemId,
-        entityTypeId,
-        startDate,
-        endDate,
-        sourcePosition,
-        positionError,
-      });
+    if (sourceExternalEmployeeFullName) {
+      externalEmployeeInitials = formatSurnameWithInitials(sourceExternalEmployeeFullName);
+      hasExternalEmployeeInitialsSuccess = Boolean(externalEmployeeInitials);
+
+      if (externalEmployeeInitials) {
+        const currentInitials = normalizeComparableText(findFieldValue(item, EXTERNAL_EMPLOYEE_INITIALS_FIELD));
+        if (currentInitials !== normalizeComparableText(externalEmployeeInitials)) {
+          updateExternalEmployeeInitialsFieldKey = resolveUpdateFieldKey(item, EXTERNAL_EMPLOYEE_INITIALS_FIELD);
+          fieldsToUpdate[updateExternalEmployeeInitialsFieldKey] = externalEmployeeInitials;
+        }
+      }
+
+      try {
+        externalEmployeeGenitive = await toGenitiveCase(sourceExternalEmployeeFullName);
+        hasExternalEmployeeGenitiveSuccess = Boolean(externalEmployeeGenitive);
+
+        const currentExternalEmployeeGenitive = normalizeComparableText(
+          findFieldValue(item, EXTERNAL_EMPLOYEE_GENITIVE_FIELD),
+        );
+
+        if (currentExternalEmployeeGenitive !== normalizeComparableText(externalEmployeeGenitive)) {
+          updateExternalEmployeeGenitiveFieldKey = resolveUpdateFieldKey(item, EXTERNAL_EMPLOYEE_GENITIVE_FIELD);
+          fieldsToUpdate[updateExternalEmployeeGenitiveFieldKey] = externalEmployeeGenitive;
+        }
+      } catch (error) {
+        externalEmployeeError = error instanceof Error ? error.message : String(error);
+      }
+    } else {
+      warnings.push("External employee sync skipped because full name field is empty");
     }
 
-    if (positionError && !hasDaysSuccess) {
-      return jsonResponse(req, 502, {
-        error: positionError,
+    let externalPositionSourceLower = "";
+    let externalPositionGenitiveLower = "";
+    let externalPositionError = "";
+    let updateExternalPositionFieldKey = "";
+
+    if (sourceExternalPosition) {
+      try {
+        externalPositionSourceLower = toLowerCaseRu(sourceExternalPosition);
+        externalPositionGenitiveLower = toLowerCaseRu(await toGenitiveCase(externalPositionSourceLower));
+        const currentExternalPositionGenitive = normalizeComparableText(
+          findFieldValue(item, EXTERNAL_POSITION_GENITIVE_LOWER_FIELD),
+        );
+
+        if (currentExternalPositionGenitive !== normalizeComparableText(externalPositionGenitiveLower)) {
+          updateExternalPositionFieldKey = resolveUpdateFieldKey(item, EXTERNAL_POSITION_GENITIVE_LOWER_FIELD);
+          fieldsToUpdate[updateExternalPositionFieldKey] = externalPositionGenitiveLower;
+        }
+      } catch (error) {
+        externalPositionError = error instanceof Error ? error.message : String(error);
+      }
+    } else {
+      warnings.push("External position genitive sync skipped because source position field is empty");
+    }
+
+    const daysAttempted = Boolean(startDateValue || endDateValue);
+    const positionAttempted = Boolean(sourcePosition);
+    const externalEmployeeAttempted = Boolean(sourceExternalEmployeeFullName);
+    const externalPositionAttempted = Boolean(sourceExternalPosition);
+    const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
+    const hasPositionSuccess = Boolean(positionAttempted && !positionError);
+    const hasExternalEmployeeSuccess = Boolean(
+      externalEmployeeAttempted && (hasExternalEmployeeInitialsSuccess || hasExternalEmployeeGenitiveSuccess),
+    );
+    const hasExternalPositionSuccess = Boolean(externalPositionAttempted && !externalPositionError);
+    const hasAnySuccess = hasDaysSuccess || hasPositionSuccess || hasExternalEmployeeSuccess || hasExternalPositionSuccess;
+    const firstBlockingError = daysError || positionError || externalEmployeeError || externalPositionError;
+
+    if (firstBlockingError && !hasAnySuccess) {
+      return jsonResponse(req, daysError ? 400 : 502, {
+        error: firstBlockingError,
         itemId,
         entityTypeId,
         startDate,
         endDate,
+        days,
+        daysWords,
         sourcePosition,
-        daysError,
+        genitivePosition,
+        sourceExternalEmployeeFullName,
+        externalEmployeeInitials,
+        externalEmployeeGenitive,
+        sourceExternalPosition,
+        externalPositionSourceLower,
+        externalPositionGenitiveLower,
+        warnings,
       });
     }
 
@@ -709,11 +836,19 @@ Deno.serve(async (req: Request) => {
       warnings.push(positionError);
     }
 
+    if (externalEmployeeError) {
+      warnings.push(externalEmployeeError);
+    }
+
+    if (externalPositionError) {
+      warnings.push(externalPositionError);
+    }
+
     if (Object.keys(fieldsToUpdate).length === 0) {
       return jsonResponse(req, 200, {
         ok: true,
         updated: false,
-        partial: Boolean(daysError || positionError),
+        partial: Boolean(daysError || positionError || externalEmployeeError || externalPositionError),
         itemId,
         entityTypeId,
         startDate,
@@ -722,6 +857,12 @@ Deno.serve(async (req: Request) => {
         daysWords,
         sourcePosition,
         genitivePosition,
+        sourceExternalEmployeeFullName,
+        externalEmployeeInitials,
+        externalEmployeeGenitive,
+        sourceExternalPosition,
+        externalPositionSourceLower,
+        externalPositionGenitiveLower,
         warnings,
       });
     }
@@ -735,7 +876,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(req, 200, {
       ok: true,
       updated: true,
-      partial: Boolean(daysError || positionError),
+      partial: Boolean(daysError || positionError || externalEmployeeError || externalPositionError),
       itemId,
       entityTypeId,
       startDate,
@@ -744,11 +885,20 @@ Deno.serve(async (req: Request) => {
       daysWords,
       sourcePosition,
       genitivePosition,
+      sourceExternalEmployeeFullName,
+      externalEmployeeInitials,
+      externalEmployeeGenitive,
+      sourceExternalPosition,
+      externalPositionSourceLower,
+      externalPositionGenitiveLower,
       warnings,
       updateFieldKeys: Object.keys(fieldsToUpdate),
       updateDaysNumberFieldKey,
       updateDaysWordsFieldKey,
       updatePositionFieldKey,
+      updateExternalEmployeeInitialsFieldKey,
+      updateExternalEmployeeGenitiveFieldKey,
+      updateExternalPositionFieldKey,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

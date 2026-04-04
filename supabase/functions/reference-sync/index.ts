@@ -13,6 +13,16 @@ const HR_DAYS_NUMBER_FIELD = Deno.env.get("BITRIX_HR_DAYS_NUMBER_FIELD") || "ufC
 const HR_DAYS_WORDS_FIELD = Deno.env.get("BITRIX_HR_DAYS_WORDS_FIELD") || "ufCrm10_1772131937986";
 const HR_POSITION_FIELD = Deno.env.get("BITRIX_HR_POSITION_FIELD") || "ufCrm10_1772992837";
 const HR_POSITION_GENITIVE_FIELD = Deno.env.get("BITRIX_HR_POSITION_GENITIVE_FIELD") || "ufCrm10_1771778817";
+const HR_EXTERNAL_EMPLOYEE_FULL_NAME_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_FULL_NAME_FIELD") || "ufCrm10_1775226309";
+const HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD") || "ufCrm10_1775228369";
+const HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD") || "ufCrm10_1775228326";
+const HR_EXTERNAL_POSITION_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_FIELD") || "ufCrm10_1775330493";
+const HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD") || "ufCrm10_1775330315";
 const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 const SYNC_SCOPE = "reference_lists";
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
@@ -39,12 +49,20 @@ type BitrixDocumentValidityDetails = {
   duration_unit: "year";
 };
 
+type BitrixCoursePriceDetails = {
+  course_name: string;
+  qualification: string;
+  electrical_safety_group: string;
+  category: string;
+  price: number | null;
+};
+
 type BitrixListElement = {
   id: string;
   name: string;
   code: string;
   sortOrder: number;
-  details: BitrixDocumentValidityDetails | null;
+  details: BitrixDocumentValidityDetails | BitrixCoursePriceDetails | null;
 };
 
 type BitrixListFieldDefinition = {
@@ -95,6 +113,7 @@ type SyncTargets = {
 };
 
 const BITRIX_REFERENCE_LISTS = {
+  MY_COMPANIES: { iblockId: 60, name: "Справочник компаний (служебное)" },
   COURSES: { iblockId: 64, name: "Наименование курсов" },
   DOCUMENT_VALIDITY: { iblockId: 66, name: "Сроки документов" },
   CATEGORIES: { iblockId: 68, name: "Категория" },
@@ -104,9 +123,11 @@ const BITRIX_REFERENCE_LISTS = {
   MARKER_PASS: { iblockId: 76, name: "Отметка о проверке знаний" },
   TYPE_LEARN: { iblockId: 78, name: "Вид проверки знаний / тип обучения" },
   COMMIS_CONCL: { iblockId: 80, name: "Заключение комиссии" },
+  COURSE_PRICES: { iblockId: 84, name: "Course default prices" },
 } as const satisfies Record<string, BitrixListDefinition>;
 
 const BITRIX_REFERENCE_LIST_ORDER = [
+  "MY_COMPANIES",
   "CATEGORIES",
   "COURSES",
   "DOCUMENT_VALIDITY",
@@ -116,7 +137,12 @@ const BITRIX_REFERENCE_LIST_ORDER = [
   "MARKER_PASS",
   "TYPE_LEARN",
   "COMMIS_CONCL",
+  "COURSE_PRICES",
 ] as const satisfies ReadonlyArray<keyof typeof BITRIX_REFERENCE_LISTS>;
+
+function resolveBitrixListTypeId(iblockId: number): string {
+  return iblockId === 60 ? "bitrix_processes" : "lists";
+}
 
 function normalizeOriginRule(value: string): string {
   const trimmed = String(value || "").trim();
@@ -297,6 +323,35 @@ function firstScalarValue(value: unknown): string {
   }
 
   return "";
+}
+
+function splitFullName(value: string): string[] {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function initialLetter(value: string): string {
+  const chars = Array.from(String(value || "").trim());
+  return chars.length > 0 ? `${chars[0]}.` : "";
+}
+
+function formatSurnameWithInitials(fullName: string): string {
+  const parts = splitFullName(fullName);
+  if (parts.length === 0) return "";
+
+  const surname = parts[0];
+  const nameInitial = initialLetter(parts[1] || "");
+  const patronymicInitial = initialLetter(parts[2] || "");
+  const initials = `${nameInitial}${patronymicInitial}`;
+
+  return initials ? `${surname} ${initials}` : surname;
+}
+
+function toLowerCaseRu(value: string): string {
+  return String(value || "").trim().toLocaleLowerCase("ru-RU");
 }
 
 function pickFormOrJson(body: PlainObject, paths: string[]): unknown {
@@ -808,10 +863,30 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
       HR_POSITION_FIELD,
       ...fieldKeyVariants(HR_POSITION_FIELD),
     ]) ?? getFieldValue(item, HR_POSITION_FIELD);
+  const rawExternalEmployeeFullName =
+    pickFormOrJson(body, [
+      "externalEmployeeFullName",
+      "external_employee_full_name",
+      "externalEmployeeFio",
+      "external_employee_fio",
+      HR_EXTERNAL_EMPLOYEE_FULL_NAME_FIELD,
+      ...fieldKeyVariants(HR_EXTERNAL_EMPLOYEE_FULL_NAME_FIELD),
+    ]) ?? getFieldValue(item, HR_EXTERNAL_EMPLOYEE_FULL_NAME_FIELD);
+  const rawExternalPosition =
+    pickFormOrJson(body, [
+      "externalEmployeePosition",
+      "external_employee_position",
+      "externalPosition",
+      "external_position",
+      HR_EXTERNAL_POSITION_FIELD,
+      ...fieldKeyVariants(HR_EXTERNAL_POSITION_FIELD),
+    ]) ?? getFieldValue(item, HR_EXTERNAL_POSITION_FIELD);
 
   const startDateValue = firstScalarValue(rawStartDate);
   const endDateValue = firstScalarValue(rawEndDate);
   const sourcePosition = firstScalarValue(rawPosition);
+  const sourceExternalEmployeeFullName = firstScalarValue(rawExternalEmployeeFullName);
+  const sourceExternalPosition = firstScalarValue(rawExternalPosition);
 
   let startDate: string | null = null;
   let endDate: string | null = null;
@@ -874,21 +949,89 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     warnings.push("Position genitive sync skipped because position field is empty");
   }
 
-  const daysAttempted = Boolean(startDateValue || endDateValue);
-  const positionAttempted = Boolean(sourcePosition);
-  const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
-  const hasPositionSuccess = Boolean(positionAttempted && !positionError);
+  let externalEmployeeInitials = "";
+  let externalEmployeeGenitive = "";
+  let externalEmployeeError = "";
+  let updateExternalEmployeeInitialsFieldKey = "";
+  let updateExternalEmployeeGenitiveFieldKey = "";
+  let hasExternalEmployeeInitialsSuccess = false;
+  let hasExternalEmployeeGenitiveSuccess = false;
 
-  if (daysError && !hasPositionSuccess) {
-    throw new Error(daysError);
+  if (sourceExternalEmployeeFullName) {
+    externalEmployeeInitials = formatSurnameWithInitials(sourceExternalEmployeeFullName);
+    hasExternalEmployeeInitialsSuccess = Boolean(externalEmployeeInitials);
+
+    if (externalEmployeeInitials) {
+      const currentInitials = normalizeComparableText(getFieldValue(item, HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD));
+      if (currentInitials !== normalizeComparableText(externalEmployeeInitials)) {
+        updateExternalEmployeeInitialsFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD);
+        fieldsToUpdate[updateExternalEmployeeInitialsFieldKey] = externalEmployeeInitials;
+      }
+    }
+
+    try {
+      externalEmployeeGenitive = await toGenitiveCase(sourceExternalEmployeeFullName);
+      hasExternalEmployeeGenitiveSuccess = Boolean(externalEmployeeGenitive);
+      const currentExternalEmployeeGenitive = normalizeComparableText(
+        getFieldValue(item, HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD),
+      );
+
+      if (currentExternalEmployeeGenitive !== normalizeComparableText(externalEmployeeGenitive)) {
+        updateExternalEmployeeGenitiveFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD);
+        fieldsToUpdate[updateExternalEmployeeGenitiveFieldKey] = externalEmployeeGenitive;
+      }
+    } catch (error) {
+      externalEmployeeError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    warnings.push("External employee sync skipped because full name field is empty");
   }
 
-  if (positionError && !hasDaysSuccess) {
-    throw new Error(positionError);
+  let externalPositionSourceLower = "";
+  let externalPositionGenitiveLower = "";
+  let externalPositionError = "";
+  let updateExternalPositionFieldKey = "";
+
+  if (sourceExternalPosition) {
+    try {
+      externalPositionSourceLower = toLowerCaseRu(sourceExternalPosition);
+      externalPositionGenitiveLower = toLowerCaseRu(await toGenitiveCase(externalPositionSourceLower));
+      const currentExternalPositionGenitive = normalizeComparableText(
+        getFieldValue(item, HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD),
+      );
+
+      if (currentExternalPositionGenitive !== normalizeComparableText(externalPositionGenitiveLower)) {
+        updateExternalPositionFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD);
+        fieldsToUpdate[updateExternalPositionFieldKey] = externalPositionGenitiveLower;
+      }
+    } catch (error) {
+      externalPositionError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    warnings.push("External position genitive sync skipped because source position field is empty");
+  }
+
+  const daysAttempted = Boolean(startDateValue || endDateValue);
+  const positionAttempted = Boolean(sourcePosition);
+  const externalEmployeeAttempted = Boolean(sourceExternalEmployeeFullName);
+  const externalPositionAttempted = Boolean(sourceExternalPosition);
+  const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
+  const hasPositionSuccess = Boolean(positionAttempted && !positionError);
+  const hasExternalEmployeeSuccess = Boolean(
+    externalEmployeeAttempted && (hasExternalEmployeeInitialsSuccess || hasExternalEmployeeGenitiveSuccess),
+  );
+  const hasExternalPositionSuccess = Boolean(externalPositionAttempted && !externalPositionError);
+  const hasAnySuccess = hasDaysSuccess || hasPositionSuccess || hasExternalEmployeeSuccess || hasExternalPositionSuccess;
+  const firstBlockingError = daysError || positionError || externalEmployeeError || externalPositionError;
+
+  if (firstBlockingError && !hasAnySuccess) {
+    throw new Error(firstBlockingError);
   }
 
   if (daysError) warnings.push(daysError);
   if (positionError) warnings.push(positionError);
+  if (externalEmployeeError) warnings.push(externalEmployeeError);
+  if (externalPositionError) warnings.push(externalPositionError);
 
   const updateFieldKeys = Object.keys(fieldsToUpdate);
   if (updateFieldKeys.length > 0) {
@@ -908,9 +1051,17 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     updated: updateFieldKeys.length > 0,
     sourcePosition,
     genitivePosition,
+    sourceExternalEmployeeFullName,
+    externalEmployeeInitials,
+    externalEmployeeGenitive,
+    sourceExternalPosition,
+    externalPositionGenitiveLower,
     warnings,
     updateFieldKeys,
     updatePositionFieldKey,
+    updateExternalEmployeeInitialsFieldKey,
+    updateExternalEmployeeGenitiveFieldKey,
+    updateExternalPositionFieldKey,
   }));
 
   return {
@@ -921,18 +1072,27 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     itemId,
     entityTypeId,
     updated: updateFieldKeys.length > 0,
-    partial: Boolean(daysError || positionError),
+    partial: Boolean(daysError || positionError || externalEmployeeError || externalPositionError),
     startDate,
     endDate,
     days,
     daysWords,
     sourcePosition,
     genitivePosition,
+    sourceExternalEmployeeFullName,
+    externalEmployeeInitials,
+    externalEmployeeGenitive,
+    sourceExternalPosition,
+    externalPositionSourceLower,
+    externalPositionGenitiveLower,
     warnings,
     updateFieldKeys,
     updateDaysNumberFieldKey,
     updateDaysWordsFieldKey,
     updatePositionFieldKey,
+    updateExternalEmployeeInitialsFieldKey,
+    updateExternalEmployeeGenitiveFieldKey,
+    updateExternalPositionFieldKey,
   };
 }
 
@@ -1247,6 +1407,50 @@ function resolveFieldNumberValue(rawValue: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function resolveFieldMoneyValue(rawValue: unknown): number | null {
+  const visit = (value: unknown): number | null => {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value
+        .split("|")[0]
+        .replace(/\s+/g, "")
+        .replace(",", ".")
+        .replace(/[^\d.-]/g, "");
+      if (!normalized) return null;
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const parsed = visit(item);
+        if (parsed !== null) return parsed;
+      }
+      return null;
+    }
+
+    if (value && typeof value === "object") {
+      const record = value as PlainObject;
+      for (const key of ["VALUE", "value", "AMOUNT", "amount", "PRICE", "price"]) {
+        if (!(key in record)) continue;
+        const parsed = visit(record[key]);
+        if (parsed !== null) return parsed;
+      }
+      for (const nested of Object.values(record)) {
+        const parsed = visit(nested);
+        if (parsed !== null) return parsed;
+      }
+    }
+
+    return null;
+  };
+
+  return visit(rawValue);
+}
+
 function buildDocumentValidityDetails(
   raw: PlainObject,
   fields: BitrixListFieldDefinition[],
@@ -1265,6 +1469,75 @@ function buildDocumentValidityDetails(
   };
 }
 
+function buildCoursePriceDetails(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): BitrixCoursePriceDetails {
+  const courseField = findField(fields, { code: "NAIMENOVANIE_KURSOV", fieldId: "PROPERTY_948" });
+  const qualificationField = findField(fields, { code: "KVALIFIKATSIYA", fieldId: "PROPERTY_952" });
+  const electricalSafetyGroupField = findField(fields, { code: "GRUPPA_ELEKTROBEZOPASNOST_", fieldId: "PROPERTY_960" });
+  const categoryField = findField(fields, { code: "KATEGORIYA", fieldId: "PROPERTY_950" });
+  const priceField = findField(fields, { code: "TSENA", fieldId: "PROPERTY_946" });
+
+  return {
+    course_name: resolveFieldDisplayValue(courseField, courseField ? raw[courseField.fieldId] : raw.NAME) || plain(raw.NAME),
+    qualification: resolveFieldDisplayValue(qualificationField, qualificationField ? raw[qualificationField.fieldId] : ""),
+    electrical_safety_group: resolveFieldDisplayValue(
+      electricalSafetyGroupField,
+      electricalSafetyGroupField ? raw[electricalSafetyGroupField.fieldId] : "",
+    ),
+    category: resolveFieldDisplayValue(categoryField, categoryField ? raw[categoryField.fieldId] : ""),
+    price: resolveFieldMoneyValue(priceField ? raw[priceField.fieldId] : ""),
+  };
+}
+
+function resolveMyCompanyShortName(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): string {
+  const shortNameField = findField(fields, {
+    code: "KRATKOE_NAZVANIE",
+    name: "Краткое название",
+    fieldId: "PROPERTY_456",
+  });
+
+  return resolveFieldDisplayValue(
+    shortNameField,
+    shortNameField ? raw[shortNameField.fieldId] : raw.PROPERTY_456,
+  );
+}
+
+function resolveMyCompanyVisibleInApp(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): boolean {
+  const displayField = findField(fields, {
+    code: "PRILOZHENIE_OTOBR",
+    fieldId: "PROPERTY_938",
+  });
+  const value = resolveFieldDisplayValue(
+    displayField,
+    displayField ? raw[displayField.fieldId] : raw.PROPERTY_938,
+  ).toLocaleLowerCase("ru");
+
+  return value === "да" || value === "yes" || value === "y" || value === "true" || value === "1";
+}
+
+function resolveMyCompanyChairman(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): string {
+  const chairmanField = findField(fields, {
+    code: "PREDSEDATEL_PRILOZH_",
+    fieldId: "PROPERTY_940",
+  });
+
+  return resolveFieldDisplayValue(
+    chairmanField,
+    chairmanField ? raw[chairmanField.fieldId] : raw.PROPERTY_940,
+  );
+}
+
 function normalizeListElement(
   raw: PlainObject,
   index: number,
@@ -1272,19 +1545,31 @@ function normalizeListElement(
   fields: BitrixListFieldDefinition[],
 ): BitrixListElement | null {
   const id = plain(raw.ID || raw.id);
-  const name = plain(raw.NAME || raw.name);
-  if (!id || !name) return null;
+  const baseName = plain(raw.NAME || raw.name);
+  if (!id || !baseName) return null;
+
+  const isMyCompaniesList = iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId;
+  if (isMyCompaniesList && !resolveMyCompanyVisibleInApp(raw, fields)) return null;
 
   const sortRaw = Number(raw.SORT || raw.sort || 0);
+  const resolvedName = isMyCompaniesList
+    ? resolveMyCompanyShortName(raw, fields) || baseName
+    : baseName;
+  const resolvedChairman = isMyCompaniesList
+    ? resolveMyCompanyChairman(raw, fields)
+    : "";
 
   return {
     id,
-    name,
-    code: plain(raw.CODE || raw.code),
+    name: resolvedName,
+    code: resolvedChairman || plain(raw.CODE || raw.code),
     sortOrder: Number.isFinite(sortRaw) && sortRaw > 0 ? sortRaw : index + 1,
-    details: iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId
-      ? buildDocumentValidityDetails(raw, fields)
-      : null,
+    details:
+      iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId
+        ? buildDocumentValidityDetails(raw, fields)
+        : iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
+          ? buildCoursePriceDetails(raw, fields)
+          : null,
   };
 }
 
@@ -1356,7 +1641,7 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
 
 async function fetchBitrixListFields(iblockId: number): Promise<BitrixListFieldDefinition[]> {
   const result = await callBitrixListMethod("lists.field.get", {
-    IBLOCK_TYPE_ID: "lists",
+    IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
     IBLOCK_ID: iblockId,
   });
   return Object.entries(toPlainRecord(result)).map(normalizeListField);
@@ -1365,10 +1650,12 @@ async function fetchBitrixListFields(iblockId: number): Promise<BitrixListFieldD
 async function fetchBitrixListElements(iblockId: number): Promise<BitrixListElement[]> {
   const [result, fields] = await Promise.all([
     callBitrixListMethod("lists.element.get", {
-      IBLOCK_TYPE_ID: "lists",
+      IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
       IBLOCK_ID: iblockId,
     }),
-    iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId
+    iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId ||
+      iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId ||
+      iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
       ? fetchBitrixListFields(iblockId)
       : Promise.resolve([] as BitrixListFieldDefinition[]),
   ]);
@@ -1426,7 +1713,7 @@ async function replaceDocumentValidityRules(
   now: string,
 ) {
   const payload = items.map((item, index) => {
-    const details = item.details;
+    const details = item.details as BitrixDocumentValidityDetails | null;
     const courseName = plain(details?.course_name || item.name);
     const category = plain(details?.category);
     const documentType = plain(details?.document_type);
@@ -1454,6 +1741,45 @@ async function replaceDocumentValidityRules(
   if (payload.length === 0) return;
 
   const { error: insertError } = await supabase.from("ref_document_validity_rules").insert(payload);
+  if (insertError) throw insertError;
+}
+
+async function replaceCoursePrices(
+  supabase: ReturnType<typeof adminClient>,
+  items: BitrixListElement[],
+  now: string,
+) {
+  const payload = items.map((item, index) => {
+    const details = item.details as BitrixCoursePriceDetails | null;
+    const courseName = plain(details?.course_name || item.name);
+    const qualification = plain(details?.qualification);
+    const electricalSafetyGroup = plain(details?.electrical_safety_group);
+    const category = plain(details?.category);
+    const price = details?.price ?? null;
+
+    if (!courseName || !category) {
+      throw new Error(`Не удалось прочитать цену курса из Bitrix для элемента "${item.name}" (#${item.id})`);
+    }
+
+    return {
+      bitrix_item_id: item.id,
+      name: item.name,
+      course_name: courseName,
+      qualification,
+      electrical_safety_group: electricalSafetyGroup,
+      category,
+      price,
+      sort_order: item.sortOrder || index + 1,
+      updated_at: now,
+    };
+  });
+
+  const { error: deleteError } = await supabase.from("ref_course_prices").delete().gte("sort_order", 0);
+  if (deleteError) throw deleteError;
+
+  if (payload.length === 0) return;
+
+  const { error: insertError } = await supabase.from("ref_course_prices").insert(payload);
   if (insertError) throw insertError;
 }
 
@@ -1665,6 +1991,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
     let categoryItems: BitrixListElement[] = [];
     let courseItems: BitrixListElement[] = [];
     let documentValidityItems: BitrixListElement[] = [];
+    let coursePriceItems: BitrixListElement[] = [];
 
     if (targets.syncReferenceLists) {
       listsSnapshot = await fetchAllReferenceListElements();
@@ -1699,6 +2026,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
       categoryItems = listsSnapshot.find(item => item.listKey === "CATEGORIES")?.items || [];
       courseItems = listsSnapshot.find(item => item.listKey === "COURSES")?.items || [];
       documentValidityItems = listsSnapshot.find(item => item.listKey === "DOCUMENT_VALIDITY")?.items || [];
+      coursePriceItems = listsSnapshot.find(item => item.listKey === "COURSE_PRICES")?.items || [];
 
       await replaceReferenceTable(
         supabase,
@@ -1719,6 +2047,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
         })),
       );
       await replaceDocumentValidityRules(supabase, documentValidityItems, now);
+      await replaceCoursePrices(supabase, coursePriceItems, now);
     }
 
     let companySnapshot: Awaited<ReturnType<typeof fetchCompanyDirectorySnapshotFromBitrix>> | null = null;
@@ -1733,6 +2062,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
       categories_count: categoryItems.length,
       courses_count: courseItems.length,
       document_validity_count: documentValidityItems.length,
+      course_prices_count: coursePriceItems.length,
       companies_count: companySnapshot?.companiesCount || 0,
       company_directory_count: companySnapshot?.rows.length || 0,
       contracts_count: companySnapshot?.contractsCount || 0,

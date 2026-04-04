@@ -84,6 +84,20 @@ export interface RefDocumentValidityRule {
   updated_at: string;
 }
 
+export interface RefCoursePrice {
+  id: string;
+  bitrix_item_id: string;
+  name: string;
+  course_name: string;
+  qualification: string;
+  electrical_safety_group: string;
+  category: string;
+  price: number | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RefBitrixListItem {
   id: string;
   list_key: string;
@@ -194,6 +208,7 @@ export interface Certificate {
   course_name: string;
   start_date: string | null;
   expiry_date: string | null;
+  issuer_company: string;
   commission_chair: string;
   protocol_number: string;
   document_number: string;

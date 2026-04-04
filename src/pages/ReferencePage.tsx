@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock, FileBadge2, Award, CheckCircle2, ClipboardCheck, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock, FileBadge2, Award, CheckCircle2, ClipboardCheck, ShieldCheck, Banknote } from 'lucide-react';
 import { useRef } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
 import { getFreshAccessToken, supabase } from '../lib/supabase';
@@ -8,11 +8,13 @@ import {
 } from '../lib/bitrix';
 import { useToast } from '../context/ToastContext';
 import { formatDurationLabel } from '../lib/documentValidity';
-import type { RefBitrixListItem, RefCompanyDirectory, RefDocumentValidityRule, ReferenceSyncStatus } from '../types';
+import type { RefBitrixListItem, RefCompanyDirectory, RefCoursePrice, RefDocumentValidityRule, ReferenceSyncStatus } from '../types';
 
 type Tab =
   | 'categories'
   | 'courses'
+  | 'course-prices'
+  | 'my-companies'
   | 'document-validity'
   | 'document-types'
   | 'grade'
@@ -65,6 +67,7 @@ export default function ReferencePage() {
   const [tab, setTab] = useState<Tab>('courses');
   const [categories, setCategories] = useState<RefItem[]>([]);
   const [courses, setCourses] = useState<RefItem[]>([]);
+  const [coursePrices, setCoursePrices] = useState<RefCoursePrice[]>([]);
   const [bitrixListItems, setBitrixListItems] = useState<RefBitrixListItem[]>([]);
   const [companiesDirectory, setCompaniesDirectory] = useState<RefCompanyDirectory[]>([]);
   const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
@@ -73,6 +76,7 @@ export default function ReferencePage() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCourseName, setNewCourseName] = useState('');
   const [companySearch, setCompanySearch] = useState('');
+  const [coursePriceSearch, setCoursePriceSearch] = useState('');
   const [documentRuleSearch, setDocumentRuleSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [syncStatus, setSyncStatus] = useState<ReferenceSyncStatus | null>(null);
@@ -81,6 +85,10 @@ export default function ReferencePage() {
 
   const documentTypeItems = useMemo(
     () => toRefItems(bitrixListItems.filter(item => item.list_key === 'DOCUMENT_TYPE')),
+    [bitrixListItems]
+  );
+  const myCompaniesItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'MY_COMPANIES')),
     [bitrixListItems]
   );
   const gradeItems = useMemo(
@@ -105,7 +113,9 @@ export default function ReferencePage() {
   );
   const tabDefinitions = [
     { key: 'courses' as Tab, group: 'main' as TabGroup, label: 'Названия курсов', icon: <BookOpen size={15} />, count: courses.length },
+    { key: 'course-prices' as Tab, group: 'main' as TabGroup, label: 'Цены на курс', icon: <Banknote size={15} />, count: coursePrices.length },
     { key: 'companies' as Tab, group: 'main' as TabGroup, label: 'Справочник компаний', icon: <Building2 size={15} />, count: companiesDirectory.length },
+    { key: 'my-companies' as Tab, group: 'main' as TabGroup, label: 'Мои компании', icon: <Building2 size={15} />, count: myCompaniesItems.length },
     { key: 'document-validity' as Tab, group: 'main' as TabGroup, label: 'Правила сроков', icon: <Clock size={15} />, count: documentValidityRules.length },
     { key: 'document-types' as Tab, group: 'secondary' as TabGroup, label: 'Тип документа', icon: <FileBadge2 size={15} />, count: documentTypeItems.length },
     { key: 'categories' as Tab, group: 'secondary' as TabGroup, label: 'Категории', icon: <Tag size={15} />, count: categories.length },
@@ -119,9 +129,10 @@ export default function ReferencePage() {
 
   async function loadData(showSpinner = true) {
     if (showSpinner) setLoading(true);
-    const [catRes, courseRes, bitrixListRes, companyDirRes, documentRuleRes, syncStatusRes] = await Promise.all([
+    const [catRes, courseRes, coursePriceRes, bitrixListRes, companyDirRes, documentRuleRes, syncStatusRes] = await Promise.all([
       supabase.from('ref_categories').select('*').order('sort_order').order('name'),
       supabase.from('ref_courses').select('*').order('sort_order').order('name'),
+      supabase.from('ref_course_prices').select('*').order('sort_order').order('course_name').order('category').order('qualification'),
       supabase.from('ref_bitrix_list_items').select('*').order('list_key').order('sort_order').order('name'),
       supabase.from('ref_company_directory').select('*').order('contract_is_active', { ascending: false }).order('name'),
       supabase.from('ref_document_validity_rules').select('*').order('sort_order').order('course_name').order('category'),
@@ -134,6 +145,7 @@ export default function ReferencePage() {
 
     setCategories(categoryRows);
     setCourses(courseRows);
+    setCoursePrices((coursePriceRes.data || []) as RefCoursePrice[]);
     setBitrixListItems((bitrixListRes.data || []) as RefBitrixListItem[]);
     setCompaniesDirectory(companyDirRes.data || []);
     setSyncStatus(nextSyncStatus);
@@ -389,6 +401,17 @@ export default function ReferencePage() {
                 onUpdate={updateCourseName}
                 saving={saving}
               />
+            ) : tab === 'course-prices' ? (
+              <CoursePricesTab
+                items={coursePrices}
+                search={coursePriceSearch}
+                onSearchChange={setCoursePriceSearch}
+              />
+            ) : tab === 'my-companies' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.MY_COMPANIES.name}
+                items={myCompaniesItems}
+              />
             ) : tab === 'document-types' ? (
               <ReadonlyReferenceTab
                 title={BITRIX_REFERENCE_LISTS.DOCUMENT_TYPE.name}
@@ -513,6 +536,104 @@ function ReadonlyReferenceTab({
         placeholder=""
         emptyText="Нет данных. Нажмите синхронизацию, чтобы подтянуть значения из Bitrix."
       />
+    </div>
+  );
+}
+
+function formatCoursePrice(price: number | null): string {
+  if (price == null || Number.isNaN(Number(price))) return '—';
+  return `${Number(price).toLocaleString('ru-RU')} тенге`;
+}
+
+function normalizeCoursePriceSearchValue(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLocaleLowerCase('ru')
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ');
+}
+
+function CoursePricesTab({
+  items,
+  search,
+  onSearchChange,
+}: {
+  items: RefCoursePrice[];
+  search: string;
+  onSearchChange: (value: string) => void;
+}) {
+  const normalizedSearch = normalizeCoursePriceSearchValue(search);
+  const filteredItems = useMemo(() => {
+    if (!normalizedSearch) return items;
+    return items.filter(item =>
+      [
+        item.name,
+        item.course_name,
+        item.qualification,
+        item.electrical_safety_group,
+        item.category,
+        formatCoursePrice(item.price),
+      ]
+        .join(' ')
+        .toLocaleLowerCase('ru')
+        .includes(normalizedSearch)
+    );
+  }, [items, normalizedSearch]);
+
+  return (
+    <div className="space-y-4 w-fit min-w-full">
+      <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm text-blue-900">
+        Источник данных: Bitrix List `Цены на курсы по умолчанию`. Здесь хранится локальная копия цен по умолчанию
+        для автоподстановки в анкетах.
+      </div>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="relative w-full max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search}
+            onChange={e => onSearchChange(e.target.value)}
+            placeholder="Поиск по курсу, квалификации, группе или категории"
+            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+        <div className="text-xs text-gray-500">
+          Найдено цен: <span className="font-medium text-gray-700">{filteredItems.length}</span>
+        </div>
+      </div>
+
+      {filteredItems.length === 0 ? (
+        <div className="text-center py-10 text-sm text-gray-400">Нет данных. Нажмите синхронизацию, чтобы подтянуть цены из Bitrix.</div>
+      ) : (
+        <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <div className="overflow-auto">
+            <table className="w-full min-w-[1180px] text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Наименование курса</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Квалификация</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Группа электробезопасности</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Категория</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Цена</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item, index) => (
+                  <tr key={item.id} className="border-b border-gray-100 last:border-b-0">
+                    <td className="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{index + 1}</td>
+                    <td className="px-4 py-2 text-sm text-gray-800">{item.course_name || item.name || '—'}</td>
+                    <td className="px-4 py-2 text-sm text-gray-800">{item.qualification || '—'}</td>
+                    <td className="px-4 py-2 text-sm text-gray-800">{item.electrical_safety_group || '—'}</td>
+                    <td className="px-4 py-2 text-sm text-gray-800">{item.category || '—'}</td>
+                    <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">{formatCoursePrice(item.price)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
