@@ -26,6 +26,12 @@ interface CertificatesGridProps {
   issuerCompanyOptions: string[];
   bulkCommissionChair: string;
   commissionChairOptions: string[];
+  bulkManager: string;
+  managerOptions: string[];
+  bulkQualification: string;
+  bulkQualificationOptions: string[];
+  bulkElectricalSafetyGroup: string;
+  bulkElectricalSafetyGroupOptions: string[];
   bulkMarkerPass: string;
   markerPassOptions: string[];
   bulkTypeLearn: string;
@@ -54,6 +60,12 @@ interface CertificatesGridProps {
   onBulkIssuerCompanyChange: (value: string) => void;
   onBulkFillCommissionChair: () => void;
   onBulkCommissionChairChange: (value: string) => void;
+  onBulkFillManager: () => void;
+  onBulkManagerChange: (value: string) => void;
+  onBulkFillQualification: () => void;
+  onBulkQualificationChange: (value: string) => void;
+  onBulkFillElectricalSafetyGroup: () => void;
+  onBulkElectricalSafetyGroupChange: (value: string) => void;
   onBulkFillMarkerPass: () => void;
   onBulkMarkerPassChange: (value: string) => void;
   onBulkFillTypeLearn: () => void;
@@ -76,6 +88,10 @@ interface CertificatesGridProps {
   onCancelEdit: () => void;
   onSaveEdit: () => void;
   onSaveDirectPatch: (certId: string, patch: Partial<Certificate>) => void;
+  getCourseSpecificOptions: (
+    courseName: string,
+    fieldKey: 'qualification' | 'electrical_safety_group',
+  ) => string[];
   onDeleteCertificate: (id: string) => void;
 }
 
@@ -115,6 +131,12 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     issuerCompanyOptions,
     bulkCommissionChair,
     commissionChairOptions,
+    bulkManager,
+    managerOptions,
+    bulkQualification,
+    bulkQualificationOptions,
+    bulkElectricalSafetyGroup,
+    bulkElectricalSafetyGroupOptions,
     bulkMarkerPass,
     markerPassOptions,
     bulkTypeLearn,
@@ -143,6 +165,12 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onBulkIssuerCompanyChange,
     onBulkFillCommissionChair,
     onBulkCommissionChairChange,
+    onBulkFillManager,
+    onBulkManagerChange,
+    onBulkFillQualification,
+    onBulkQualificationChange,
+    onBulkFillElectricalSafetyGroup,
+    onBulkElectricalSafetyGroupChange,
     onBulkFillMarkerPass,
     onBulkMarkerPassChange,
     onBulkFillTypeLearn,
@@ -165,6 +193,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onCancelEdit,
     onSaveEdit,
     onSaveDirectPatch,
+    getCourseSpecificOptions,
     onDeleteCertificate,
   } = props;
 
@@ -249,6 +278,14 @@ export function CertificatesGrid(props: CertificatesGridProps) {
           <option key={option} value={option}>{repairDisplayText(option)}</option>
         ))}
       </select>
+    );
+  }
+
+  function ReadonlyCell({ value }: { value: string }) {
+    return (
+      <div className="min-h-[20px] whitespace-nowrap px-1 py-0.5 text-xs text-gray-500">
+        {repairDisplayText(value) || <span className="text-gray-300">-</span>}
+      </div>
     );
   }
 
@@ -376,6 +413,93 @@ export function CertificatesGrid(props: CertificatesGridProps) {
             Заполнить
           </button>
         </div>
+      );
+    }
+
+    if (columnKey === 'manager') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkManager}
+            onChange={event => onBulkManagerChange(event.target.value)}
+            className="min-w-[150px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving}
+          >
+            <option value="">Выбрать...</option>
+            {managerOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillManager}
+            disabled={bulkSaving || !bulkManager}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'qualification') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkQualification}
+            onChange={event => onBulkQualificationChange(event.target.value)}
+            className="min-w-[150px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving || bulkQualificationOptions.length === 0}
+          >
+            <option value="">Выбрать...</option>
+            {bulkQualificationOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillQualification}
+            disabled={bulkSaving || !bulkQualification}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'electrical_safety_group') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkElectricalSafetyGroup}
+            onChange={event => onBulkElectricalSafetyGroupChange(event.target.value)}
+            className="min-w-[170px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving || bulkElectricalSafetyGroupOptions.length === 0}
+          >
+            <option value="">Выбрать...</option>
+            {bulkElectricalSafetyGroupOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillElectricalSafetyGroup}
+            disabled={bulkSaving || !bulkElectricalSafetyGroup}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'level') {
+      return (
+        <button
+          onClick={() => onBulkFillText('level')}
+          disabled={bulkSaving || bulkQualificationOptions.length === 0}
+          className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+        >
+          Заполнить
+        </button>
       );
     }
 
@@ -676,6 +800,53 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                             value={String(cert[textField.key] ?? '')}
                             options={commissionChairOptions}
                           />
+                        ) : textField.key === 'manager' ? (
+                          <SelectCell
+                            certId={cert.id}
+                            field={textField.key}
+                            value={String(cert[textField.key] ?? '')}
+                            options={managerOptions}
+                          />
+                        ) : textField.key === 'qualification' ? (
+                          (() => {
+                            const options = getCourseSpecificOptions(cert.course_name, 'qualification');
+                            if (options.length === 0) {
+                              return <ReadonlyCell value="" />;
+                            }
+                            return (
+                              <SelectCell
+                                certId={cert.id}
+                                field={textField.key}
+                                value={String(cert[textField.key] ?? '')}
+                                options={options}
+                              />
+                            );
+                          })()
+                        ) : textField.key === 'electrical_safety_group' ? (
+                          (() => {
+                            const options = getCourseSpecificOptions(cert.course_name, 'electrical_safety_group');
+                            if (options.length === 0) {
+                              return <ReadonlyCell value="" />;
+                            }
+                            return (
+                              <SelectCell
+                                certId={cert.id}
+                                field={textField.key}
+                                value={String(cert[textField.key] ?? '')}
+                                options={options}
+                              />
+                            );
+                          })()
+                        ) : textField.key === 'level' ? (
+                          (() => {
+                            const isApplicable = getCourseSpecificOptions(cert.course_name, 'qualification').length > 0;
+                            if (!isApplicable) {
+                              return <ReadonlyCell value="" />;
+                            }
+                            return (
+                              <EditableCell certId={cert.id} field={textField.key} value={String(cert[textField.key] ?? '')} />
+                            );
+                          })()
                         ) : textField.key === 'type_learn' ? (
                           <SelectCell
                             certId={cert.id}

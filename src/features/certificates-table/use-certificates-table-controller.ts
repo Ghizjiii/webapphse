@@ -11,6 +11,7 @@ import {
  getBitrixFieldValue,
  updateSmartProcessItem,
 } from '../../lib/bitrix';
+import { resolveCourseOption } from '../../lib/courseOptions';
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate } from '../../lib/documentGeneration';
 import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { useToast } from '../../context/ToastContext';
@@ -81,11 +82,12 @@ export function useCertificatesTableController({
  kind: SmartFieldKind;
  value: string | number;
  };
- const printedStatusOptions = [
- 'Да',
- 'Нет',
- ];
- const printedFilterOptions = ['Да', 'Нет'];
+  const printedStatusOptions = [
+  'Да',
+  'Нет',
+  ];
+  const printedFilterOptions = ['Да', 'Нет'];
+  type CourseSpecificFieldKey = 'qualification' | 'electrical_safety_group';
 
  function normalizeMarkerPassValue(value: string): string {
  const normalized = String(value || '').trim().toLocaleLowerCase('ru');
@@ -306,6 +308,9 @@ export function useCertificatesTableController({
   const [referenceBitrixListItems, setReferenceBitrixListItems] = useState<RefBitrixListItem[]>([]);
   const [bulkIssuerCompany, setBulkIssuerCompany] = useState<string>('');
   const [bulkCommissionChair, setBulkCommissionChair] = useState<string>('');
+  const [bulkManager, setBulkManager] = useState<string>('');
+  const [bulkQualification, setBulkQualification] = useState<string>('');
+  const [bulkElectricalSafetyGroup, setBulkElectricalSafetyGroup] = useState<string>('');
   const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
   const [bulkTypeLearn, setBulkTypeLearn] = useState<string>('');
   const [bulkCommisConcl, setBulkCommisConcl] = useState<string>('');
@@ -325,22 +330,26 @@ export function useCertificatesTableController({
  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => ({ ...DEFAULT_COLUMN_WIDTHS }));
  const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => [...ALL_COLUMN_KEYS]);
  const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
- const [generationProgress, setGenerationProgress] = useState<{
- total: number;
- processed: number;
- generated: number;
- skipped: number;
- failed: number;
- } | null>(null);
- const lastResumeRefreshAtRef = useRef(0);
- const autoPriceBackfillAttemptedRef = useRef(false);
+  const [generationProgress, setGenerationProgress] = useState<{
+  total: number;
+  processed: number;
+  generated: number;
+  skipped: number;
+  failed: number;
+  } | null>(null);
+  const lastResumeRefreshAtRef = useRef(0);
+  const autoPriceBackfillAttemptedRef = useRef(false);
+  const autoCourseSpecificCleanupAttemptedRef = useRef(false);
+  const autoCourseSelectionNormalizationAttemptedRef = useRef(false);
+  const autoIssuerCompanyRelationsAttemptedRef = useRef(false);
 
  useEffect(() => {
  setLocalCertificates(certificates.map(cert => ({
- ...cert,
- issuer_company: String(cert.issuer_company || '').trim(),
- commission_chair: String(cert.commission_chair || '').trim(),
- marker_pass: normalizeMarkerPassValue(cert.marker_pass),
+  ...cert,
+  issuer_company: String(cert.issuer_company || '').trim(),
+  commission_chair: String(cert.commission_chair || '').trim(),
+  manager: String(cert.manager || '').trim(),
+  marker_pass: normalizeMarkerPassValue(cert.marker_pass),
  type_learn: normalizeTypeLearnValue(cert.type_learn),
  commis_concl: normalizeCommisConclValue(cert.commis_concl),
  grade: normalizeGradeValue(cert.grade),
@@ -357,12 +366,13 @@ export function useCertificatesTableController({
  .order('course_name')
  .order('category'),
  supabase
- .from('ref_course_prices')
- .select('*')
- .order('sort_order')
- .order('course_name')
- .order('category')
- .order('qualification'),
+  .from('ref_course_prices')
+  .select('*')
+  .order('sort_order')
+  .order('course_name')
+  .order('category')
+  .order('qualification')
+  .order('electrical_safety_group'),
  ]).then(([documentRulesRes, coursePricesRes]) => {
  setDocumentValidityRules((documentRulesRes.data || []) as RefDocumentValidityRule[]);
  setCoursePriceRules((coursePricesRes.data || []) as RefCoursePrice[]);
@@ -393,7 +403,7 @@ export function useCertificatesTableController({
   supabase
   .from('ref_bitrix_list_items')
   .select('*')
-  .in('list_key', ['MY_COMPANIES', 'COURSES', 'CATEGORIES', 'DOCUMENT_TYPE', 'MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS'])
+  .in('list_key', ['MY_COMPANIES', 'COURSES', 'CATEGORIES', 'DOCUMENT_TYPE', 'MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS', 'QUALIFICATION', 'ELECTRICAL_SAFETY_GROUP'])
   .order('list_key')
   .order('sort_order')
   .order('name'),
@@ -512,6 +522,10 @@ export function useCertificatesTableController({
   return String(item.code || '').trim();
   }
 
+  function getMyCompanyManager(item: RefBitrixListItem): string {
+  return getMyCompanyChairman(item);
+  }
+
   function resolveChairmanByIssuerCompany(
   listItems: RefBitrixListItem[],
   issuerCompany: string,
@@ -529,6 +543,23 @@ export function useCertificatesTableController({
   return match ? getMyCompanyChairman(match) : '';
   }
 
+  function resolveManagerByIssuerCompany(
+  listItems: RefBitrixListItem[],
+  issuerCompany: string,
+  ): string {
+  const normalizedIssuerCompany = normalizeReferenceLookup(issuerCompany);
+  if (!normalizedIssuerCompany) return '';
+
+  const match = listItems.find(item =>
+  item.list_key === 'MY_COMPANIES' &&
+  [item.name, item.bitrix_value]
+  .map(current => normalizeReferenceLookup(current))
+  .includes(normalizedIssuerCompany)
+  );
+
+  return match ? getMyCompanyManager(match) : '';
+  }
+
   function applyIssuerCompanyRelations(
   listItems: RefBitrixListItem[],
   patch: Partial<Certificate>,
@@ -541,11 +572,15 @@ export function useCertificatesTableController({
   const chairman = issuerCompany
   ? resolveChairmanByIssuerCompany(listItems, issuerCompany)
   : '';
+  const manager = issuerCompany
+  ? resolveManagerByIssuerCompany(listItems, issuerCompany)
+  : '';
 
   return {
   ...patch,
   issuer_company: issuerCompany,
   commission_chair: chairman,
+  manager,
   };
   }
 
@@ -567,10 +602,12 @@ export function useCertificatesTableController({
   courseName: string,
   category: string,
   qualification: string,
+  electricalSafetyGroup: string,
   ): number | null {
   const normalizedCourseName = normalizeCoursePriceLookup(courseName);
   const normalizedCategory = normalizeCoursePriceLookup(category);
   const normalizedQualification = normalizeCoursePriceLookup(qualification);
+  const normalizedElectricalSafetyGroup = normalizeCoursePriceLookup(electricalSafetyGroup);
 
   if (!normalizedCourseName || !normalizedCategory) return null;
 
@@ -581,19 +618,108 @@ export function useCertificatesTableController({
 
   if (matchingRows.length === 0) return null;
 
-  const exactMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === normalizedQualification);
-  if (exactMatch) {
-  const parsed = Number(exactMatch.price);
-  if (Number.isFinite(parsed)) return parsed;
-  }
+  const compatibleRows = matchingRows
+  .map(row => ({
+  row,
+  rowQualification: normalizeCoursePriceLookup(row.qualification),
+  rowElectricalSafetyGroup: normalizeCoursePriceLookup(row.electrical_safety_group),
+  }))
+  .filter(({ rowQualification, rowElectricalSafetyGroup }) =>
+  (!rowQualification || rowQualification === normalizedQualification) &&
+  (!rowElectricalSafetyGroup || rowElectricalSafetyGroup === normalizedElectricalSafetyGroup)
+  )
+  .sort((left, right) =>
+  (Number(Boolean(right.rowQualification)) + Number(Boolean(right.rowElectricalSafetyGroup))) -
+  (Number(Boolean(left.rowQualification)) + Number(Boolean(left.rowElectricalSafetyGroup)))
+  );
 
-  const genericMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === '');
-  if (genericMatch) {
-  const parsed = Number(genericMatch.price);
+  const bestMatch = compatibleRows[0]?.row;
+  if (bestMatch) {
+  const parsed = Number(bestMatch.price);
   if (Number.isFinite(parsed)) return parsed;
   }
 
   return null;
+  }
+
+  function applyCourseSpecificFields(cert: Certificate, patch: Partial<Certificate>): Partial<Certificate> {
+  if (coursePriceRules.length === 0) return patch;
+
+  const touchesCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name');
+  const touchesQualification = Object.prototype.hasOwnProperty.call(patch, 'qualification');
+  const touchesElectricalSafetyGroup = Object.prototype.hasOwnProperty.call(patch, 'electrical_safety_group');
+  const touchesLevel = Object.prototype.hasOwnProperty.call(patch, 'level');
+  const nextCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name')
+  ? String(patch.course_name || '')
+  : cert.course_name;
+  const supportsQualification = isQualificationCourse(nextCourseName);
+  const supportsElectricalSafetyGroup = isCourseSpecificFieldApplicable(nextCourseName, 'electrical_safety_group');
+  const nextPatch: Partial<Certificate> = { ...patch };
+
+  if (touchesQualification) {
+  nextPatch.qualification = String(patch.qualification || '');
+  }
+  if (touchesElectricalSafetyGroup) {
+  nextPatch.electrical_safety_group = String(patch.electrical_safety_group || '');
+  }
+  if (touchesLevel) {
+  nextPatch.level = String(patch.level || '');
+  }
+
+  if ((touchesCourseName || touchesQualification) && !supportsQualification) {
+  nextPatch.qualification = '';
+  }
+  if ((touchesCourseName || touchesLevel) && !supportsQualification) {
+  nextPatch.level = '';
+  }
+  if ((touchesCourseName || touchesElectricalSafetyGroup) && !supportsElectricalSafetyGroup) {
+  nextPatch.electrical_safety_group = '';
+  }
+  if (
+  touchesCourseName &&
+  supportsQualification &&
+  !touchesQualification &&
+  cert.qualification &&
+  !isCourseSpecificValueAllowed(nextCourseName, 'qualification', cert.qualification)
+  ) {
+  nextPatch.qualification = '';
+  }
+  if (
+  touchesCourseName &&
+  !touchesLevel &&
+  !supportsQualification &&
+  cert.level
+  ) {
+  nextPatch.level = '';
+  }
+  if (
+  touchesCourseName &&
+  supportsElectricalSafetyGroup &&
+  !touchesElectricalSafetyGroup &&
+  cert.electrical_safety_group &&
+  !isCourseSpecificValueAllowed(nextCourseName, 'electrical_safety_group', cert.electrical_safety_group)
+  ) {
+  nextPatch.electrical_safety_group = '';
+  }
+
+  return nextPatch;
+  }
+
+  function buildCourseSpecificCleanupPatch(cert: Certificate): Partial<Certificate> | null {
+  const supportsQualification = isQualificationCourse(cert.course_name);
+  const supportsElectricalSafetyGroup = isCourseSpecificFieldApplicable(cert.course_name, 'electrical_safety_group');
+  const patch: Partial<Certificate> = {};
+
+  if (!supportsQualification && (String(cert.qualification || '').trim() || String(cert.level || '').trim())) {
+  patch.qualification = '';
+  patch.level = '';
+  }
+
+  if (!supportsElectricalSafetyGroup && String(cert.electrical_safety_group || '').trim()) {
+  patch.electrical_safety_group = '';
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
   }
 
   function autoPricePatchForCertificate(cert: Certificate, patch: Partial<Certificate>): Partial<Certificate> {
@@ -604,7 +730,8 @@ export function useCertificatesTableController({
   const shouldRecalculate =
   Object.prototype.hasOwnProperty.call(patch, 'course_name') ||
   Object.prototype.hasOwnProperty.call(patch, 'category') ||
-  Object.prototype.hasOwnProperty.call(patch, 'qualification');
+  Object.prototype.hasOwnProperty.call(patch, 'qualification') ||
+  Object.prototype.hasOwnProperty.call(patch, 'electrical_safety_group');
 
   if (!shouldRecalculate) {
   return patch;
@@ -619,7 +746,10 @@ export function useCertificatesTableController({
   const nextQualification = Object.prototype.hasOwnProperty.call(patch, 'qualification')
   ? String(patch.qualification || '')
   : cert.qualification;
-  const nextPrice = resolveReferencePrice(nextCourseName, nextCategory, nextQualification);
+  const nextElectricalSafetyGroup = Object.prototype.hasOwnProperty.call(patch, 'electrical_safety_group')
+  ? String(patch.electrical_safety_group || '')
+  : cert.electrical_safety_group;
+  const nextPrice = resolveReferencePrice(nextCourseName, nextCategory, nextQualification, nextElectricalSafetyGroup);
 
   return {
   ...patch,
@@ -632,13 +762,178 @@ export function useCertificatesTableController({
   patch: Partial<Certificate>,
   ): { patch: Partial<Certificate>; missingRule: boolean } {
   const patchWithRelations = applyIssuerCompanyRelations(referenceBitrixListItems, patch);
-  const patchWithPrice = autoPricePatchForCertificate(cert, patchWithRelations);
+  const patchWithCourseSpecificFields = applyCourseSpecificFields(cert, patchWithRelations);
+  const patchWithPrice = autoPricePatchForCertificate(cert, patchWithCourseSpecificFields);
   return autoExpiryPatchForCertificate(cert, patchWithPrice);
   }
 
   useEffect(() => {
   autoPriceBackfillAttemptedRef.current = false;
+  autoCourseSpecificCleanupAttemptedRef.current = false;
+  autoCourseSelectionNormalizationAttemptedRef.current = false;
+  autoIssuerCompanyRelationsAttemptedRef.current = false;
   }, [questionnaireId]);
+
+  useEffect(() => {
+  if (autoCourseSelectionNormalizationAttemptedRef.current) return;
+  if (coursePriceRules.length === 0 || localCertificates.length === 0) return;
+
+  autoCourseSelectionNormalizationAttemptedRef.current = true;
+  const updates = localCertificates
+  .map(cert => {
+  const parsed = resolveCourseOption(cert.course_name, coursePriceRules, cert.category);
+  const nextCourseName = String(parsed.courseName || '').trim();
+  const nextQualification = String(cert.qualification || '').trim() || String(parsed.qualification || '').trim();
+  const nextElectricalSafetyGroup = String(cert.electrical_safety_group || '').trim() || String(parsed.electricalSafetyGroup || '').trim();
+
+  const patch: Partial<Certificate> = {};
+  if (nextCourseName && nextCourseName !== String(cert.course_name || '').trim()) {
+  patch.course_name = nextCourseName;
+  }
+  if (nextQualification !== String(cert.qualification || '').trim()) {
+  patch.qualification = nextQualification;
+  }
+  if (nextElectricalSafetyGroup !== String(cert.electrical_safety_group || '').trim()) {
+  patch.electrical_safety_group = nextElectricalSafetyGroup;
+  }
+
+  return Object.keys(patch).length > 0
+  ? { id: cert.id, patch }
+  : null;
+  })
+  .filter((item): item is { id: string; patch: Partial<Certificate> } => Boolean(item));
+
+  if (updates.length === 0) return;
+
+  const now = new Date().toISOString();
+  void Promise.all(
+  updates.map(item =>
+  supabase
+  .from('certificates')
+  .update({ ...item.patch, updated_at: now })
+  .eq('id', item.id)
+  )
+  ).then(results => {
+  const successIds = new Set(
+  updates
+  .filter((_, index) => !results[index]?.error)
+  .map(item => item.id)
+  );
+  if (successIds.size === 0) return;
+
+  setLocalCertificates(current => current.map(cert => {
+  const updated = updates.find(item => item.id === cert.id);
+  if (!updated || !successIds.has(cert.id)) return cert;
+  return { ...cert, ...updated.patch } as Certificate;
+  }));
+  onRefresh();
+  });
+  }, [coursePriceRules, localCertificates, onRefresh]);
+
+  useEffect(() => {
+  if (autoIssuerCompanyRelationsAttemptedRef.current) return;
+  if (referenceBitrixListItems.length === 0 || localCertificates.length === 0) return;
+  if (!referenceBitrixListItems.some(item => item.list_key === 'MY_COMPANIES')) return;
+
+  autoIssuerCompanyRelationsAttemptedRef.current = true;
+  const updates = localCertificates
+  .map(cert => {
+  const expectedRelations = applyIssuerCompanyRelations(referenceBitrixListItems, {
+  issuer_company: String(cert.issuer_company || '').trim(),
+  } as Partial<Certificate>);
+  const normalizedIssuerCompany = String(expectedRelations.issuer_company || '').trim();
+  const normalizedCommissionChair = String(expectedRelations.commission_chair || '').trim();
+  const normalizedManager = String(expectedRelations.manager || '').trim();
+
+  if (
+  String(cert.issuer_company || '').trim() === normalizedIssuerCompany &&
+  String(cert.commission_chair || '').trim() === normalizedCommissionChair &&
+  String(cert.manager || '').trim() === normalizedManager
+  ) {
+  return null;
+  }
+
+  return {
+  id: cert.id,
+  patch: {
+  issuer_company: normalizedIssuerCompany,
+  commission_chair: normalizedCommissionChair,
+  manager: normalizedManager,
+  } as Partial<Certificate>,
+  };
+  })
+  .filter((item): item is { id: string; patch: Partial<Certificate> } => Boolean(item));
+
+  if (updates.length === 0) return;
+
+  const now = new Date().toISOString();
+  void Promise.all(
+  updates.map(item =>
+  supabase
+  .from('certificates')
+  .update({ ...item.patch, updated_at: now })
+  .eq('id', item.id)
+  )
+  ).then(results => {
+  const successIds = new Set(
+  updates
+  .filter((_, index) => !results[index]?.error)
+  .map(item => item.id)
+  );
+  if (successIds.size === 0) return;
+
+  setLocalCertificates(current => current.map(cert => {
+  const updated = updates.find(item => item.id === cert.id);
+  if (!updated || !successIds.has(cert.id)) return cert;
+  return { ...cert, ...updated.patch } as Certificate;
+  }));
+  onRefresh();
+  });
+  }, [localCertificates, onRefresh, referenceBitrixListItems]);
+
+  useEffect(() => {
+  if (autoCourseSpecificCleanupAttemptedRef.current) return;
+  if (coursePriceRules.length === 0 || localCertificates.length === 0) return;
+
+  autoCourseSpecificCleanupAttemptedRef.current = true;
+  const updates = localCertificates
+  .map(cert => {
+  const cleanupPatch = buildCourseSpecificCleanupPatch(cert);
+  if (!cleanupPatch) return null;
+  const normalized = normalizeCertificatePatchForSave(cert, cleanupPatch);
+  return {
+  id: cert.id,
+  patch: normalized.patch,
+  };
+  })
+  .filter((item): item is { id: string; patch: Partial<Certificate> } => Boolean(item));
+
+  if (updates.length === 0) return;
+
+  const now = new Date().toISOString();
+  void Promise.all(
+  updates.map(item =>
+  supabase
+  .from('certificates')
+  .update({ ...item.patch, updated_at: now })
+  .eq('id', item.id)
+  )
+  ).then(results => {
+  const successIds = new Set(
+  updates
+  .filter((_, index) => !results[index]?.error)
+  .map(item => item.id)
+  );
+  if (successIds.size === 0) return;
+
+  setLocalCertificates(current => current.map(cert => {
+  const updated = updates.find(item => item.id === cert.id);
+  if (!updated || !successIds.has(cert.id)) return cert;
+  return { ...cert, ...updated.patch } as Certificate;
+  }));
+  onRefresh();
+  });
+  }, [coursePriceRules, localCertificates, onRefresh]);
 
   useEffect(() => {
   if (autoPriceBackfillAttemptedRef.current) return;
@@ -648,7 +943,12 @@ export function useCertificatesTableController({
   const updates = localCertificates
   .filter(cert => cert.price == null)
   .map(cert => {
-  const price = resolveReferencePrice(cert.course_name, cert.category, cert.qualification);
+  const price = resolveReferencePrice(
+  cert.course_name,
+  cert.category,
+  cert.qualification,
+  cert.electrical_safety_group,
+  );
   if (price === null) return null;
   return {
   id: cert.id,
@@ -716,6 +1016,14 @@ export function useCertificatesTableController({
   },
   [localCertificates, myCompanyReferenceItems]
   );
+  const managerOptions = useMemo(
+  () => {
+  const referenceOptions = normalizeSelectValues(myCompanyReferenceItems.map(item => getMyCompanyManager(item)));
+  if (referenceOptions.length > 0) return referenceOptions;
+  return normalizeSelectValues(localCertificates.map(cert => cert.manager));
+  },
+  [localCertificates, myCompanyReferenceItems]
+  );
   const markerPassOptions = useMemo(
   () => buildReferenceOptions(
   getReferenceListValues('MARKER_PASS', normalizeMarkerPassValue),
@@ -756,6 +1064,73 @@ export function useCertificatesTableController({
   ),
   [localCertificates, referenceBitrixListItems]
   );
+  const courseSpecificOptionsByCourse = useMemo(() => {
+  const seenByField = new Map<string, Set<string>>();
+  const result = new Map<string, Record<CourseSpecificFieldKey, string[]>>();
+
+  for (const row of coursePriceRules) {
+  const courseKey = normalizeCoursePriceLookup(row.course_name);
+  if (!courseKey) continue;
+
+  if (!result.has(courseKey)) {
+  result.set(courseKey, {
+  qualification: [],
+  electrical_safety_group: [],
+  });
+  }
+
+  const entry = result.get(courseKey)!;
+
+  ([
+  ['qualification', String(row.qualification || '').trim()],
+  ['electrical_safety_group', String(row.electrical_safety_group || '').trim()],
+  ] as Array<[CourseSpecificFieldKey, string]>).forEach(([fieldKey, rawValue]) => {
+  if (!rawValue) return;
+
+  const seenKey = `${courseKey}::${fieldKey}`;
+  const seen = seenByField.get(seenKey) || new Set<string>();
+  const normalizedValue = normalizeCoursePriceLookup(rawValue);
+  if (!normalizedValue || seen.has(normalizedValue)) return;
+
+  seen.add(normalizedValue);
+  seenByField.set(seenKey, seen);
+  entry[fieldKey].push(rawValue);
+  });
+  }
+
+  for (const entry of result.values()) {
+  entry.qualification.sort((left, right) => left.localeCompare(right, 'ru'));
+  entry.electrical_safety_group.sort((left, right) => left.localeCompare(right, 'ru'));
+  }
+
+  return result;
+  }, [coursePriceRules]);
+
+  function getCourseSpecificOptions(courseName: string, fieldKey: CourseSpecificFieldKey): string[] {
+  const courseKey = normalizeCoursePriceLookup(courseName);
+  if (!courseKey) return [];
+  return courseSpecificOptionsByCourse.get(courseKey)?.[fieldKey] || [];
+  }
+
+  function isCourseSpecificFieldApplicable(courseName: string, fieldKey: CourseSpecificFieldKey): boolean {
+  return getCourseSpecificOptions(courseName, fieldKey).length > 0;
+  }
+
+  function isCourseSpecificValueAllowed(
+  courseName: string,
+  fieldKey: CourseSpecificFieldKey,
+  value: string,
+  ): boolean {
+  const options = getCourseSpecificOptions(courseName, fieldKey);
+  if (options.length === 0) return false;
+  const normalizedValue = normalizeCoursePriceLookup(value);
+  if (!normalizedValue) return false;
+  return options.some(option => normalizeCoursePriceLookup(option) === normalizedValue);
+  }
+
+  function isQualificationCourse(courseName: string): boolean {
+  return isCourseSpecificFieldApplicable(courseName, 'qualification');
+  }
 
  const orderedVisibleColumnKeys = useMemo(
  () => columnOrder.filter(key => visibleColumns[String(key)] !== false),
@@ -786,19 +1161,31 @@ export function useCertificatesTableController({
   [localCertificates]
   );
   const categoryOptions = useMemo(() => categoryValueOptions, [categoryValueOptions]);
- const visibleRows = useMemo(
- () => sorted.filter(cert => {
- if (courseFilter !== 'all' && cert.course_name !== courseFilter) return false;
- if (categoryFilter !== 'all' && cert.category !== categoryFilter) return false;
- if (printedFilter === 'Да' && !cert.is_printed) return false;
- if (printedFilter === 'Нет' && cert.is_printed) return false;
- return true;
- }),
- [sorted, courseFilter, categoryFilter, printedFilter]
- );
- const targetRowsInfo = [
- courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`,
- categoryFilter === 'all' ? 'все категории' : `категория: ${categoryFilter}`,
+  const visibleRows = useMemo(
+  () => sorted.filter(cert => {
+  if (courseFilter !== 'all' && cert.course_name !== courseFilter) return false;
+  if (categoryFilter !== 'all' && cert.category !== categoryFilter) return false;
+  if (printedFilter === 'Да' && !cert.is_printed) return false;
+  if (printedFilter === 'Нет' && cert.is_printed) return false;
+  return true;
+  }),
+  [sorted, courseFilter, categoryFilter, printedFilter]
+  );
+  const bulkQualificationOptions = useMemo(
+  () => mergeSelectOptions(
+  visibleRows.flatMap(row => getCourseSpecificOptions(row.course_name, 'qualification'))
+  ),
+  [visibleRows, courseSpecificOptionsByCourse]
+  );
+  const bulkElectricalSafetyGroupOptions = useMemo(
+  () => mergeSelectOptions(
+  visibleRows.flatMap(row => getCourseSpecificOptions(row.course_name, 'electrical_safety_group'))
+  ),
+  [visibleRows, courseSpecificOptionsByCourse]
+  );
+  const targetRowsInfo = [
+  courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`,
+  categoryFilter === 'all' ? 'все категории' : `категория: ${categoryFilter}`,
  printedFilter === 'all' ? 'статус печати: все' : `статус печати: ${printedFilter}`,
  ].join(', ');
  const hasBitrixRows = useMemo(
@@ -1101,11 +1488,29 @@ export function useCertificatesTableController({
 
 async function bulkFillNumber(field: 'document_number' | 'protocol_number', label: string) {
  if (bulkSaving) return;
- const promptLabel = field === 'document_number'
- ? 'номер документа'
- : field === 'protocol_number'
-   ? 'номер протокола'
-   : label;
+
+ if (field === 'document_number') {
+ const counters = new Map<string, number>();
+ await runBulk(
+ visibleRows.map(row => {
+ const groupKey = [
+ normalizeCoursePriceLookup(row.course_name),
+ normalizeCoursePriceLookup(row.category),
+ ].join('::');
+ const nextNumber = (counters.get(groupKey) || 0) + 1;
+ counters.set(groupKey, nextNumber);
+ return {
+ id: row.id,
+ patch: { document_number: String(nextNumber) } as Partial<Certificate>,
+ };
+ })
+ );
+ return;
+ }
+
+ const promptLabel = field === 'protocol_number'
+ ? 'номер протокола'
+ : label;
  const startRaw = window.prompt(`Начальный номер для ${promptLabel} (${targetRowsInfo}):`, '1');
  if (startRaw === null) return;
  const start = Number(startRaw);
@@ -1150,17 +1555,32 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  showToast('warning', 'Укажите режим: 1 или 2');
  }
 
- async function bulkFillText(field: keyof Certificate, label: string) {
- if (bulkSaving) return;
- const value = window.prompt(`Введите текст для ${label} (${targetRowsInfo}):`, '');
- if (value === null) return;
- await runBulk(
- visibleRows.map(row => ({
- id: row.id,
- patch: { [field]: value } as Partial<Certificate>,
- }))
- );
- }
+  async function bulkFillText(field: keyof Certificate, label: string) {
+  if (bulkSaving) return;
+  const value = window.prompt(`Введите текст для ${label} (${targetRowsInfo}):`, '');
+  if (value === null) return;
+  const targetRows = field === 'level'
+  ? visibleRows.filter(row => isQualificationCourse(row.course_name))
+  : visibleRows;
+
+  if (targetRows.length === 0) {
+  showToast('warning', field === 'level'
+  ? 'В текущем наборе нет строк для курса квалификации'
+  : 'Нет строк для массового заполнения');
+  return;
+  }
+
+  await runBulk(
+  targetRows.map(row => ({
+  id: row.id,
+  patch: { [field]: value } as Partial<Certificate>,
+  }))
+  );
+
+  if (field === 'level' && targetRows.length !== visibleRows.length) {
+  showToast('warning', `Поле "Разряд" применено только к строкам курса квалификации: ${targetRows.length} из ${visibleRows.length}.`);
+  }
+  }
 
  async function bulkFillMarkerPass() {
  if (bulkSaving) return;
@@ -1204,12 +1624,12 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  }
  }
 
- async function bulkFillIssuerCompany() {
- if (bulkSaving) return;
- if (!bulkIssuerCompany.trim()) {
- showToast('warning', 'Выберите значение для поля "Компания, которая выдает удостоверение"');
- return;
- }
+  async function bulkFillIssuerCompany() {
+  if (bulkSaving) return;
+  if (!bulkIssuerCompany.trim()) {
+  showToast('warning', 'Выберите значение для поля "Компания, которая выдает документ"');
+  return;
+  }
 
  await runBulk(
  visibleRows.map(row => ({
@@ -1219,24 +1639,84 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  );
  }
 
- async function bulkFillCommissionChair() {
- if (bulkSaving) return;
- if (!bulkCommissionChair.trim()) {
- showToast('warning', 'Выберите значение для поля "Председатель"');
- return;
+  async function bulkFillCommissionChair() {
+  if (bulkSaving) return;
+  if (!bulkCommissionChair.trim()) {
+  showToast('warning', 'Выберите значение для поля "Председатель"');
+  return;
  }
 
  await runBulk(
  visibleRows.map(row => ({
  id: row.id,
- patch: { commission_chair: bulkCommissionChair } as Partial<Certificate>,
- }))
- );
- }
+  patch: { commission_chair: bulkCommissionChair } as Partial<Certificate>,
+  }))
+  );
+  }
 
- async function bulkFillTypeLearn() {
- if (bulkSaving) return;
- if (!bulkTypeLearn.trim()) {
+  async function bulkFillManager() {
+  if (bulkSaving) return;
+  if (!bulkManager.trim()) {
+  showToast('warning', 'Выберите значение для поля "Руководитель"');
+  return;
+  }
+
+  await runBulk(
+  visibleRows.map(row => ({
+  id: row.id,
+  patch: { manager: bulkManager } as Partial<Certificate>,
+  }))
+  );
+  }
+
+  async function bulkFillCourseSpecificField(
+  fieldKey: CourseSpecificFieldKey,
+  value: string,
+  label: string,
+  ) {
+  if (bulkSaving) return;
+
+  const normalizedValue = String(value || '').trim();
+  if (!normalizedValue) {
+  showToast('warning', `Выберите значение для поля "${label}"`);
+  return;
+  }
+
+  const applicableRows = visibleRows.filter(row => isCourseSpecificValueAllowed(row.course_name, fieldKey, normalizedValue));
+  const skippedCount = visibleRows.length - applicableRows.length;
+
+  if (applicableRows.length === 0) {
+  showToast('warning', `В текущем наборе нет строк, где доступно значение для поля "${label}"`);
+  return;
+  }
+
+  await runBulk(
+  applicableRows.map(row => ({
+  id: row.id,
+  patch: { [fieldKey]: normalizedValue } as Partial<Certificate>,
+  }))
+  );
+
+  if (skippedCount > 0) {
+  showToast('warning', `Поле "${label}" применено не ко всем строкам: пропущено ${skippedCount}.`);
+  }
+  }
+
+  async function bulkFillQualification() {
+  await bulkFillCourseSpecificField('qualification', bulkQualification, 'Квалификация');
+  }
+
+  async function bulkFillElectricalSafetyGroup() {
+  await bulkFillCourseSpecificField(
+  'electrical_safety_group',
+  bulkElectricalSafetyGroup,
+  'Группа электробезопасности',
+  );
+  }
+
+  async function bulkFillTypeLearn() {
+  if (bulkSaving) return;
+  if (!bulkTypeLearn.trim()) {
  showToast('warning', 'Выберите значение для поля "Вид проверки / тип / причина"');
  return;
  }
@@ -1564,7 +2044,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  ? findReferenceBitrixItemId(bitrixListItemsForSync, 'MY_COMPANIES', cert.issuer_company || '')
  : '';
  if (String(cert.issuer_company || '').trim() && !issuerCompanyValue) {
- throw new Error(`Не найдена компания Bitrix для поля "Компания, которая выдает удостоверение": ${cert.issuer_company}`);
+  throw new Error(`Не найдена компания Bitrix для поля "Компания, которая выдает документ": ${cert.issuer_company}`);
  }
 
  const categoryValue = String(cert.category || '').trim()
@@ -1624,20 +2104,37 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  throw new Error(`Не найден вариант Bitrix для поля "Статус сотрудника": ${normalizedEmployeeStatus}`);
  }
 
+ const qualificationValue = String(cert.qualification || '').trim()
+ ? findReferenceBitrixItemId(bitrixListItemsForSync, 'QUALIFICATION', cert.qualification || '')
+ : '';
+ if (String(cert.qualification || '').trim() && !qualificationValue) {
+ throw new Error(`Не найден элемент Bitrix для поля "Квалификация": ${cert.qualification}`);
+ }
+
+ const electricalSafetyGroupValue = String(cert.electrical_safety_group || '').trim()
+ ? findReferenceBitrixItemId(bitrixListItemsForSync, 'ELECTRICAL_SAFETY_GROUP', cert.electrical_safety_group || '')
+ : '';
+ if (String(cert.electrical_safety_group || '').trim() && !electricalSafetyGroupValue) {
+ throw new Error(`Не найден элемент Bitrix для поля "Группа электробезопасности": ${cert.electrical_safety_group}`);
+ }
+
  const documentTypeName = String(
  findDocumentValidityRule(documentValidityRules, cert.course_name, cert.category)?.document_type ||
  defaultDocumentType(cert.category, cert.course_name)
  ).trim();
- const documentTypeValue = documentTypeName
- ? findReferenceBitrixItemId(bitrixListItemsForSync, 'DOCUMENT_TYPE', documentTypeName)
- : '';
- if (!documentTypeValue) {
- throw new Error(`Не найден элемент Bitrix для поля "Тип документа": ${documentTypeName || 'пустое значение'}`);
- }
- const effectiveCommissionChair = String(cert.commission_chair || '').trim()
- ? String(cert.commission_chair || '').trim()
- : resolveChairmanByIssuerCompany(bitrixListItemsForSync, cert.issuer_company || '');
- const fieldEntries: SmartFieldEntry[] = [
+  const documentTypeValue = documentTypeName
+  ? findReferenceBitrixItemId(bitrixListItemsForSync, 'DOCUMENT_TYPE', documentTypeName)
+  : '';
+  if (!documentTypeValue) {
+  throw new Error(`Не найден элемент Bitrix для поля "Тип документа": ${documentTypeName || 'пустое значение'}`);
+  }
+  const effectiveCommissionChair = String(cert.commission_chair || '').trim()
+  ? String(cert.commission_chair || '').trim()
+  : resolveChairmanByIssuerCompany(bitrixListItemsForSync, cert.issuer_company || '');
+  const effectiveManager = String(cert.manager || '').trim()
+  ? String(cert.manager || '').trim()
+  : resolveManagerByIssuerCompany(bitrixListItemsForSync, cert.issuer_company || '');
+  const fieldEntries: SmartFieldEntry[] = [
  { code: 'TITLE', kind: 'text', value: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - ') },
  { code: BITRIX_FIELDS.LAST_NAME, kind: 'text', value: cert.last_name || '' },
  { code: BITRIX_FIELDS.FIRST_NAME, kind: 'text', value: cert.first_name || '' },
@@ -1656,14 +2153,15 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  { code: BITRIX_FIELDS.COMMISSION_MEMBER_3, kind: 'text', value: cert.commission_member_3 || '' },
  { code: BITRIX_FIELDS.COMMISSION_MEMBER_4, kind: 'text', value: cert.commission_member_4 || '' },
  { code: BITRIX_FIELDS.COMMISSION_MEMBERS, kind: 'text', value: cert.commission_members || '' },
- { code: BITRIX_FIELDS.QUALIFICATION, kind: 'text', value: cert.qualification || '' },
+ { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.QUALIFICATION, kind: 'link', value: qualificationValue || '' },
+ { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.ELECTRICAL_SAFETY_GROUP, kind: 'link', value: electricalSafetyGroupValue || '' },
  { code: BITRIX_FIELDS.LEVEL, kind: 'text', value: cert.level || '' },
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.MARKER_PASS, kind: 'link', value: markerPassValue || '' },
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.TYPE_LEARN, kind: 'link', value: typeLearnValue || '' },
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.COMMIS_CONCL, kind: 'link', value: commisConclValue || '' },
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.GRADE, kind: 'link', value: gradeValue || '' },
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.DOCUMENT_TYPE, kind: 'link', value: documentTypeValue || '' },
- { code: BITRIX_FIELDS.MANAGER, kind: 'text', value: cert.manager || '' },
+  { code: BITRIX_FIELDS.MANAGER, kind: 'text', value: effectiveManager },
  { code: BITRIX_FIELDS.IS_PRINTED, kind: 'boolean', value: cert.is_printed ? 'Y' : 'N' },
  { code: BITRIX_CERTIFICATE_REFERENCE_FIELDS.EMPLOYEE_STATUS, kind: 'link', value: employeeStatusValue || '' },
  { code: BITRIX_FIELDS.PRICE, kind: 'number', value: cert.price ?? '' },
@@ -1764,16 +2262,22 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  printedFilter,
  bulkStartDate,
  bulkExpiryDate,
- bulkCategory,
- categoryValueOptions,
- bulkIssuerCompany,
- issuerCompanyOptions,
- bulkCommissionChair,
- commissionChairOptions,
- bulkMarkerPass,
- markerPassOptions,
- bulkTypeLearn,
- typeLearnOptions,
+  bulkCategory,
+  categoryValueOptions,
+  bulkIssuerCompany,
+  issuerCompanyOptions,
+  bulkCommissionChair,
+  commissionChairOptions,
+  bulkManager,
+  managerOptions,
+  bulkQualification,
+  bulkQualificationOptions,
+  bulkElectricalSafetyGroup,
+  bulkElectricalSafetyGroupOptions,
+  bulkMarkerPass,
+  markerPassOptions,
+  bulkTypeLearn,
+  typeLearnOptions,
  bulkCommisConcl,
  commisConclOptions,
  bulkGrade,
@@ -1804,12 +2308,15 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  setPrintedFilter,
  setBulkStartDate,
  setBulkExpiryDate,
- setBulkCategory,
- setBulkIssuerCompany,
- setBulkCommissionChair,
- setBulkMarkerPass,
- setBulkTypeLearn,
- setBulkCommisConcl,
+  setBulkCategory,
+  setBulkIssuerCompany,
+  setBulkCommissionChair,
+  setBulkManager,
+  setBulkQualification,
+  setBulkElectricalSafetyGroup,
+  setBulkMarkerPass,
+  setBulkTypeLearn,
+  setBulkCommisConcl,
  setBulkGrade,
  setBulkEmployeeStatus,
  setBulkPrintedStatus,
@@ -1827,19 +2334,23 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  bulkFillNumber,
  bulkFillProtocolWithMode,
  bulkFillText,
- bulkFillCategory,
- bulkFillIssuerCompany,
- bulkFillCommissionChair,
- bulkFillMarkerPass,
- bulkFillTypeLearn,
+  bulkFillCategory,
+  bulkFillIssuerCompany,
+  bulkFillCommissionChair,
+  bulkFillManager,
+  bulkFillQualification,
+  bulkFillElectricalSafetyGroup,
+  bulkFillMarkerPass,
+  bulkFillTypeLearn,
  bulkFillCommisConcl,
  bulkFillGrade,
  bulkFillEmployeeStatus,
  bulkFillPrintedStatus,
- bulkFillPrice,
- bulkFillDate,
- saveDirectPatch,
- generateDocuments,
- syncCertificatesToBitrix,
- };
+  bulkFillPrice,
+  bulkFillDate,
+  saveDirectPatch,
+  getCourseSpecificOptions,
+  generateDocuments,
+  syncCertificatesToBitrix,
+  };
 }

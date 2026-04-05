@@ -124,6 +124,8 @@ const BITRIX_REFERENCE_LISTS = {
   TYPE_LEARN: { iblockId: 78, name: "Вид проверки знаний / тип обучения" },
   COMMIS_CONCL: { iblockId: 80, name: "Заключение комиссии" },
   COURSE_PRICES: { iblockId: 84, name: "Course default prices" },
+  QUALIFICATION: { iblockId: 86, name: "Qualification" },
+  ELECTRICAL_SAFETY_GROUP: { iblockId: 90, name: "Electrical safety group" },
 } as const satisfies Record<string, BitrixListDefinition>;
 
 const BITRIX_REFERENCE_LIST_ORDER = [
@@ -138,6 +140,8 @@ const BITRIX_REFERENCE_LIST_ORDER = [
   "TYPE_LEARN",
   "COMMIS_CONCL",
   "COURSE_PRICES",
+  "QUALIFICATION",
+  "ELECTRICAL_SAFETY_GROUP",
 ] as const satisfies ReadonlyArray<keyof typeof BITRIX_REFERENCE_LISTS>;
 
 function resolveBitrixListTypeId(iblockId: number): string {
