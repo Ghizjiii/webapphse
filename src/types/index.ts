@@ -218,6 +218,7 @@ export interface Certificate {
   commission_member_4: string;
   commission_members: string;
   qualification: string;
+  electrical_safety_group: string;
   level: string;
   marker_pass: string;
   type_learn: string;

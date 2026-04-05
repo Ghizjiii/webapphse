@@ -60,7 +60,7 @@ interface ParticipantsSectionProps {
   pageSize: number;
   currentPage: number;
   totalPages: number;
-  filteredCourses: string[];
+  getFilteredCourses: (participant: LocalParticipant) => string[];
   fileInputRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
   onPageSizeChange: (value: number) => void;
   onPageChange: (value: number) => void;
@@ -88,7 +88,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     pageSize,
     currentPage,
     totalPages,
-    filteredCourses,
+    getFilteredCourses,
     fileInputRefs,
     onPageSizeChange,
     onPageChange,
@@ -234,6 +234,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                 ? getParticipantMissingFields(participant)
                 : [];
               const hasMissing = missingFields.length > 0;
+              const filteredCourses = getFilteredCourses(participant);
 
               return (
                 <tr key={participant.id} className={`border-b border-gray-50 ${hasMissing ? 'bg-red-50/40' : ''}`}>
@@ -351,7 +352,11 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                             onClick={event => event.stopPropagation()}
                           />
                           <div className="max-h-48 overflow-y-auto space-y-0.5">
-                            {filteredCourses.map(course => {
+                            {filteredCourses.length === 0 ? (
+                              <div className="px-3 py-2 text-xs text-gray-400">
+                                Нет подходящих курсов
+                              </div>
+                            ) : filteredCourses.map(course => {
                               const selected = participant.courses.includes(course);
                               return (
                                 <button

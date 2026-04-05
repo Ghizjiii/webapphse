@@ -128,7 +128,7 @@ export default function PublicFormPage() {
             pageSize={controller.pageSize}
             currentPage={controller.currentPage}
             totalPages={controller.totalPages}
-            filteredCourses={controller.filteredCourses}
+            getFilteredCourses={controller.getFilteredCoursesForParticipant}
             fileInputRefs={controller.fileInputRefs}
             onPageSizeChange={controller.handlePageSizeChange}
             onPageChange={controller.setCurrentPage}
