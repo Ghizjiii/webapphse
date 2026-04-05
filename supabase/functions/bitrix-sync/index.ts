@@ -71,6 +71,19 @@ const BITRIX_FIELDS_RAW = {
 
 const BITRIX_CERTIFICATE_REFERENCE_FIELDS = {
   ISSUER_COMPANY: "ufCrm12_1775320262",
+  QUALIFICATION: "ufCrm12_1775399633",
+  ELECTRICAL_SAFETY_GROUP: "ufCrm12_1775399540",
+} as const;
+
+const BITRIX_CERTIFICATE_REFERENCE_FIELDS_RAW = {
+  ISSUER_COMPANY: "UF_CRM_12_1775320262",
+  QUALIFICATION: "UF_CRM_12_1775399633",
+  ELECTRICAL_SAFETY_GROUP: "UF_CRM_12_1775399540",
+} as const;
+
+const BITRIX_REFERENCE_LIST_FALLBACKS = {
+  QUALIFICATION: { iblockId: 86, listName: "Qualification" },
+  ELECTRICAL_SAFETY_GROUP: { iblockId: 90, listName: "Electrical safety group" },
 } as const;
 
 const PHOTO_FIELD_KEY = "ufCrm12_1772578817";
@@ -116,7 +129,10 @@ type ParticipantRow = {
 
 type SyncTask = {
   participant: ParticipantRow;
+  displayCourseName: string;
   courseName: string;
+  qualification: string;
+  electricalSafetyGroup: string;
 };
 
 type ExistingCertificateRow = {
@@ -142,6 +158,7 @@ type ExistingCertificateRow = {
   commission_member_4: string | null;
   commission_members: string | null;
   qualification: string | null;
+  electrical_safety_group: string | null;
   level: string | null;
   marker_pass: string | null;
   type_learn: string | null;
@@ -156,6 +173,7 @@ type ExistingCertificateRow = {
 type RefCoursePriceRow = {
   course_name: string;
   qualification: string;
+  electrical_safety_group: string;
   category: string;
   price: number | null;
   sort_order: number;
@@ -178,6 +196,10 @@ type EnumMaps = {
   categoryMap: Map<string, string>;
   courseMap: Map<string, string>;
   issuerCompanyMap: Map<string, string>;
+  qualificationMap: Map<string, string>;
+  electricalSafetyGroupMap: Map<string, string>;
+  qualificationByIdMap: Map<string, string>;
+  electricalSafetyGroupByIdMap: Map<string, string>;
   markerPassMap: Map<string, string>;
   typeLearnMap: Map<string, string>;
   commisConclMap: Map<string, string>;
@@ -381,8 +403,18 @@ function sanitizeFileName(name: string): string {
   return plain(name).replace(/[\\/:*?"<>|]+/g, "_");
 }
 
-function taskKey(participantId: string | null | undefined, courseName: string | null | undefined): string {
-  return `${plain(participantId)}::${plain(courseName).toLowerCase()}`;
+function taskKey(
+  participantId: string | null | undefined,
+  courseName: string | null | undefined,
+  qualification: string | null | undefined = "",
+  electricalSafetyGroup: string | null | undefined = "",
+): string {
+  return [
+    plain(participantId),
+    normalizeCoursePriceLookup(courseName),
+    normalizeCoursePriceLookup(qualification),
+    normalizeCoursePriceLookup(electricalSafetyGroup),
+  ].join("::");
 }
 
 function normalizeBitrixDate(value: unknown): string | null {
@@ -511,13 +543,111 @@ function normalizeCoursePriceLookup(value: unknown): string {
   return normalized;
 }
 
+function buildCourseSelectionLabel(
+  courseName: string | null | undefined,
+  qualification: string | null | undefined,
+  electricalSafetyGroup: string | null | undefined,
+): string {
+  return [
+    plain(courseName),
+    plain(qualification),
+    plain(electricalSafetyGroup),
+  ].filter(Boolean).join(": ");
+}
+
+function parseParticipantCourseSelection(
+  rawCourseName: string | null | undefined,
+  category: string | null | undefined,
+  referenceCoursePrices: RefCoursePriceRow[],
+): {
+  displayCourseName: string;
+  courseName: string;
+  qualification: string;
+  electricalSafetyGroup: string;
+} {
+  const displayCourseName = plain(rawCourseName);
+  const normalizedDisplayCourseName = normalizeCoursePriceLookup(displayCourseName);
+  const normalizedCategory = normalizeCoursePriceLookup(category);
+
+  if (!normalizedDisplayCourseName) {
+    return {
+      displayCourseName: "",
+      courseName: "",
+      qualification: "",
+      electricalSafetyGroup: "",
+    };
+  }
+
+  const matchedRow = referenceCoursePrices
+    .filter(row => plain(row.qualification) || plain(row.electrical_safety_group))
+    .map(row => ({
+      row,
+      displayName: buildCourseSelectionLabel(row.course_name, row.qualification, row.electrical_safety_group),
+      normalizedCategory: normalizeCoursePriceLookup(row.category),
+    }))
+    .filter(item => normalizeCoursePriceLookup(item.displayName) === normalizedDisplayCourseName)
+    .sort((left, right) => {
+      const leftCategoryScore = left.normalizedCategory === normalizedCategory ? 1 : 0;
+      const rightCategoryScore = right.normalizedCategory === normalizedCategory ? 1 : 0;
+      if (leftCategoryScore !== rightCategoryScore) return rightCategoryScore - leftCategoryScore;
+      return left.row.sort_order - right.row.sort_order;
+    })[0]?.row;
+
+  if (matchedRow) {
+    return {
+      displayCourseName,
+      courseName: plain(matchedRow.course_name),
+      qualification: plain(matchedRow.qualification),
+      electricalSafetyGroup: plain(matchedRow.electrical_safety_group),
+    };
+  }
+
+  const separatorIndex = displayCourseName.indexOf(":");
+  if (separatorIndex >= 0) {
+    const courseName = plain(displayCourseName.slice(0, separatorIndex));
+    const detail = plain(displayCourseName.slice(separatorIndex + 1));
+    const normalizedCourseName = normalizeCoursePriceLookup(courseName);
+
+    if (normalizedCourseName === normalizeCoursePriceLookup("Электробезопасность")) {
+      return {
+        displayCourseName,
+        courseName,
+        qualification: "",
+        electricalSafetyGroup: detail,
+      };
+    }
+
+    if (normalizedCourseName === normalizeCoursePriceLookup("Курс квалификации")) {
+      return {
+        displayCourseName,
+        courseName,
+        qualification: detail,
+        electricalSafetyGroup: "",
+      };
+    }
+  }
+
+  return {
+    displayCourseName,
+    courseName: displayCourseName,
+    qualification: "",
+    electricalSafetyGroup: "",
+  };
+}
+
 function findReferenceCoursePrice(
   rows: RefCoursePriceRow[],
-  params: { courseName: string; category: string; qualification: string | null | undefined },
+  params: {
+    courseName: string;
+    category: string;
+    qualification: string | null | undefined;
+    electricalSafetyGroup: string | null | undefined;
+  },
 ): number | null {
   const normalizedCourseName = normalizeCoursePriceLookup(params.courseName);
   const normalizedCategory = normalizeCoursePriceLookup(params.category);
   const normalizedQualification = normalizeCoursePriceLookup(params.qualification);
+  const normalizedElectricalSafetyGroup = normalizeCoursePriceLookup(params.electricalSafetyGroup);
 
   if (!normalizedCourseName || !normalizedCategory) return null;
 
@@ -528,15 +658,24 @@ function findReferenceCoursePrice(
 
   if (matchingRows.length === 0) return null;
 
-  const exactMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === normalizedQualification);
-  if (exactMatch) {
-    const parsed = Number(exactMatch.price);
-    if (Number.isFinite(parsed)) return parsed;
-  }
+  const compatibleRows = matchingRows
+    .map(row => ({
+      row,
+      rowQualification: normalizeCoursePriceLookup(row.qualification),
+      rowElectricalSafetyGroup: normalizeCoursePriceLookup(row.electrical_safety_group),
+    }))
+    .filter(({ rowQualification, rowElectricalSafetyGroup }) =>
+      (!rowQualification || rowQualification === normalizedQualification) &&
+      (!rowElectricalSafetyGroup || rowElectricalSafetyGroup === normalizedElectricalSafetyGroup),
+    )
+    .sort((left, right) =>
+      (Number(Boolean(right.rowQualification)) + Number(Boolean(right.rowElectricalSafetyGroup))) -
+      (Number(Boolean(left.rowQualification)) + Number(Boolean(left.rowElectricalSafetyGroup))),
+    );
 
-  const genericMatch = matchingRows.find(row => normalizeCoursePriceLookup(row.qualification) === "");
-  if (genericMatch) {
-    const parsed = Number(genericMatch.price);
+  const bestMatch = compatibleRows[0]?.row;
+  if (bestMatch) {
+    const parsed = Number(bestMatch.price);
     if (Number.isFinite(parsed)) return parsed;
   }
 
@@ -582,6 +721,17 @@ function normalizeBitrixLinkTokens(value: unknown): string[] {
 
   visit(value);
   return Array.from(tokens).sort();
+}
+
+function resolveReferenceFieldDisplayValue(value: unknown, displayMap: Map<string, string>): string {
+  const tokens = normalizeBitrixLinkTokens(value);
+
+  for (const token of tokens) {
+    const displayValue = displayMap.get(token);
+    if (displayValue) return displayValue;
+  }
+
+  return tokens.find(token => token && !/^\d+$/.test(token) && token !== "[object Object]") || "";
 }
 
 function preferredTextValue(localValue: unknown, currentBitrixValue: unknown): string | undefined {
@@ -696,6 +846,7 @@ function needsCertificateRestore(cert: ExistingCertificateRow): boolean {
     !plain(cert.commission_member_4) ||
     !plain(cert.commission_members) ||
     !plain(cert.qualification) ||
+    !plain(cert.electrical_safety_group) ||
     !plain(cert.level) ||
     !plain(cert.manager) ||
     !plain(cert.marker_pass) ||
@@ -708,7 +859,11 @@ function needsCertificateRestore(cert: ExistingCertificateRow): boolean {
     cert.price == null;
 }
 
-function buildCertificateRestorePatch(cert: ExistingCertificateRow, item: Record<string, unknown>): Record<string, unknown> {
+function buildCertificateRestorePatch(
+  cert: ExistingCertificateRow,
+  item: Record<string, unknown>,
+  enumMaps: EnumMaps,
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   const assignIfMissing = (field: keyof ExistingCertificateRow, value: unknown) => {
     const currentValue = cert[field];
@@ -735,7 +890,20 @@ function buildCertificateRestorePatch(cert: ExistingCertificateRow, item: Record
   assignIfMissing("commission_member_3", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBER_3) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBER_3));
   assignIfMissing("commission_member_4", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBER_4) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBER_4));
   assignIfMissing("commission_members", getFieldValue(item, BITRIX_FIELDS_RAW.COMMISSION_MEMBERS) ?? getFieldValue(item, BITRIX_FIELDS.COMMISSION_MEMBERS));
-  assignIfMissing("qualification", getFieldValue(item, BITRIX_FIELDS_RAW.QUALIFICATION) ?? getFieldValue(item, BITRIX_FIELDS.QUALIFICATION));
+  assignIfMissing(
+    "qualification",
+    resolveReferenceFieldDisplayValue(
+      getFieldValue(item, BITRIX_CERTIFICATE_REFERENCE_FIELDS_RAW.QUALIFICATION) ?? getFieldValue(item, BITRIX_CERTIFICATE_REFERENCE_FIELDS.QUALIFICATION),
+      enumMaps.qualificationByIdMap,
+    ),
+  );
+  assignIfMissing(
+    "electrical_safety_group",
+    resolveReferenceFieldDisplayValue(
+      getFieldValue(item, BITRIX_CERTIFICATE_REFERENCE_FIELDS_RAW.ELECTRICAL_SAFETY_GROUP) ?? getFieldValue(item, BITRIX_CERTIFICATE_REFERENCE_FIELDS.ELECTRICAL_SAFETY_GROUP),
+      enumMaps.electricalSafetyGroupByIdMap,
+    ),
+  );
   assignIfMissing("level", getFieldValue(item, BITRIX_FIELDS_RAW.LEVEL) ?? getFieldValue(item, BITRIX_FIELDS.LEVEL));
   assignIfMissing("marker_pass", getFieldValue(item, BITRIX_FIELDS_RAW.MARKER_PASS) ?? getFieldValue(item, BITRIX_FIELDS.MARKER_PASS));
   assignIfMissing("type_learn", getFieldValue(item, BITRIX_FIELDS_RAW.TYPE_LEARN) ?? getFieldValue(item, BITRIX_FIELDS.TYPE_LEARN));
@@ -991,10 +1159,174 @@ async function callBitrix(method: string, params: Record<string, unknown>): Prom
   throw lastError || new Error(`Bitrix call failed: ${method}`);
 }
 
+function resolveBitrixListTypeId(iblockId: number): string {
+  return iblockId === 60 ? "bitrix_processes" : "lists";
+}
+
+async function callBitrixListMethod(method: string, params: Record<string, string | number>): Promise<unknown> {
+  if (!BITRIX_WEBHOOK_URL) throw new Error("BITRIX_WEBHOOK_URL is not configured");
+
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const body = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        body.append(key, String(value));
+      }
+
+      const response = await fetch(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
+        method: "POST",
+        body,
+      });
+      const text = await response.text();
+      const parsed = text ? JSON.parse(text) : {};
+
+      if (!response.ok) {
+        const error = new Error(`Bitrix HTTP ${response.status} at ${method}: ${text || "empty response"}`);
+        lastError = error;
+        if (attempt < 4 && (response.status === 429 || response.status >= 500)) {
+          await sleep(350 * attempt);
+          continue;
+        }
+        throw error;
+      }
+
+      if (parsed.error) {
+        const code = plain(parsed.error).toUpperCase();
+        const error = new Error(`Bitrix ${method} error ${code}: ${plain(parsed.error_description || parsed.error)}`);
+        lastError = error;
+        if (attempt < 4 && /QUERY_LIMIT_EXCEEDED|TOO_MANY_REQUESTS|TIMEOUT/.test(code)) {
+          await sleep(350 * attempt);
+          continue;
+        }
+        throw error;
+      }
+
+      return parsed.result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = error instanceof Error ? error : new Error(message);
+      if (attempt < 4 && /failed to fetch|networkerror|network request failed|load failed/i.test(message)) {
+        await sleep(350 * attempt);
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error(`Bitrix list call failed: ${method}`);
+}
+
 async function runInChunks<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
   for (let index = 0; index < items.length; index += concurrency) {
     await Promise.all(items.slice(index, index + concurrency).map(worker));
   }
+}
+
+async function fetchReferenceListItemsFromBitrix(listKey: keyof typeof BITRIX_REFERENCE_LIST_FALLBACKS): Promise<Array<{
+  bitrix_item_id: string;
+  name: string;
+  bitrix_value: string;
+  code: string;
+  sort_order: number;
+}>> {
+  const fallback = BITRIX_REFERENCE_LIST_FALLBACKS[listKey];
+  const raw = await callBitrixListMethod("lists.element.get", {
+    IBLOCK_TYPE_ID: resolveBitrixListTypeId(fallback.iblockId),
+    IBLOCK_ID: fallback.iblockId,
+  });
+
+  const rows = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object"
+      ? Object.values(raw as Record<string, unknown>)
+      : [];
+
+  return rows
+    .map((item, index) => {
+      const row = (item || {}) as Record<string, unknown>;
+      const bitrixItemId = plain(row.ID || row.id);
+      const name = plain(row.NAME || row.name);
+      if (!bitrixItemId || !name) return null;
+
+      const sortValue = Number(row.SORT || row.sort || index + 1);
+      return {
+        bitrix_item_id: bitrixItemId,
+        name,
+        bitrix_value: name,
+        code: plain(row.CODE || row.code),
+        sort_order: Number.isFinite(sortValue) ? sortValue : index + 1,
+      };
+    })
+    .filter((item): item is {
+      bitrix_item_id: string;
+      name: string;
+      bitrix_value: string;
+      code: string;
+      sort_order: number;
+    } => Boolean(item));
+}
+
+async function loadReferenceListMaps(
+  supabase: ReturnType<typeof adminClient>,
+  listKey: string,
+): Promise<{ byName: Map<string, string>; byId: Map<string, string> }> {
+  const byName = new Map<string, string>();
+  const byId = new Map<string, string>();
+  const { data } = await supabase
+    .from("ref_bitrix_list_items")
+    .select("name, bitrix_value, code, bitrix_item_id")
+    .eq("list_key", listKey);
+
+  for (const row of (data || []) as Array<Record<string, unknown>>) {
+    const itemId = plain(row.bitrix_item_id);
+    if (!itemId) continue;
+
+    const displayValue = plain(row.name) || plain(row.bitrix_value) || plain(row.code);
+    if (displayValue) byId.set(itemId, displayValue);
+
+    const lookupCandidates = listKey === "MY_COMPANIES"
+      ? [row.name, row.bitrix_value]
+      : [row.name, row.bitrix_value, row.code];
+    for (const candidate of lookupCandidates) {
+      const normalized = normalizeReferenceLookup(candidate);
+      if (normalized) byName.set(normalized, itemId);
+    }
+  }
+
+  const fallbackConfig = BITRIX_REFERENCE_LIST_FALLBACKS[listKey as keyof typeof BITRIX_REFERENCE_LIST_FALLBACKS];
+  if (fallbackConfig) {
+    const remoteItems = await fetchReferenceListItemsFromBitrix(listKey as keyof typeof BITRIX_REFERENCE_LIST_FALLBACKS);
+
+    if (remoteItems.length > 0) {
+      const now = new Date().toISOString();
+      const payload = remoteItems.map(item => ({
+        list_key: listKey,
+        list_name: fallbackConfig.listName,
+        iblock_id: fallbackConfig.iblockId,
+        bitrix_item_id: item.bitrix_item_id,
+        name: item.name,
+        bitrix_value: item.bitrix_value,
+        code: item.code,
+        sort_order: item.sort_order,
+        updated_at: now,
+      }));
+
+      const { error } = await supabase
+        .from("ref_bitrix_list_items")
+        .upsert(payload, { onConflict: "iblock_id,bitrix_item_id" });
+      if (error) throw error;
+
+      for (const item of remoteItems) {
+        byId.set(item.bitrix_item_id, item.name);
+        for (const candidate of [item.name, item.bitrix_value, item.code]) {
+          const normalized = normalizeReferenceLookup(candidate);
+          if (normalized) byName.set(normalized, item.bitrix_item_id);
+        }
+      }
+    }
+  }
+
+  return { byName, byId };
 }
 
 async function loadEnumMaps(supabase: ReturnType<typeof adminClient>) {
@@ -1026,25 +1358,20 @@ async function loadEnumMaps(supabase: ReturnType<typeof adminClient>) {
     }
     return out;
   };
-  const issuerCompanyMap = new Map<string, string>();
-  const { data: issuerCompanyRows } = await supabase
-    .from("ref_bitrix_list_items")
-    .select("name, bitrix_value, code, bitrix_item_id")
-    .eq("list_key", "MY_COMPANIES");
-
-  for (const row of (issuerCompanyRows || []) as Array<Record<string, unknown>>) {
-    const itemId = plain(row.bitrix_item_id);
-    if (!itemId) continue;
-    for (const candidate of [row.name, row.bitrix_value]) {
-      const normalized = normalizeReferenceLookup(candidate);
-      if (normalized) issuerCompanyMap.set(normalized, itemId);
-    }
-  }
+  const [issuerCompanyMaps, qualificationMaps, electricalSafetyGroupMaps] = await Promise.all([
+    loadReferenceListMaps(supabase, "MY_COMPANIES"),
+    loadReferenceListMaps(supabase, "QUALIFICATION"),
+    loadReferenceListMaps(supabase, "ELECTRICAL_SAFETY_GROUP"),
+  ]);
 
   return {
     categoryMap: toMap(findField(BITRIX_FIELDS_RAW.CATEGORY, BITRIX_FIELDS.CATEGORY)),
     courseMap: toMap(findField(BITRIX_FIELDS_RAW.COURSE_NAME, BITRIX_FIELDS.COURSE_NAME)),
-    issuerCompanyMap,
+    issuerCompanyMap: issuerCompanyMaps.byName,
+    qualificationMap: qualificationMaps.byName,
+    electricalSafetyGroupMap: electricalSafetyGroupMaps.byName,
+    qualificationByIdMap: qualificationMaps.byId,
+    electricalSafetyGroupByIdMap: electricalSafetyGroupMaps.byId,
     markerPassMap: toMap(findField(BITRIX_FIELDS_RAW.MARKER_PASS, BITRIX_FIELDS.MARKER_PASS)),
     typeLearnMap: toMap(findField(BITRIX_FIELDS_RAW.TYPE_LEARN, BITRIX_FIELDS.TYPE_LEARN)),
     commisConclMap: toMap(findField(BITRIX_FIELDS_RAW.COMMIS_CONCL, BITRIX_FIELDS.COMMIS_CONCL)),
@@ -1059,12 +1386,30 @@ function buildDesiredSmartProcessFieldEntries(params: {
   expectedTitle: string;
   responsibleBitrixUserId: string;
   existingCertificate: ExistingCertificateRow | null;
+  selectedQualification: string;
+  selectedElectricalSafetyGroup: string;
   currentItem: Record<string, unknown> | null;
   enumMaps: EnumMaps;
   defaultPrice: number | null;
 }): SmartFieldEntry[] {
   const currentItem = params.currentItem || {};
   const cert = params.existingCertificate;
+  const qualificationText = plain(cert?.qualification || params.selectedQualification);
+  const qualificationId = qualificationText
+    ? params.enumMaps.qualificationMap.get(normalizeReferenceLookup(qualificationText))
+    : undefined;
+  if (qualificationText && !qualificationId) {
+    throw new Error(`Не найден элемент Bitrix для поля "Квалификация": ${qualificationText}`);
+  }
+
+  const electricalSafetyGroupText = plain(cert?.electrical_safety_group || params.selectedElectricalSafetyGroup);
+  const electricalSafetyGroupId = electricalSafetyGroupText
+    ? params.enumMaps.electricalSafetyGroupMap.get(normalizeReferenceLookup(electricalSafetyGroupText))
+    : undefined;
+  if (electricalSafetyGroupText && !electricalSafetyGroupId) {
+    throw new Error(`Не найден элемент Bitrix для поля "Группа электробезопасности": ${electricalSafetyGroupText}`);
+  }
+
   const entries: SmartFieldEntry[] = [
     { code: "TITLE", kind: "text", value: params.expectedTitle },
     { code: "assignedById", kind: "text", value: params.responsibleBitrixUserId },
@@ -1148,9 +1493,14 @@ function buildDesiredSmartProcessFieldEntries(params: {
     preferredTextValue(cert?.commission_members, getSmartFieldValue(currentItem, BITRIX_FIELDS.COMMISSION_MEMBERS)),
   );
   pushIfDefined(
-    BITRIX_FIELDS.QUALIFICATION,
-    "text",
-    preferredTextValue(cert?.qualification, getSmartFieldValue(currentItem, BITRIX_FIELDS.QUALIFICATION)),
+    BITRIX_CERTIFICATE_REFERENCE_FIELDS.QUALIFICATION,
+    "link",
+    qualificationId,
+  );
+  pushIfDefined(
+    BITRIX_CERTIFICATE_REFERENCE_FIELDS.ELECTRICAL_SAFETY_GROUP,
+    "link",
+    electricalSafetyGroupId,
   );
   pushIfDefined(
     BITRIX_FIELDS.LEVEL,
@@ -1842,15 +2192,16 @@ Deno.serve(async (req: Request) => {
     const [existingCertsResult, coursePricesResult] = await Promise.all([
       supabase
         .from("certificates")
-        .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
+        .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, electrical_safety_group, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
         .eq("questionnaire_id", questionnaireId),
       supabase
         .from("ref_course_prices")
-        .select("course_name, qualification, category, price, sort_order")
+        .select("course_name, qualification, electrical_safety_group, category, price, sort_order")
         .order("sort_order")
         .order("course_name")
         .order("category")
-        .order("qualification"),
+        .order("qualification")
+        .order("electrical_safety_group"),
     ]);
     if (existingCertsResult.error) throw existingCertsResult.error;
     if (coursePricesResult.error) throw coursePricesResult.error;
@@ -1862,19 +2213,31 @@ Deno.serve(async (req: Request) => {
       return Number.isFinite(price) ? sum + price : sum;
     }, 0);
 
-    const coursesByParticipant = new Map<string, string[]>();
+    const participantsById = new Map(participants.map(participant => [participant.id, participant]));
+    const coursesByParticipant = new Map<string, Array<{
+      displayCourseName: string;
+      courseName: string;
+      qualification: string;
+      electricalSafetyGroup: string;
+    }>>();
     for (const row of (coursesResult.data || []) as Array<{ participant_id: string; course_name: string }>) {
+      const participant = participantsById.get(row.participant_id);
       const bucket = coursesByParticipant.get(row.participant_id) || [];
-      bucket.push(plain(row.course_name));
+      bucket.push(parseParticipantCourseSelection(row.course_name, participant?.category || "", referenceCoursePrices));
       coursesByParticipant.set(row.participant_id, bucket);
     }
 
     const syncTasks: SyncTask[] = participants.flatMap(participant => {
-      const courses = coursesByParticipant.get(participant.id) || [""];
-      return courses.map(courseName => ({ participant, courseName }));
+      const courses = coursesByParticipant.get(participant.id) || [{
+        displayCourseName: "",
+        courseName: "",
+        qualification: "",
+        electricalSafetyGroup: "",
+      }];
+      return courses.map(course => ({ participant, ...course }));
     });
 
-    const allCourses = Array.from(new Set(syncTasks.map(task => task.courseName).filter(Boolean)));
+    const allCourses = Array.from(new Set(syncTasks.map(task => task.displayCourseName || task.courseName).filter(Boolean)));
     const dealTitle = [
       [company.name, company.city].filter(Boolean).join(" - "),
       `${participants.length} сотрудников, ${allCourses.length} курсов, ${syncTasks.length} заявок на курсы`,
@@ -1915,7 +2278,17 @@ Deno.serve(async (req: Request) => {
 
     const existingCertificateByKey = new Map<string, ExistingCertificateRow>();
     for (const cert of existingCertificates) {
-      const key = taskKey(cert.participant_id, cert.course_name);
+      const parsedCertificateCourse = parseParticipantCourseSelection(
+        cert.course_name,
+        cert.category,
+        referenceCoursePrices,
+      );
+      const key = taskKey(
+        cert.participant_id,
+        parsedCertificateCourse.courseName || cert.course_name,
+        cert.qualification || parsedCertificateCourse.qualification,
+        cert.electrical_safety_group || parsedCertificateCourse.electricalSafetyGroup,
+      );
       if (!key.startsWith("::") && !existingCertificateByKey.has(key)) {
         existingCertificateByKey.set(key, cert);
       }
@@ -1928,8 +2301,10 @@ Deno.serve(async (req: Request) => {
     const photoFailureSamples: string[] = [];
 
     await runInChunks(syncTasks, BITRIX_SYNC_CONCURRENCY, async task => {
-      const existingCertificate = existingCertificateByKey.get(taskKey(task.participant.id, task.courseName)) || null;
-      const expectedTitle = `${task.participant.last_name} ${task.participant.first_name} - ${task.courseName}`;
+      const existingCertificate = existingCertificateByKey.get(
+        taskKey(task.participant.id, task.courseName, task.qualification, task.electricalSafetyGroup),
+      ) || null;
+      const expectedTitle = `${task.participant.last_name} ${task.participant.first_name} - ${task.displayCourseName || task.courseName}`;
       const itemIdRaw = plain(existingCertificate?.bitrix_item_id);
       let itemId = itemIdRaw;
       let currentBitrixItem: Record<string, unknown> | null = null;
@@ -1954,12 +2329,25 @@ Deno.serve(async (req: Request) => {
 
       const effectiveQualification = plain(
         existingCertificate?.qualification ||
-        getSmartFieldValue(currentBitrixItem || {}, BITRIX_FIELDS.QUALIFICATION),
+        task.qualification ||
+        resolveReferenceFieldDisplayValue(
+          getSmartFieldValue(currentBitrixItem || {}, BITRIX_CERTIFICATE_REFERENCE_FIELDS.QUALIFICATION),
+          enumMaps.qualificationByIdMap,
+        ),
+      );
+      const effectiveElectricalSafetyGroup = plain(
+        existingCertificate?.electrical_safety_group ||
+        task.electricalSafetyGroup ||
+        resolveReferenceFieldDisplayValue(
+          getSmartFieldValue(currentBitrixItem || {}, BITRIX_CERTIFICATE_REFERENCE_FIELDS.ELECTRICAL_SAFETY_GROUP),
+          enumMaps.electricalSafetyGroupByIdMap,
+        ),
       );
       const defaultReferencePrice = findReferenceCoursePrice(referenceCoursePrices, {
         courseName: task.courseName,
         category: task.participant.category,
         qualification: effectiveQualification,
+        electricalSafetyGroup: effectiveElectricalSafetyGroup,
       });
       const desiredFieldEntries = buildDesiredSmartProcessFieldEntries({
         participant: task.participant,
@@ -1967,6 +2355,8 @@ Deno.serve(async (req: Request) => {
         expectedTitle,
         responsibleBitrixUserId,
         existingCertificate,
+        selectedQualification: effectiveQualification,
+        selectedElectricalSafetyGroup: effectiveElectricalSafetyGroup,
         currentItem: currentBitrixItem,
         enumMaps,
         defaultPrice: defaultReferencePrice,
@@ -1981,7 +2371,7 @@ Deno.serve(async (req: Request) => {
         }
 
         if (existingCertificate && needsCertificateRestore(existingCertificate)) {
-          restorePatch = buildCertificateRestorePatch(existingCertificate, currentBitrixItem);
+          restorePatch = buildCertificateRestorePatch(existingCertificate, currentBitrixItem, enumMaps);
         }
       }
 
@@ -2030,6 +2420,8 @@ Deno.serve(async (req: Request) => {
         position: task.participant.position,
         category: task.participant.category,
         course_name: task.courseName,
+        qualification: effectiveQualification,
+        electrical_safety_group: effectiveElectricalSafetyGroup,
         sync_status: "synced",
         sync_error: "",
         updated_at: new Date().toISOString(),

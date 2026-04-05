@@ -4,8 +4,9 @@ import { supabase } from '../../lib/supabase';
 import { uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
 import { extractPaymentOrderFields } from '../../lib/paymentOcr';
 import { fetchCoursesList } from '../../lib/bitrix';
+import { buildCourseOptions, normalizeCourseOptionValue } from '../../lib/courseOptions';
 import { logger } from '../../lib/logger';
-import type { Company, Participant, RefCompanyDirectory } from '../../types';
+import type { Company, Participant, RefCompanyDirectory, RefCoursePrice } from '../../types';
 import {
  applyDirectoryMatchToCompany,
  createLocalParticipant,
@@ -55,6 +56,7 @@ export function usePublicFormController(token: string | undefined) {
 
  const [participants, setParticipants] = useState<LocalParticipant[]>([createLocalParticipant()]);
  const [availableCourses, setAvailableCourses] = useState<string[]>([]);
+ const [coursePriceRules, setCoursePriceRules] = useState<RefCoursePrice[]>([]);
  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
  const [openCourseSelect, setOpenCourseSelect] = useState<string | null>(null);
  const [courseSearch, setCourseSearch] = useState('');
@@ -347,6 +349,17 @@ export function usePublicFormController(token: string | undefined) {
  }
 
  setAvailableCategories(['ИТР', 'Обычный']);
+ });
+ void supabase
+ .from('ref_course_prices')
+ .select('*')
+ .order('sort_order')
+ .order('course_name')
+ .order('category')
+ .order('qualification')
+ .order('electrical_safety_group')
+ .then(({ data }) => {
+ setCoursePriceRules((data || []) as RefCoursePrice[]);
  });
  }, [lookupCompanyByBin, token]);
 
@@ -801,10 +814,27 @@ export function usePublicFormController(token: string | undefined) {
  }, [submitQuestionnaire, validateForm]);
 
  const updateParticipant = useCallback(<K extends keyof LocalParticipant>(id: string, field: K, value: LocalParticipant[K]) => {
- setParticipants(current => current.map(participant => (
- participant.id === id ? { ...participant, [field]: value } : participant
- )));
- }, []);
+ setParticipants(current => current.map(participant => {
+ if (participant.id !== id) return participant;
+
+ const nextParticipant = { ...participant, [field]: value };
+ if (field !== 'category') {
+ return nextParticipant;
+ }
+
+ const allowedOptions = buildCourseOptions({
+ baseCourses: availableCourses,
+ coursePriceRules,
+ category: String(value || ''),
+ });
+ const allowedKeys = new Set(allowedOptions.map(option => normalizeCourseOptionValue(option.displayName)).filter(Boolean));
+
+ return {
+ ...nextParticipant,
+ courses: participant.courses.filter(course => allowedKeys.has(normalizeCourseOptionValue(course))),
+ };
+ }));
+ }, [availableCourses, coursePriceRules]);
 
  const toggleCourse = useCallback((participantId: string, course: string) => {
  setParticipants(current => current.map(participant => {
@@ -875,10 +905,15 @@ export function usePublicFormController(token: string | undefined) {
  () => participants.reduce((sum, participant) => sum + participant.courses.length, 0),
  [participants]
  );
- const filteredCourses = useMemo(
- () => availableCourses.filter(course => course.toLowerCase().includes(courseSearch.toLowerCase())),
- [availableCourses, courseSearch]
- );
+ const getFilteredCoursesForParticipant = useCallback((participant: LocalParticipant): string[] => {
+ return buildCourseOptions({
+ baseCourses: availableCourses,
+ coursePriceRules,
+ category: participant.category,
+ })
+ .map(option => option.displayName)
+ .filter(course => course.toLowerCase().includes(courseSearch.toLowerCase()));
+ }, [availableCourses, coursePriceRules, courseSearch]);
  const totalPages = Math.ceil(participants.length / pageSize);
  const pagedParticipants = participants.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
@@ -933,7 +968,7 @@ export function usePublicFormController(token: string | undefined) {
  currentPage,
  totalPages,
  pagedParticipants,
- filteredCourses,
+ getFilteredCoursesForParticipant,
  totalCourses,
  totalCourseRequests,
  paymentOrderInputRef,

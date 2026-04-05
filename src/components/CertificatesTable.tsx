@@ -196,6 +196,12 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         issuerCompanyOptions={controller.issuerCompanyOptions}
         bulkCommissionChair={controller.bulkCommissionChair}
         commissionChairOptions={controller.commissionChairOptions}
+        bulkManager={controller.bulkManager}
+        managerOptions={controller.managerOptions}
+        bulkQualification={controller.bulkQualification}
+        bulkQualificationOptions={controller.bulkQualificationOptions}
+        bulkElectricalSafetyGroup={controller.bulkElectricalSafetyGroup}
+        bulkElectricalSafetyGroupOptions={controller.bulkElectricalSafetyGroupOptions}
         bulkMarkerPass={controller.bulkMarkerPass}
         markerPassOptions={controller.markerPassOptions}
         bulkTypeLearn={controller.bulkTypeLearn}
@@ -237,6 +243,18 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         onBulkCommissionChairChange={controller.setBulkCommissionChair}
         onBulkFillCommissionChair={() => {
           void controller.bulkFillCommissionChair();
+        }}
+        onBulkManagerChange={controller.setBulkManager}
+        onBulkFillManager={() => {
+          void controller.bulkFillManager();
+        }}
+        onBulkQualificationChange={controller.setBulkQualification}
+        onBulkFillQualification={() => {
+          void controller.bulkFillQualification();
+        }}
+        onBulkElectricalSafetyGroupChange={controller.setBulkElectricalSafetyGroup}
+        onBulkFillElectricalSafetyGroup={() => {
+          void controller.bulkFillElectricalSafetyGroup();
         }}
         onBulkMarkerPassChange={controller.setBulkMarkerPass}
         onBulkFillMarkerPass={() => {
@@ -282,6 +300,7 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         onSaveDirectPatch={(certId, patch) => {
           void controller.saveDirectPatch(certId, patch);
         }}
+        getCourseSpecificOptions={controller.getCourseSpecificOptions}
         onDeleteCertificate={id => {
           void controller.deleteCertificate(id);
         }}
