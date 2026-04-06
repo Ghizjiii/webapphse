@@ -108,6 +108,7 @@ export interface RefBitrixListItem {
   bitrix_value: string;
   code: string;
   sort_order: number;
+  details_json: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -217,6 +218,8 @@ export interface Certificate {
   commission_member_3: string;
   commission_member_4: string;
   commission_members: string;
+  commission_members_protocol: string;
+  electrical_safety_admission_protocol: string;
   qualification: string;
   electrical_safety_group: string;
   level: string;
@@ -262,6 +265,15 @@ export interface Protocol {
   updated_at: string;
   group_key?: string;
   is_draft?: boolean;
+}
+
+export interface RefProtocolNumeratorSetting {
+  id: string;
+  course_name: string;
+  category_scope: ProtocolCategoryScope;
+  start_number: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export type GeneratedDocumentType = 'certificate' | 'id_card';
