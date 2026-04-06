@@ -1,14 +1,25 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock, FileBadge2, Award, CheckCircle2, ClipboardCheck, ShieldCheck, Banknote } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, BookOpen, Tag, Save, Building2, Search, ExternalLink, Clock, FileBadge2, Award, CheckCircle2, ClipboardCheck, ShieldCheck, Banknote, MapPinned, Users, Shield, Hash } from 'lucide-react';
 import { useRef } from 'react';
+import type { ReactNode } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
 import { getFreshAccessToken, supabase } from '../lib/supabase';
 import {
   BITRIX_REFERENCE_LISTS,
 } from '../lib/bitrix';
+import { parseProtocolSequenceNumber, protocolCategoryLabel, protocolNumberSequenceKey } from '../lib/protocolGeneration';
 import { useToast } from '../context/ToastContext';
 import { formatDurationLabel } from '../lib/documentValidity';
-import type { RefBitrixListItem, RefCompanyDirectory, RefCoursePrice, RefDocumentValidityRule, ReferenceSyncStatus } from '../types';
+import type {
+  Protocol,
+  ProtocolCategoryScope,
+  RefBitrixListItem,
+  RefCompanyDirectory,
+  RefCoursePrice,
+  RefDocumentValidityRule,
+  ReferenceSyncStatus,
+  RefProtocolNumeratorSetting,
+} from '../types';
 
 type Tab =
   | 'categories'
@@ -22,15 +33,43 @@ type Tab =
   | 'marker-pass'
   | 'type-learn'
   | 'commis-concl'
+  | 'electrical-safety-admission'
+  | 'electrical-safety-group'
+  | 'cities'
+  | 'commission-members'
+  | 'commission-my-companies'
+  | 'protocol-numerator'
   | 'companies';
 
-type TabGroup = 'main' | 'secondary';
+type TabGroup = 'main' | 'secondary' | 'numerator';
 
 interface RefItem {
   id: string;
   name: string;
   bitrix_value: string;
   sort_order: number;
+}
+
+interface ReferenceTableRow {
+  id: string;
+  [key: string]: string;
+}
+
+interface ReferenceTableColumn {
+  key: string;
+  label: string;
+  render?: (row: ReferenceTableRow, index: number) => ReactNode;
+  className?: string;
+}
+
+interface ProtocolNumeratorRow {
+  course_name: string;
+  category_scope: ProtocolCategoryScope;
+  category_label: string;
+  start_number: number;
+  last_number: number | null;
+  next_number: number;
+  assigned_count: number;
 }
 
 function toRefItems(items: RefBitrixListItem[]): RefItem[] {
@@ -40,6 +79,31 @@ function toRefItems(items: RefBitrixListItem[]): RefItem[] {
     bitrix_value: item.bitrix_value,
     sort_order: item.sort_order,
   }));
+}
+
+function chunkItems<T>(items: T[], chunkSize: number): T[][] {
+  if (chunkSize <= 0) return [items];
+
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
+function getBitrixListItemDetails(item: RefBitrixListItem): Record<string, unknown> {
+  return item.details_json && typeof item.details_json === 'object'
+    ? item.details_json
+    : {};
+}
+
+function getBitrixListItemDetailValue(item: RefBitrixListItem, key: string): string {
+  const value = getBitrixListItemDetails(item)[key];
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).trim();
+  }
+  return '';
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -71,6 +135,8 @@ export default function ReferencePage() {
   const [bitrixListItems, setBitrixListItems] = useState<RefBitrixListItem[]>([]);
   const [companiesDirectory, setCompaniesDirectory] = useState<RefCompanyDirectory[]>([]);
   const [documentValidityRules, setDocumentValidityRules] = useState<RefDocumentValidityRule[]>([]);
+  const [protocolNumeratorSettings, setProtocolNumeratorSettings] = useState<RefProtocolNumeratorSetting[]>([]);
+  const [protocolHistory, setProtocolHistory] = useState<Protocol[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -78,7 +144,10 @@ export default function ReferencePage() {
   const [companySearch, setCompanySearch] = useState('');
   const [coursePriceSearch, setCoursePriceSearch] = useState('');
   const [documentRuleSearch, setDocumentRuleSearch] = useState('');
+  const [protocolNumeratorSearch, setProtocolNumeratorSearch] = useState('');
+  const [protocolHistorySearch, setProtocolHistorySearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savingProtocolNumeratorKey, setSavingProtocolNumeratorKey] = useState('');
   const [syncStatus, setSyncStatus] = useState<ReferenceSyncStatus | null>(null);
   const syncStatusKeyRef = useRef('');
   const lastResumeCheckAtRef = useRef(0);
@@ -111,12 +180,120 @@ export default function ReferencePage() {
     () => toRefItems(bitrixListItems.filter(item => item.list_key === 'COMMIS_CONCL')),
     [bitrixListItems]
   );
+  const electricalSafetyAdmissionRows = useMemo<ReferenceTableRow[]>(
+    () => bitrixListItems
+      .filter(item => item.list_key === 'ELECTRICAL_SAFETY_ADMISSION')
+      .map(item => ({
+        id: item.id,
+        name: item.name,
+        category: getBitrixListItemDetailValue(item, 'category'),
+      })),
+    [bitrixListItems]
+  );
+  const electricalSafetyGroupRows = useMemo<ReferenceTableRow[]>(
+    () => bitrixListItems
+      .filter(item => item.list_key === 'ELECTRICAL_SAFETY_GROUP')
+      .map(item => ({
+        id: item.id,
+        name: item.name,
+        text_in_document: getBitrixListItemDetailValue(item, 'text_in_document'),
+      })),
+    [bitrixListItems]
+  );
+  const cityItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'CITIES')),
+    [bitrixListItems]
+  );
+  const commissionMemberRows = useMemo<ReferenceTableRow[]>(
+    () => bitrixListItems
+      .filter(item => item.list_key === 'COMMISSION_MEMBERS')
+      .map(item => ({
+        id: item.id,
+        name: item.name,
+        city: getBitrixListItemDetailValue(item, 'city'),
+        my_company: getBitrixListItemDetailValue(item, 'my_company'),
+        main_text: getBitrixListItemDetailValue(item, 'main_text'),
+      })),
+    [bitrixListItems]
+  );
+  const commissionMyCompaniesItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'COMMISSION_MY_COMPANIES')),
+    [bitrixListItems]
+  );
+  const protocolNumeratorRows = useMemo<ProtocolNumeratorRow[]>(() => {
+    const settingsMap = new Map<string, RefProtocolNumeratorSetting>();
+    for (const row of protocolNumeratorSettings) {
+      settingsMap.set(
+        protocolNumberSequenceKey({
+          courseName: row.course_name,
+          categoryScope: row.category_scope,
+        }),
+        row,
+      );
+    }
+
+    const counters = new Map<string, { lastNumber: number | null; assignedCount: number }>();
+    for (const row of protocolHistory) {
+      const key = protocolNumberSequenceKey({
+        courseName: row.course_name,
+        categoryScope: row.category_scope,
+      });
+      const current = counters.get(key) || { lastNumber: null, assignedCount: 0 };
+      const parsedNumber = parseProtocolSequenceNumber(row.protocol_number);
+      counters.set(key, {
+        lastNumber: parsedNumber == null
+          ? current.lastNumber
+          : current.lastNumber == null
+            ? parsedNumber
+            : Math.max(current.lastNumber, parsedNumber),
+        assignedCount: current.assignedCount + (String(row.protocol_number || '').trim() ? 1 : 0),
+      });
+    }
+
+    const courseNames = Array.from(new Set([
+      ...courses.map(item => String(item.name || '').trim()),
+      ...protocolNumeratorSettings.map(item => String(item.course_name || '').trim()),
+      ...protocolHistory.map(item => String(item.course_name || '').trim()),
+    ].filter(Boolean))).sort((left, right) => left.localeCompare(right, 'ru'));
+
+    const rows: ProtocolNumeratorRow[] = [];
+    for (const courseName of courseNames) {
+      const scopes: ProtocolCategoryScope[] = ['itr', 'worker', 'all'];
+      for (const scope of scopes) {
+        const key = protocolNumberSequenceKey({ courseName, categoryScope: scope });
+        const setting = settingsMap.get(key);
+        const startNumber = Number(setting?.start_number ?? 1);
+        const counter = counters.get(key);
+        const lastNumber = counter?.lastNumber ?? null;
+        const nextNumber = Math.max((lastNumber ?? (startNumber - 1)) + 1, startNumber);
+
+        rows.push({
+          course_name: courseName,
+          category_scope: scope,
+          category_label: protocolCategoryLabel(scope),
+          start_number: startNumber,
+          last_number: lastNumber,
+          next_number: nextNumber,
+          assigned_count: counter?.assignedCount ?? 0,
+        });
+      }
+    }
+
+    return rows;
+  }, [courses, protocolHistory, protocolNumeratorSettings]);
   const tabDefinitions = [
     { key: 'courses' as Tab, group: 'main' as TabGroup, label: 'Названия курсов', icon: <BookOpen size={15} />, count: courses.length },
     { key: 'course-prices' as Tab, group: 'main' as TabGroup, label: 'Цены на курс', icon: <Banknote size={15} />, count: coursePrices.length },
     { key: 'companies' as Tab, group: 'main' as TabGroup, label: 'Справочник компаний', icon: <Building2 size={15} />, count: companiesDirectory.length },
     { key: 'my-companies' as Tab, group: 'main' as TabGroup, label: 'Мои компании', icon: <Building2 size={15} />, count: myCompaniesItems.length },
     { key: 'document-validity' as Tab, group: 'main' as TabGroup, label: 'Правила сроков', icon: <Clock size={15} />, count: documentValidityRules.length },
+    {
+      key: 'protocol-numerator' as Tab,
+      group: 'numerator' as TabGroup,
+      label: 'Нумератор',
+      icon: <Hash size={15} />,
+      count: protocolHistory.filter(row => String(row.protocol_number || '').trim()).length,
+    },
     { key: 'document-types' as Tab, group: 'secondary' as TabGroup, label: 'Тип документа', icon: <FileBadge2 size={15} />, count: documentTypeItems.length },
     { key: 'categories' as Tab, group: 'secondary' as TabGroup, label: 'Категории', icon: <Tag size={15} />, count: categories.length },
     { key: 'employee-status' as Tab, group: 'secondary' as TabGroup, label: 'Статус сотрудника', icon: <Building2 size={15} />, count: employeeStatusItems.length },
@@ -124,18 +301,38 @@ export default function ReferencePage() {
     { key: 'marker-pass' as Tab, group: 'secondary' as TabGroup, label: 'Отметка проверки знаний', icon: <CheckCircle2 size={15} />, count: markerPassItems.length },
     { key: 'type-learn' as Tab, group: 'secondary' as TabGroup, label: 'Вид проверки / тип обучения', icon: <ClipboardCheck size={15} />, count: typeLearnItems.length },
     { key: 'commis-concl' as Tab, group: 'secondary' as TabGroup, label: 'Заключение комиссии', icon: <ShieldCheck size={15} />, count: commisConclItems.length },
+    { key: 'electrical-safety-admission' as Tab, group: 'secondary' as TabGroup, label: 'Допуск электробезопасности', icon: <Shield size={15} />, count: electricalSafetyAdmissionRows.length },
+    { key: 'electrical-safety-group' as Tab, group: 'secondary' as TabGroup, label: 'Группа электробезопасности', icon: <ShieldCheck size={15} />, count: electricalSafetyGroupRows.length },
+    { key: 'cities' as Tab, group: 'secondary' as TabGroup, label: 'Города', icon: <MapPinned size={15} />, count: cityItems.length },
+    { key: 'commission-members' as Tab, group: 'secondary' as TabGroup, label: 'Члены комиссии', icon: <Users size={15} />, count: commissionMemberRows.length },
+    { key: 'commission-my-companies' as Tab, group: 'secondary' as TabGroup, label: 'Мои компании (комиссия)', icon: <Building2 size={15} />, count: commissionMyCompaniesItems.length },
   ];
   const visibleTabs = tabDefinitions.filter(item => item.group === tabGroup);
+  const visibleTabRows = tabGroup === 'secondary'
+    ? chunkItems(visibleTabs, 6)
+    : [visibleTabs];
 
   async function loadData(showSpinner = true) {
     if (showSpinner) setLoading(true);
-    const [catRes, courseRes, coursePriceRes, bitrixListRes, companyDirRes, documentRuleRes, syncStatusRes] = await Promise.all([
+    const [
+      catRes,
+      courseRes,
+      coursePriceRes,
+      bitrixListRes,
+      companyDirRes,
+      documentRuleRes,
+      protocolNumeratorRes,
+      protocolHistoryRes,
+      syncStatusRes,
+    ] = await Promise.all([
       supabase.from('ref_categories').select('*').order('sort_order').order('name'),
       supabase.from('ref_courses').select('*').order('sort_order').order('name'),
       supabase.from('ref_course_prices').select('*').order('sort_order').order('course_name').order('category').order('qualification'),
       supabase.from('ref_bitrix_list_items').select('*').order('list_key').order('sort_order').order('name'),
       supabase.from('ref_company_directory').select('*').order('contract_is_active', { ascending: false }).order('name'),
       supabase.from('ref_document_validity_rules').select('*').order('sort_order').order('course_name').order('category'),
+      supabase.from('ref_protocol_numerator_settings').select('*').order('course_name').order('category_scope'),
+      supabase.from('protocols').select('*').order('course_name').order('category_label').order('created_at', { ascending: false }),
       supabase.from('reference_sync_status').select('*').eq('scope', 'reference_lists').maybeSingle(),
     ]);
     const categoryRows = catRes.data || [];
@@ -148,6 +345,8 @@ export default function ReferencePage() {
     setCoursePrices((coursePriceRes.data || []) as RefCoursePrice[]);
     setBitrixListItems((bitrixListRes.data || []) as RefBitrixListItem[]);
     setCompaniesDirectory(companyDirRes.data || []);
+    setProtocolNumeratorSettings((protocolNumeratorRes.data || []) as RefProtocolNumeratorSetting[]);
+    setProtocolHistory((protocolHistoryRes.data || []) as Protocol[]);
     setSyncStatus(nextSyncStatus);
     syncStatusKeyRef.current = buildSyncStatusKey(nextSyncStatus);
     setDocumentValidityRules(
@@ -305,6 +504,43 @@ export default function ReferencePage() {
     setCategories(prev => prev.map(c => c.id === id ? { ...c, name: nextName, bitrix_value: nextName } : c));
   }
 
+  async function saveProtocolNumeratorStartNumber(
+    courseName: string,
+    categoryScope: ProtocolCategoryScope,
+    startNumber: number,
+  ) {
+    if (!Number.isInteger(startNumber) || startNumber < 0) {
+      showToast('error', 'Начальное значение должно быть целым числом 0 или больше');
+      return;
+    }
+
+    const saveKey = protocolNumberSequenceKey({ courseName, categoryScope });
+    setSavingProtocolNumeratorKey(saveKey);
+
+    try {
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from('ref_protocol_numerator_settings')
+        .upsert({
+          course_name: courseName,
+          category_scope: categoryScope,
+          start_number: startNumber,
+          updated_at: now,
+        }, {
+          onConflict: 'course_name,category_scope',
+        });
+
+      if (error) throw error;
+
+      showToast('success', `Старт нумерации сохранен: ${courseName} / ${protocolCategoryLabel(categoryScope)}`);
+      await loadData(false);
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Не удалось сохранить старт нумерации');
+    } finally {
+      setSavingProtocolNumeratorKey('');
+    }
+  }
+
   return (
     <DashboardLayout breadcrumbs={[{ label: 'Анкеты', to: '/dashboard' }, { label: 'Справочник' }]}>
       <div className="w-fit min-w-full max-w-none space-y-6">
@@ -338,6 +574,7 @@ export default function ReferencePage() {
             {([
               { key: 'main' as TabGroup, label: 'Основное' },
               { key: 'secondary' as TabGroup, label: 'Дополнительно' },
+              { key: 'numerator' as TabGroup, label: 'Нумератор' },
             ]).map(group => (
               <button
                 key={group.key}
@@ -357,24 +594,42 @@ export default function ReferencePage() {
             ))}
           </div>
 
-          <div className="flex gap-1 border-b border-gray-200 px-4 pt-4 overflow-x-auto">
-            {visibleTabs.map(t => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
-                  tab === t.key
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                {t.icon} {t.label}
-                <span className={`px-2 py-0.5 rounded-full text-xs ${tab === t.key ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
-                  {t.count}
-                </span>
-              </button>
-            ))}
-          </div>
+          {visibleTabs.length > 1 && (
+            <div className="border-b border-gray-200 px-4 pt-4 pb-2">
+              <div className={tabGroup === 'secondary' ? 'flex flex-col gap-1.5' : 'flex gap-1 overflow-x-auto'}>
+                {visibleTabRows.map((row, rowIndex) => (
+                  <div
+                    key={`${tabGroup}-${rowIndex}`}
+                    className={tabGroup === 'secondary' ? 'grid grid-cols-6 gap-1.5' : 'flex gap-1 min-w-max'}
+                  >
+                    {row.map(t => (
+                      <button
+                        key={t.key}
+                        onClick={() => setTab(t.key)}
+                        className={`flex items-center justify-between gap-3 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px text-left ${
+                          tabGroup === 'secondary' ? 'w-full min-w-0' : 'whitespace-nowrap'
+                        } ${
+                          tab === t.key
+                            ? 'border-blue-600 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="flex-shrink-0">{t.icon}</span>
+                          <span className={tabGroup === 'secondary' ? 'min-w-0 leading-5 whitespace-normal break-words' : 'whitespace-nowrap'}>
+                            {t.label}
+                          </span>
+                        </span>
+                        <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs ${tab === t.key ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {t.count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="p-5">
             {loading ? (
@@ -442,11 +697,69 @@ export default function ReferencePage() {
                 title={BITRIX_REFERENCE_LISTS.COMMIS_CONCL.name}
                 items={commisConclItems}
               />
+            ) : tab === 'electrical-safety-admission' ? (
+              <ReadonlyReferenceTableTab
+                title="Допуск электробезопасности"
+                rows={electricalSafetyAdmissionRows}
+                columns={[
+                  { key: 'name', label: 'Название' },
+                  { key: 'category', label: 'Категория' },
+                ]}
+              />
+            ) : tab === 'electrical-safety-group' ? (
+              <ReadonlyReferenceTableTab
+                title="Группа электробезопасности"
+                rows={electricalSafetyGroupRows}
+                columns={[
+                  { key: 'name', label: 'Название' },
+                  { key: 'text_in_document', label: 'Текст в документе' },
+                ]}
+              />
+            ) : tab === 'cities' ? (
+              <ReadonlyReferenceTab
+                title="Города"
+                items={cityItems}
+              />
+            ) : tab === 'commission-members' ? (
+              <ReadonlyReferenceTableTab
+                title="Члены комиссии (для протокола)"
+                rows={commissionMemberRows}
+                columns={[
+                  { key: 'name', label: 'Название' },
+                  { key: 'city', label: 'Город' },
+                  { key: 'my_company', label: 'Моя компания' },
+                  {
+                    key: 'main_text',
+                    label: 'Основной текст членов комиссии',
+                    render: row => (
+                      <div className="min-w-[460px] whitespace-pre-line text-sm text-gray-800">
+                        {row.main_text || '—'}
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            ) : tab === 'commission-my-companies' ? (
+              <ReadonlyReferenceTab
+                title="Мои компании"
+                items={commissionMyCompaniesItems}
+              />
             ) : tab === 'document-validity' ? (
               <DocumentValidityTab
                 items={documentValidityRules}
                 search={documentRuleSearch}
                 onSearchChange={setDocumentRuleSearch}
+              />
+            ) : tab === 'protocol-numerator' ? (
+              <ProtocolNumeratorTab
+                rows={protocolNumeratorRows}
+                search={protocolNumeratorSearch}
+                historySearch={protocolHistorySearch}
+                savingKey={savingProtocolNumeratorKey}
+                protocols={protocolHistory}
+                onSearchChange={setProtocolNumeratorSearch}
+                onHistorySearchChange={setProtocolHistorySearch}
+                onSaveStartNumber={saveProtocolNumeratorStartNumber}
               />
             ) : (
               <CompanyDirectoryTab
@@ -536,6 +849,323 @@ function ReadonlyReferenceTab({
         placeholder=""
         emptyText="Нет данных. Нажмите синхронизацию, чтобы подтянуть значения из Bitrix."
       />
+    </div>
+  );
+}
+
+function ReadonlyReferenceTableTab({
+  title,
+  rows,
+  columns,
+}: {
+  title: string;
+  rows: ReferenceTableRow[];
+  columns: ReferenceTableColumn[];
+}) {
+  return (
+    <div className="space-y-4 w-fit min-w-full">
+      <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm text-blue-900">
+        Источник данных: Bitrix List `{title}`. Изменения нужно вносить в Bitrix, а здесь показывается локальная копия после синхронизации.
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="text-center py-10 text-sm text-gray-400">Нет данных. Нажмите синхронизацию, чтобы подтянуть значения из Bitrix.</div>
+      ) : (
+        <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <div className="overflow-auto">
+            <table className="w-full min-w-[980px] text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
+                  {columns.map(column => (
+                    <th
+                      key={column.key}
+                      className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${column.className || ''}`}
+                    >
+                      {column.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={row.id} className="border-b border-gray-100 last:border-b-0">
+                    <td className="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{index + 1}</td>
+                    {columns.map(column => (
+                      <td
+                        key={column.key}
+                        className={`px-4 py-2 text-sm text-gray-800 align-top ${column.className || ''}`}
+                      >
+                        {column.render ? column.render(row, index) : (row[column.key] || '—')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function normalizeProtocolNumeratorSearchValue(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLocaleLowerCase('ru')
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ');
+}
+
+function formatProtocolDisplayName(protocol: Pick<Protocol, 'course_name' | 'category_scope'>): string {
+  const courseName = String(protocol.course_name || '').trim() || 'Без названия курса';
+  return `${courseName} / ${protocolCategoryLabel(protocol.category_scope)}`;
+}
+
+function ProtocolNumeratorTab({
+  rows,
+  protocols,
+  search,
+  historySearch,
+  savingKey,
+  onSearchChange,
+  onHistorySearchChange,
+  onSaveStartNumber,
+}: {
+  rows: ProtocolNumeratorRow[];
+  protocols: Protocol[];
+  search: string;
+  historySearch: string;
+  savingKey: string;
+  onSearchChange: (value: string) => void;
+  onHistorySearchChange: (value: string) => void;
+  onSaveStartNumber: (courseName: string, categoryScope: ProtocolCategoryScope, startNumber: number) => void | Promise<void>;
+}) {
+  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setDraftValues({});
+  }, [rows]);
+
+  const normalizedSearch = normalizeProtocolNumeratorSearchValue(search);
+  const normalizedHistorySearch = normalizeProtocolNumeratorSearchValue(historySearch);
+
+  const filteredRows = useMemo(() => {
+    if (!normalizedSearch) return rows;
+    return rows.filter(row =>
+      [
+        row.course_name,
+        row.category_label,
+        String(row.start_number),
+        String(row.next_number),
+      ]
+        .join(' ')
+        .toLocaleLowerCase('ru')
+        .includes(normalizedSearch)
+    );
+  }, [rows, normalizedSearch]);
+
+  const historyRows = useMemo(() => {
+    const filtered = protocols
+      .filter(row => String(row.protocol_number || '').trim())
+      .filter(row => {
+        if (!normalizedHistorySearch) return true;
+        return [
+          row.course_name,
+          protocolCategoryLabel(row.category_scope),
+          row.protocol_number,
+          row.protocol_date || '',
+        ]
+          .join(' ')
+          .toLocaleLowerCase('ru')
+          .includes(normalizedHistorySearch);
+      });
+
+    return [...filtered].sort((left, right) => {
+      const byCourse = String(left.course_name || '').localeCompare(String(right.course_name || ''), 'ru');
+      if (byCourse !== 0) return byCourse;
+
+      const byScope = protocolCategoryLabel(left.category_scope).localeCompare(protocolCategoryLabel(right.category_scope), 'ru');
+      if (byScope !== 0) return byScope;
+
+      const leftNumber = parseProtocolSequenceNumber(left.protocol_number);
+      const rightNumber = parseProtocolSequenceNumber(right.protocol_number);
+      if (leftNumber != null && rightNumber != null && leftNumber !== rightNumber) {
+        return rightNumber - leftNumber;
+      }
+      if (leftNumber != null && rightNumber == null) return -1;
+      if (leftNumber == null && rightNumber != null) return 1;
+
+      return String(right.protocol_date || right.updated_at || '').localeCompare(String(left.protocol_date || left.updated_at || ''));
+    });
+  }, [normalizedHistorySearch, protocols]);
+
+  function keyForRow(row: ProtocolNumeratorRow): string {
+    return protocolNumberSequenceKey({
+      courseName: row.course_name,
+      categoryScope: row.category_scope,
+    });
+  }
+
+  function inputValueForRow(row: ProtocolNumeratorRow): string {
+    const rowKey = keyForRow(row);
+    return draftValues[rowKey] ?? String(row.start_number);
+  }
+
+  async function commitStartNumber(row: ProtocolNumeratorRow) {
+    const rowKey = keyForRow(row);
+    const rawValue = inputValueForRow(row).trim();
+    if (!rawValue) {
+      setDraftValues(current => ({ ...current, [rowKey]: String(row.start_number) }));
+      return;
+    }
+
+    const parsed = Number(rawValue);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      setDraftValues(current => ({ ...current, [rowKey]: String(row.start_number) }));
+      return;
+    }
+
+    if (parsed === row.start_number) return;
+    await onSaveStartNumber(row.course_name, row.category_scope, parsed);
+  }
+
+  return (
+    <div className="space-y-6 w-fit min-w-full">
+      <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm text-blue-900">
+        Здесь задается старт автонумерации протоколов по каждому курсу и категории. Следующий номер считается от большего
+        из стартового значения и уже выданных протоколов.
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">С какого начинается</h3>
+            <p className="text-xs text-gray-500 mt-1">Для ИТР, обычного состава и, при необходимости, общих протоколов.</p>
+          </div>
+          <div className="relative w-full max-w-md">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={search}
+              onChange={e => onSearchChange(e.target.value)}
+              placeholder="Поиск по курсу или категории"
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        </div>
+
+        {filteredRows.length === 0 ? (
+          <div className="text-center py-10 text-sm text-gray-400">Нет строк нумератора для текущего фильтра.</div>
+        ) : (
+          <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div className="overflow-auto">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Курс</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Категория</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Начинать с</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Последний номер</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Следующий</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Выдано протоколов</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.map((row, index) => {
+                    const rowKey = keyForRow(row);
+                    const isSaving = savingKey === rowKey;
+                    return (
+                      <tr key={rowKey} className="border-b border-gray-100 last:border-b-0">
+                        <td className="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{index + 1}</td>
+                        <td className="px-4 py-2 text-sm text-gray-800">{row.course_name}</td>
+                        <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">{row.category_label}</td>
+                        <td className="px-4 py-2">
+                          <input
+                            value={inputValueForRow(row)}
+                            onChange={e => setDraftValues(current => ({ ...current, [rowKey]: e.target.value }))}
+                            onBlur={() => {
+                              void commitStartNumber(row);
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                void commitStartNumber(row);
+                              }
+                              if (e.key === 'Escape') {
+                                setDraftValues(current => ({ ...current, [rowKey]: String(row.start_number) }));
+                              }
+                            }}
+                            disabled={isSaving}
+                            inputMode="numeric"
+                            className="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-100"
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">{row.last_number ?? '—'}</td>
+                        <td className="px-4 py-2 text-sm font-semibold text-gray-900 whitespace-nowrap">{row.next_number}</td>
+                        <td className="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">
+                          {isSaving ? 'Сохранение...' : row.assigned_count}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Список всех протоколов</h3>
+            <p className="text-xs text-gray-500 mt-1">Журнал уже присвоенных номеров с датами.</p>
+          </div>
+          <div className="relative w-full max-w-md">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={historySearch}
+              onChange={e => onHistorySearchChange(e.target.value)}
+              placeholder="Поиск по курсу, категории, номеру или дате"
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        </div>
+
+        {historyRows.length === 0 ? (
+          <div className="text-center py-10 text-sm text-gray-400">Протоколы пока не присвоены.</div>
+        ) : (
+          <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div className="overflow-auto">
+              <table className="w-full min-w-[1040px] text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Протокол</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Номер</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Дата протокола</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сотрудников</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Обновлено</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyRows.map((row, index) => (
+                    <tr key={row.id} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{index + 1}</td>
+                      <td className="px-4 py-2 text-sm text-gray-800">{formatProtocolDisplayName(row)}</td>
+                      <td className="px-4 py-2 text-sm font-medium text-gray-900 whitespace-nowrap">{row.protocol_number || '—'}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">{row.protocol_date || '—'}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">{row.employees_count}</td>
+                      <td className="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">{formatDateTime(row.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

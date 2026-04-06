@@ -22,13 +22,33 @@ export interface BitrixCoursePriceDetails {
   price: number | null;
 }
 
+export interface BitrixElectricalSafetyAdmissionDetails {
+  category: string;
+}
+
+export interface BitrixElectricalSafetyGroupDetails {
+  text_in_document: string;
+}
+
+export interface BitrixCommissionMemberDetails {
+  city: string;
+  my_company: string;
+  main_text: string;
+}
+
 export interface BitrixListElement {
   id: string;
   iblockId: number;
   name: string;
   code: string;
   sortOrder: number;
-  details: BitrixDocumentValidityDetails | BitrixCoursePriceDetails | null;
+  details:
+    | BitrixDocumentValidityDetails
+    | BitrixCoursePriceDetails
+    | BitrixElectricalSafetyAdmissionDetails
+    | BitrixElectricalSafetyGroupDetails
+    | BitrixCommissionMemberDetails
+    | null;
 }
 
 export const BITRIX_REFERENCE_LISTS = {
@@ -43,6 +63,12 @@ export const BITRIX_REFERENCE_LISTS = {
   TYPE_LEARN: { iblockId: 78, name: 'Вид проверки знаний / тип обучения' },
   COMMIS_CONCL: { iblockId: 80, name: 'Заключение комиссии' },
   COURSE_PRICES: { iblockId: 84, name: 'Course default prices' },
+  QUALIFICATION: { iblockId: 86, name: 'Квалификация' },
+  ELECTRICAL_SAFETY_ADMISSION: { iblockId: 88, name: 'Допуск электробезопасность' },
+  ELECTRICAL_SAFETY_GROUP: { iblockId: 90, name: 'Группа электробезопасность' },
+  CITIES: { iblockId: 92, name: 'Города' },
+  COMMISSION_MEMBERS: { iblockId: 94, name: 'Члены комиссии (для протокола)' },
+  COMMISSION_MY_COMPANIES: { iblockId: 96, name: 'Мои компании' },
 } as const satisfies Record<string, BitrixListDefinition>;
 
 export const BITRIX_REFERENCE_LIST_ORDER = [
@@ -57,6 +83,12 @@ export const BITRIX_REFERENCE_LIST_ORDER = [
   'TYPE_LEARN',
   'COMMIS_CONCL',
   'COURSE_PRICES',
+  'QUALIFICATION',
+  'ELECTRICAL_SAFETY_ADMISSION',
+  'ELECTRICAL_SAFETY_GROUP',
+  'CITIES',
+  'COMMISSION_MEMBERS',
+  'COMMISSION_MY_COMPANIES',
 ] as const satisfies ReadonlyArray<keyof typeof BITRIX_REFERENCE_LISTS>;
 
 function resolveBitrixListTypeId(iblockId: number): string {
@@ -299,6 +331,42 @@ function buildCoursePriceDetails(
   };
 }
 
+function buildElectricalSafetyAdmissionDetails(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): BitrixElectricalSafetyAdmissionDetails {
+  const categoryField = findField(fields, { code: 'KATEGORIYA', fieldId: 'PROPERTY_954' });
+
+  return {
+    category: resolveFieldDisplayValue(categoryField, categoryField ? raw[categoryField.fieldId] : ''),
+  };
+}
+
+function buildElectricalSafetyGroupDetails(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): BitrixElectricalSafetyGroupDetails {
+  const textField = findField(fields, { code: 'TEKST_V_DOKUMENTE', fieldId: 'PROPERTY_956' });
+
+  return {
+    text_in_document: resolveFieldDisplayValue(textField, textField ? raw[textField.fieldId] : ''),
+  };
+}
+
+function buildCommissionMemberDetails(
+  raw: Record<string, unknown>,
+  fields: BitrixListFieldDefinition[]
+): BitrixCommissionMemberDetails {
+  const cityField = findField(fields, { code: 'GOROD', fieldId: 'PROPERTY_962' });
+  const myCompanyField = findField(fields, { code: 'MOYA_KOMPANIYA', fieldId: 'PROPERTY_964' });
+
+  return {
+    city: resolveFieldDisplayValue(cityField, cityField ? raw[cityField.fieldId] : ''),
+    my_company: resolveFieldDisplayValue(myCompanyField, myCompanyField ? raw[myCompanyField.fieldId] : ''),
+    main_text: String(raw.PREVIEW_TEXT || raw.previewText || '').trim(),
+  };
+}
+
 function resolveMyCompanyShortName(
   raw: Record<string, unknown>,
   fields: BitrixListFieldDefinition[]
@@ -346,6 +414,15 @@ function resolveMyCompanyChairman(
   );
 }
 
+function listRequiresFieldMetadata(iblockId: number): boolean {
+  return iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_ADMISSION.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_GROUP.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.COMMISSION_MEMBERS.iblockId;
+}
+
 function normalizeListElement(
   raw: Record<string, unknown>,
   index: number,
@@ -378,6 +455,12 @@ function normalizeListElement(
         ? buildDocumentValidityDetails(raw, fields)
         : iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
           ? buildCoursePriceDetails(raw, fields)
+          : iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_ADMISSION.iblockId
+            ? buildElectricalSafetyAdmissionDetails(raw, fields)
+            : iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_GROUP.iblockId
+              ? buildElectricalSafetyGroupDetails(raw, fields)
+              : iblockId === BITRIX_REFERENCE_LISTS.COMMISSION_MEMBERS.iblockId
+                ? buildCommissionMemberDetails(raw, fields)
           : null,
   };
 }
@@ -397,9 +480,7 @@ export async function fetchBitrixListElements(iblockId: number): Promise<BitrixL
       IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
       IBLOCK_ID: iblockId,
     }),
-    iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId ||
-    iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId ||
-    iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
+    listRequiresFieldMetadata(iblockId)
       ? fetchBitrixListFields(iblockId)
       : Promise.resolve([] as BitrixListFieldDefinition[]),
   ]);

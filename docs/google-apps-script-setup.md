@@ -153,6 +153,7 @@ function fillIdCardBatch(body, batch, report) {
     replaceToken(body, `PROTOCOL_${slot}`, values.PROTOCOL_NUM);
     replaceToken(body, `CHAIRMAN_${slot}`, values.CHAIRMAN);
     replaceToken(body, `COURSE_START_${slot}`, values.COURSE_START);
+    replaceToken(body, `COURSE_START_DIFFER_${slot}`, values.COURSE_START_DIFFER);
     replaceToken(body, `DOC_VALID_${slot}`, values.DOC_VALID);
     replaceToken(body, `DATE_${slot}`, values.COURSE_START);
     replaceToken(body, `DATE_END_${slot}`, values.DOC_VALID);
@@ -184,6 +185,8 @@ function fillCertificatePage(body, item) {
   replaceToken(body, 'PROTOCOL', values.PROTOCOL_NUM);
   replaceToken(body, 'CHAIRMAN', values.CHAIRMAN);
   replaceToken(body, 'COURSE_START', values.COURSE_START);
+  replaceToken(body, 'COURSE_START_KAZ', values.COURSE_START_KAZ);
+  replaceToken(body, 'COURSE_START_RUS', values.COURSE_START_RUS);
   replaceToken(body, 'DATE', values.COURSE_START);
   replaceToken(body, 'DATE_END', values.DOC_VALID);
 }
@@ -203,6 +206,7 @@ function clearIdCardSlot(body, slot) {
     `{{PROTOCOL_${slot}}}`,
     `{{CHAIRMAN_${slot}}}`,
     `{{COURSE_START_${slot}}}`,
+    `{{COURSE_START_DIFFER_${slot}}}`,
     `{{DOC_VALID_${slot}}}`,
     `{{DATE_${slot}}}`,
     `{{DATE_END_${slot}}}`,
@@ -272,6 +276,9 @@ function buildCommonValues(p) {
     PROTOCOL_NUM: pick(p, ['PROTOCOL_NUM', 'PROTOCOL']),
     CHAIRMAN: pick(p, ['CHAIRMAN', 'COMMISSION_CHAIR']),
     COURSE_START: pick(p, ['COURSE_START', 'DATE', 'DATE_ISSUE']),
+    COURSE_START_DIFFER: pick(p, ['COURSE_START_DIFFER', 'COURSE_START', 'DATE', 'DATE_ISSUE']),
+    COURSE_START_KAZ: pick(p, ['COURSE_START_KAZ', 'COURSE_START', 'DATE', 'DATE_ISSUE']),
+    COURSE_START_RUS: pick(p, ['COURSE_START_RUS', 'COURSE_START', 'DATE', 'DATE_ISSUE']),
     DOC_VALID: pick(p, ['DOC_VALID', 'DATE_END']),
     QUALIFICATION: pick(p, ['QUALIFICATION']),
     LEVEL: pick(p, ['LEVEL']),
