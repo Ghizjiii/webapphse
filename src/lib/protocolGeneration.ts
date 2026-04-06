@@ -1,5 +1,10 @@
 ﻿import { supabase } from './supabase';
-import type { Certificate, Protocol, ProtocolCategoryScope } from '../types';
+import type {
+  Certificate,
+  Protocol,
+  ProtocolCategoryScope,
+  RefProtocolNumeratorSetting,
+} from '../types';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -19,6 +24,11 @@ export interface ProtocolGroup {
 
 export interface GenerateProtocolItem {
   placeholders: Record<string, string>;
+}
+
+export interface ProtocolReconcileResult {
+  protocols: Protocol[];
+  certificates: Certificate[];
 }
 
 const MONTHS_GENITIVE = [
@@ -44,6 +54,16 @@ const TEMPLATE_BOT_ITR: ProtocolTemplateConfig = {
 const TEMPLATE_BOT_WORKER: ProtocolTemplateConfig = {
   key: 'tpl_protocol_02_bot_worker',
   name: '02. Безопасность и охрана труда - Протокол для рабочего состава',
+};
+
+const TEMPLATE_ELECTRICAL_SAFETY_ITR: ProtocolTemplateConfig = {
+  key: 'manual_protocol_15_electrical_safety_itr',
+  name: '15. Электробезопасность - Протокол ИТР состава',
+};
+
+const TEMPLATE_ELECTRICAL_SAFETY_WORKER: ProtocolTemplateConfig = {
+  key: 'manual_protocol_16_electrical_safety_worker',
+  name: '16. Электробезопасность - Протокол для рабочего состава',
 };
 
 const PROTOCOL_RULES: Array<{
@@ -81,6 +101,11 @@ const PROTOCOL_RULES: Array<{
     worker: { key: 'tpl_protocol_08_qualification_worker', name: '08. Квалификация - Протокол для рабочего состава' },
   },
   {
+    matcher: /электробезопас/i,
+    itr: TEMPLATE_ELECTRICAL_SAFETY_ITR,
+    worker: TEMPLATE_ELECTRICAL_SAFETY_WORKER,
+  },
+  {
     matcher: /промышленн.*безопасност/i,
     itr: { key: 'tpl_protocol_05_industrial_itr', name: '05. Промышленная безопасность - Протокол ИТР состава' },
     worker: { key: 'tpl_protocol_06_industrial_worker', name: '06. Промышленная безопасность - Протокол для рабочего состава' },
@@ -89,6 +114,10 @@ const PROTOCOL_RULES: Array<{
 
 function normalizeText(value: string | null | undefined): string {
   return String(value || '').trim().toLowerCase();
+}
+
+function normalizeProtocolSequenceCourseName(value: string | null | undefined): string {
+  return normalizeText(value).replace(/\s+/g, ' ');
 }
 
 function normalizeDate(value: string | null | undefined): string {
@@ -106,16 +135,203 @@ function normalizeDay(value: string | null | undefined): string {
   return source.split('-')[2];
 }
 
-function normalizeCategoryScope(category: string | null | undefined): ProtocolCategoryScope {
+export function normalizeProtocolCategoryScope(category: string | null | undefined): ProtocolCategoryScope {
   const normalized = normalizeText(category);
   if (normalized.includes('итр')) return 'itr';
   return 'worker';
 }
 
-function categoryLabel(scope: ProtocolCategoryScope): string {
+export function protocolCategoryLabel(scope: ProtocolCategoryScope): string {
   if (scope === 'itr') return 'ИТР';
   if (scope === 'worker') return 'Обычный';
   return 'Все сотрудники';
+}
+
+export function protocolNumberSequenceKey(params: {
+  courseName: string;
+  categoryScope: ProtocolCategoryScope;
+}): string {
+  return `${normalizeProtocolSequenceCourseName(params.courseName)}::${params.categoryScope}`;
+}
+
+export function isProtocolTemplateGenerationSupported(templateKey: string | null | undefined): boolean {
+  return !String(templateKey || '').trim().startsWith('manual_protocol_');
+}
+
+export function parseProtocolSequenceNumber(value: string | null | undefined): number | null {
+  const normalized = String(value || '').trim();
+  if (!/^\d+$/.test(normalized)) return null;
+
+  const parsed = Number(normalized);
+  if (!Number.isInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function resolveProtocolStartNumber(
+  settingsMap: Map<string, number>,
+  courseName: string,
+  categoryScope: ProtocolCategoryScope,
+): number {
+  const stored = settingsMap.get(protocolNumberSequenceKey({ courseName, categoryScope }));
+  if (stored == null || !Number.isInteger(stored) || stored < 0) return 1;
+  return stored;
+}
+
+async function loadProtocolNumeratorSettings(): Promise<Map<string, number>> {
+  const { data, error } = await supabase
+    .from('ref_protocol_numerator_settings')
+    .select('*');
+
+  if (error) throw error;
+
+  const settingsMap = new Map<string, number>();
+  for (const row of (data || []) as RefProtocolNumeratorSetting[]) {
+    settingsMap.set(
+      protocolNumberSequenceKey({
+        courseName: row.course_name,
+        categoryScope: row.category_scope,
+      }),
+      Number(row.start_number ?? 1),
+    );
+  }
+
+  return settingsMap;
+}
+
+async function assignAutomaticProtocolNumbers<T extends {
+  course_name: string;
+  category_scope: ProtocolCategoryScope;
+  protocol_number: string;
+}>(rows: T[]): Promise<T[]> {
+  const rowsToAssign = rows.filter(row => !String(row.protocol_number || '').trim());
+  if (rowsToAssign.length === 0) return rows;
+
+  const [settingsMap, existingProtocolsResponse] = await Promise.all([
+    loadProtocolNumeratorSettings(),
+    supabase
+      .from('protocols')
+      .select('course_name, category_scope, protocol_number'),
+  ]);
+
+  if (existingProtocolsResponse.error) throw existingProtocolsResponse.error;
+
+  const maxNumberByKey = new Map<string, number>();
+  for (const row of existingProtocolsResponse.data || []) {
+    const currentNumber = parseProtocolSequenceNumber(row.protocol_number);
+    if (currentNumber == null) continue;
+
+    const key = protocolNumberSequenceKey({
+      courseName: row.course_name,
+      categoryScope: row.category_scope as ProtocolCategoryScope,
+    });
+    const currentMax = maxNumberByKey.get(key);
+    if (currentMax == null || currentNumber > currentMax) {
+      maxNumberByKey.set(key, currentNumber);
+    }
+  }
+
+  return rows.map(row => {
+    if (String(row.protocol_number || '').trim()) return row;
+
+    const key = protocolNumberSequenceKey({
+      courseName: row.course_name,
+      categoryScope: row.category_scope,
+    });
+    const startNumber = resolveProtocolStartNumber(settingsMap, row.course_name, row.category_scope);
+    const currentMax = maxNumberByKey.get(key);
+    const nextNumber = Math.max((currentMax ?? (startNumber - 1)) + 1, startNumber);
+    maxNumberByKey.set(key, nextNumber);
+
+    return {
+      ...row,
+      protocol_number: String(nextNumber),
+    };
+  });
+}
+
+function buildCertificateProtocolNumberUpdates(
+  certificates: Certificate[],
+  protocols: Protocol[],
+): Array<{ id: string; protocol_number: string }> {
+  const protocolMap = new Map<string, Protocol>();
+  for (const row of protocols) {
+    protocolMap.set(
+      protocolGroupKey({
+        templateKey: row.template_key,
+        courseName: row.course_name,
+        categoryScope: row.category_scope,
+      }),
+      row,
+    );
+  }
+
+  return certificates
+    .map(cert => {
+      const resolved = resolveProtocolTemplate(cert.course_name, cert.category);
+      if (!resolved) {
+        return String(cert.protocol_number || '').trim()
+          ? { id: cert.id, protocol_number: '' }
+          : null;
+      }
+
+      const matchedProtocol = protocolMap.get(protocolGroupKey({
+        templateKey: resolved.template.key,
+        courseName: String(cert.course_name || '').trim(),
+        categoryScope: resolved.scope,
+      }));
+      const nextProtocolNumber = String(matchedProtocol?.protocol_number || '').trim();
+      return String(cert.protocol_number || '').trim() === nextProtocolNumber
+        ? null
+        : { id: cert.id, protocol_number: nextProtocolNumber };
+    })
+    .filter((item): item is { id: string; protocol_number: string } => Boolean(item));
+}
+
+export async function syncCertificateProtocolNumbers(params: {
+  certificates: Certificate[];
+  protocols: Protocol[];
+}): Promise<Certificate[]> {
+  const updates = buildCertificateProtocolNumberUpdates(params.certificates, params.protocols);
+  if (updates.length === 0) return params.certificates;
+
+  const now = new Date().toISOString();
+  const results = await Promise.all(
+    updates.map(update =>
+      supabase
+        .from('certificates')
+        .update({
+          protocol_number: update.protocol_number,
+          updated_at: now,
+        })
+        .eq('id', update.id)
+    ),
+  );
+
+  const firstError = results.find(result => result.error)?.error;
+  if (firstError) throw firstError;
+
+  const successIds = new Set<string>();
+  for (let index = 0; index < results.length; index += 1) {
+    if (!results[index]?.error) {
+      successIds.add(updates[index].id);
+    }
+  }
+
+  if (successIds.size === 0) return params.certificates;
+
+  const protocolNumberById = new Map(
+    updates.map(update => [update.id, update.protocol_number] as const),
+  );
+
+  return params.certificates.map(cert => (
+    successIds.has(cert.id)
+      ? {
+          ...cert,
+          protocol_number: protocolNumberById.get(cert.id) || '',
+          updated_at: now,
+        }
+      : cert
+  ));
 }
 
 function compareCertificates(left: Certificate, right: Certificate): number {
@@ -132,7 +348,7 @@ export function resolveProtocolTemplate(
   category: string | null | undefined,
 ): { template: ProtocolTemplateConfig; scope: ProtocolCategoryScope } | null {
   const course = normalizeText(courseName);
-  const scope = normalizeCategoryScope(category);
+  const scope = normalizeProtocolCategoryScope(category);
 
   const hasBot = course.includes('безопасность') && course.includes('охрана') && course.includes('труд');
   if (hasBot) {
@@ -187,7 +403,7 @@ export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[
       template: resolved.template,
       courseName,
       categoryScope: resolved.scope,
-      categoryLabel: categoryLabel(resolved.scope),
+      categoryLabel: protocolCategoryLabel(resolved.scope),
       certificates: [cert],
       employeesCount: 1,
     });
@@ -288,7 +504,7 @@ export async function reconcileProtocolsFromCertificates(params: {
   dealId?: string | null;
   companyId?: string | null;
   certificates: Certificate[];
-}): Promise<Protocol[]> {
+}): Promise<ProtocolReconcileResult> {
   const groups = buildProtocolGroups(params.certificates);
 
   const { data: existingRows, error: existingError } = await supabase
@@ -311,7 +527,7 @@ export async function reconcileProtocolsFromCertificates(params: {
   }
 
   const now = new Date().toISOString();
-  const nextRows = groups.map(group => {
+  const nextRows = await assignAutomaticProtocolNumbers(groups.map(group => {
     const key = protocolGroupKey({
       templateKey: group.template.key,
       courseName: group.courseName,
@@ -341,7 +557,7 @@ export async function reconcileProtocolsFromCertificates(params: {
       sync_error: existing?.sync_error || '',
       updated_at: now,
     };
-  });
+  }));
 
   if (nextRows.length > 0) {
     const { error: upsertError } = await supabase.from('protocols').upsert(nextRows, {
@@ -377,13 +593,24 @@ export async function reconcileProtocolsFromCertificates(params: {
     .order('category_label');
 
   if (finalError) throw finalError;
-  return buildProtocolDraftRows({
+
+  const reconciledProtocols = buildProtocolDraftRows({
     questionnaireId: params.questionnaireId,
     dealId: params.dealId,
     companyId: params.companyId,
     certificates: params.certificates,
     storedProtocols: (finalRows || []) as Protocol[],
   });
+
+  const nextCertificates = await syncCertificateProtocolNumbers({
+    certificates: params.certificates,
+    protocols: reconciledProtocols,
+  });
+
+  return {
+    protocols: reconciledProtocols,
+    certificates: nextCertificates,
+  };
 }
 
 export function certificatesForProtocolRow(protocol: Protocol, certificates: Certificate[]): Certificate[] {

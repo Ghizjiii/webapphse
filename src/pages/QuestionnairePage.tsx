@@ -259,13 +259,14 @@ export default function QuestionnairePage() {
     setProtocols(draftProtocols);
 
     try {
-      const reconciledProtocols = await reconcileProtocolsFromCertificates({
+      const reconciled = await reconcileProtocolsFromCertificates({
         questionnaireId: id,
         dealId: resolvedDealWithUrl?.id || null,
         companyId: resolvedCompany?.id || null,
         certificates: resolvedCertificates,
       });
-      setProtocols(reconciledProtocols);
+      setProtocols(reconciled.protocols);
+      setCertificates(reconciled.certificates);
     } catch (error) {
       console.warn('Protocol reconcile fallback', error);
     }

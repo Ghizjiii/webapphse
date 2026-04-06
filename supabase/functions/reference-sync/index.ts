@@ -57,12 +57,32 @@ type BitrixCoursePriceDetails = {
   price: number | null;
 };
 
+type BitrixElectricalSafetyAdmissionDetails = {
+  category: string;
+};
+
+type BitrixElectricalSafetyGroupDetails = {
+  text_in_document: string;
+};
+
+type BitrixCommissionMemberDetails = {
+  city: string;
+  my_company: string;
+  main_text: string;
+};
+
 type BitrixListElement = {
   id: string;
   name: string;
   code: string;
   sortOrder: number;
-  details: BitrixDocumentValidityDetails | BitrixCoursePriceDetails | null;
+  details:
+    | BitrixDocumentValidityDetails
+    | BitrixCoursePriceDetails
+    | BitrixElectricalSafetyAdmissionDetails
+    | BitrixElectricalSafetyGroupDetails
+    | BitrixCommissionMemberDetails
+    | null;
 };
 
 type BitrixListFieldDefinition = {
@@ -124,8 +144,12 @@ const BITRIX_REFERENCE_LISTS = {
   TYPE_LEARN: { iblockId: 78, name: "Вид проверки знаний / тип обучения" },
   COMMIS_CONCL: { iblockId: 80, name: "Заключение комиссии" },
   COURSE_PRICES: { iblockId: 84, name: "Course default prices" },
-  QUALIFICATION: { iblockId: 86, name: "Qualification" },
-  ELECTRICAL_SAFETY_GROUP: { iblockId: 90, name: "Electrical safety group" },
+  QUALIFICATION: { iblockId: 86, name: "Квалификация" },
+  ELECTRICAL_SAFETY_ADMISSION: { iblockId: 88, name: "Допуск электробезопасность" },
+  ELECTRICAL_SAFETY_GROUP: { iblockId: 90, name: "Группа электробезопасность" },
+  CITIES: { iblockId: 92, name: "Города" },
+  COMMISSION_MEMBERS: { iblockId: 94, name: "Члены комиссии (для протокола)" },
+  COMMISSION_MY_COMPANIES: { iblockId: 96, name: "Мои компании" },
 } as const satisfies Record<string, BitrixListDefinition>;
 
 const BITRIX_REFERENCE_LIST_ORDER = [
@@ -141,7 +165,11 @@ const BITRIX_REFERENCE_LIST_ORDER = [
   "COMMIS_CONCL",
   "COURSE_PRICES",
   "QUALIFICATION",
+  "ELECTRICAL_SAFETY_ADMISSION",
   "ELECTRICAL_SAFETY_GROUP",
+  "CITIES",
+  "COMMISSION_MEMBERS",
+  "COMMISSION_MY_COMPANIES",
 ] as const satisfies ReadonlyArray<keyof typeof BITRIX_REFERENCE_LISTS>;
 
 function resolveBitrixListTypeId(iblockId: number): string {
@@ -1495,6 +1523,42 @@ function buildCoursePriceDetails(
   };
 }
 
+function buildElectricalSafetyAdmissionDetails(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): BitrixElectricalSafetyAdmissionDetails {
+  const categoryField = findField(fields, { code: "KATEGORIYA", fieldId: "PROPERTY_954" });
+
+  return {
+    category: resolveFieldDisplayValue(categoryField, categoryField ? raw[categoryField.fieldId] : ""),
+  };
+}
+
+function buildElectricalSafetyGroupDetails(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): BitrixElectricalSafetyGroupDetails {
+  const textField = findField(fields, { code: "TEKST_V_DOKUMENTE", fieldId: "PROPERTY_956" });
+
+  return {
+    text_in_document: resolveFieldDisplayValue(textField, textField ? raw[textField.fieldId] : ""),
+  };
+}
+
+function buildCommissionMemberDetails(
+  raw: PlainObject,
+  fields: BitrixListFieldDefinition[],
+): BitrixCommissionMemberDetails {
+  const cityField = findField(fields, { code: "GOROD", fieldId: "PROPERTY_962" });
+  const myCompanyField = findField(fields, { code: "MOYA_KOMPANIYA", fieldId: "PROPERTY_964" });
+
+  return {
+    city: resolveFieldDisplayValue(cityField, cityField ? raw[cityField.fieldId] : ""),
+    my_company: resolveFieldDisplayValue(myCompanyField, myCompanyField ? raw[myCompanyField.fieldId] : ""),
+    main_text: plain(raw.PREVIEW_TEXT || raw.previewText),
+  };
+}
+
 function resolveMyCompanyShortName(
   raw: PlainObject,
   fields: BitrixListFieldDefinition[],
@@ -1542,6 +1606,15 @@ function resolveMyCompanyChairman(
   );
 }
 
+function listRequiresFieldMetadata(iblockId: number): boolean {
+  return iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_ADMISSION.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_GROUP.iblockId ||
+    iblockId === BITRIX_REFERENCE_LISTS.COMMISSION_MEMBERS.iblockId;
+}
+
 function normalizeListElement(
   raw: PlainObject,
   index: number,
@@ -1573,6 +1646,12 @@ function normalizeListElement(
         ? buildDocumentValidityDetails(raw, fields)
         : iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
           ? buildCoursePriceDetails(raw, fields)
+          : iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_ADMISSION.iblockId
+            ? buildElectricalSafetyAdmissionDetails(raw, fields)
+            : iblockId === BITRIX_REFERENCE_LISTS.ELECTRICAL_SAFETY_GROUP.iblockId
+              ? buildElectricalSafetyGroupDetails(raw, fields)
+              : iblockId === BITRIX_REFERENCE_LISTS.COMMISSION_MEMBERS.iblockId
+                ? buildCommissionMemberDetails(raw, fields)
           : null,
   };
 }
@@ -1657,9 +1736,7 @@ async function fetchBitrixListElements(iblockId: number): Promise<BitrixListElem
       IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
       IBLOCK_ID: iblockId,
     }),
-    iblockId === BITRIX_REFERENCE_LISTS.DOCUMENT_VALIDITY.iblockId ||
-      iblockId === BITRIX_REFERENCE_LISTS.MY_COMPANIES.iblockId ||
-      iblockId === BITRIX_REFERENCE_LISTS.COURSE_PRICES.iblockId
+    listRequiresFieldMetadata(iblockId)
       ? fetchBitrixListFields(iblockId)
       : Promise.resolve([] as BitrixListFieldDefinition[]),
   ]);
@@ -1990,6 +2067,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
       bitrix_value: string;
       code: string;
       sort_order: number;
+      details_json: Record<string, unknown> | null;
       updated_at: string;
     }> = [];
     let categoryItems: BitrixListElement[] = [];
@@ -2009,6 +2087,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
           bitrix_value: item.name,
           code: item.code,
           sort_order: item.sortOrder,
+          details_json: item.details ? { ...item.details } : null,
           updated_at: now,
         }))
       );

@@ -14,6 +14,10 @@ export interface GenerateDocumentItem {
   photoUrl?: string;
 }
 
+const PHOTOLESS_TEMPLATE_KEYS = new Set([
+  'tpl_02_bot_worker_id',
+]);
+
 const TEMPLATE_BOT_CERT: TemplateConfig = {
   key: 'tpl_01_bot_itr_certificate',
   name: '01. BOT safety certificate (ITR)',
@@ -57,16 +61,121 @@ const TEMPLATE_RULES: Array<{ matcher: RegExp; template: TemplateConfig }> = [
   },
 ];
 
+const MONTHS_RUS_GENITIVE = [
+  '\u044f\u043d\u0432\u0430\u0440\u044f',
+  '\u0444\u0435\u0432\u0440\u0430\u043b\u044f',
+  '\u043c\u0430\u0440\u0442\u0430',
+  '\u0430\u043f\u0440\u0435\u043b\u044f',
+  '\u043c\u0430\u044f',
+  '\u0438\u044e\u043d\u044f',
+  '\u0438\u044e\u043b\u044f',
+  '\u0430\u0432\u0433\u0443\u0441\u0442\u0430',
+  '\u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f',
+  '\u043e\u043a\u0442\u044f\u0431\u0440\u044f',
+  '\u043d\u043e\u044f\u0431\u0440\u044f',
+  '\u0434\u0435\u043a\u0430\u0431\u0440\u044f',
+];
+
+const MONTHS_KAZ = [
+  '\u049b\u0430\u04a3\u0442\u0430\u0440',
+  '\u0430\u049b\u043f\u0430\u043d',
+  '\u043d\u0430\u0443\u0440\u044b\u0437',
+  '\u0441\u04d9\u0443\u0456\u0440',
+  '\u043c\u0430\u043c\u044b\u0440',
+  '\u043c\u0430\u0443\u0441\u044b\u043c',
+  '\u0448\u0456\u043b\u0434\u0435',
+  '\u0442\u0430\u043c\u044b\u0437',
+  '\u049b\u044b\u0440\u049b\u04af\u0439\u0435\u043a',
+  '\u049b\u0430\u0437\u0430\u043d',
+  '\u049b\u0430\u0440\u0430\u0448\u0430',
+  '\u0436\u0435\u043b\u0442\u043e\u049b\u0441\u0430\u043d',
+];
+
+const MONTHS_KAZ_RUS_GENITIVE = [
+  '\u049b\u0430\u04a3\u0442\u0430\u0440/\u044f\u043d\u0432\u0430\u0440\u044f',
+  '\u0430\u049b\u043f\u0430\u043d/\u0444\u0435\u0432\u0440\u0430\u043b\u044f',
+  '\u043d\u0430\u0443\u0440\u044b\u0437/\u043c\u0430\u0440\u0442\u0430',
+  '\u0441\u04d9\u0443\u0456\u0440/\u0430\u043f\u0440\u0435\u043b\u044f',
+  '\u043c\u0430\u043c\u044b\u0440/\u043c\u0430\u044f',
+  '\u043c\u0430\u0443\u0441\u044b\u043c/\u0438\u044e\u043d\u044f',
+  '\u0448\u0456\u043b\u0434\u0435/\u0438\u044e\u043b\u044f',
+  '\u0442\u0430\u043c\u044b\u0437/\u0430\u0432\u0433\u0443\u0441\u0442\u0430',
+  '\u049b\u044b\u0440\u049b\u04af\u0439\u0435\u043a/\u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f',
+  '\u049b\u0430\u0437\u0430\u043d/\u043e\u043a\u0442\u044f\u0431\u0440\u044f',
+  '\u049b\u0430\u0440\u0430\u0448\u0430/\u043d\u043e\u044f\u0431\u0440\u044f',
+  '\u0436\u0435\u043b\u0442\u043e\u049b\u0441\u0430\u043d/\u0434\u0435\u043a\u0430\u0431\u0440\u044f',
+];
+
+const INDUSTRIAL_SAFETY_TEMPLATE_KEYS = new Set([
+  'tpl_04_industrial_safety',
+  'tpl_06_pressure_vessels',
+  'tpl_08_responsible_lifting',
+  'tpl_09_lifting_mechanisms',
+]);
 function normalizeText(value: string | null | undefined): string {
   return String(value || '').trim().toLowerCase();
 }
 
-function normalizeDate(value: string | null | undefined): string {
-  if (!value) return '';
+function parseDateParts(value: string | null | undefined): { year: string; monthIndex: number; day: number } | null {
+  if (!value) return null;
   const [datePart] = String(value).split('T');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return '';
-  const [y, m, d] = datePart.split('-');
-  return `${d}.${m}.${y}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
+
+  const [year, month, day] = datePart.split('-');
+  const monthIndex = Number(month) - 1;
+  const dayNumber = Number(day);
+  if (!Number.isInteger(monthIndex) || monthIndex < 0 || monthIndex > 11) return null;
+  if (!Number.isInteger(dayNumber) || dayNumber < 1 || dayNumber > 31) return null;
+
+  return { year, monthIndex, day: dayNumber };
+}
+
+function normalizeDate(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  const day = String(parts.day).padStart(2, '0');
+  const month = String(parts.monthIndex + 1).padStart(2, '0');
+  return `${day}.${month}.${parts.year}`;
+}
+
+function formatDateRuWords(value: string | null | undefined, includeYearSuffix = false): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `${parts.day} ${MONTHS_RUS_GENITIVE[parts.monthIndex]} ${parts.year}${includeYearSuffix ? ' \\u0433\\u043e\\u0434\\u0430' : ''}`;
+}
+
+function formatIndustrialSafetyDay(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return String(parts.day).padStart(2, '0');
+}
+
+function formatIndustrialSafetyIssueDateFront(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `${parts.year} \u0436./ \u0433. \u00ab${formatIndustrialSafetyDay(value)}\u00bb ${MONTHS_KAZ_RUS_GENITIVE[parts.monthIndex]}`;
+}
+
+function formatIndustrialSafetyIssueDateBack(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `\u00ab${formatIndustrialSafetyDay(value)}\u00bb ${MONTHS_KAZ_RUS_GENITIVE[parts.monthIndex]} ${parts.year} \u0436. (\u0433.)`;
+}
+
+function formatIndustrialSafetyValidUntil(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `${parts.year} \u0433. (\u0436.) \u00ab${formatIndustrialSafetyDay(value)}\u00bb ${MONTHS_KAZ_RUS_GENITIVE[parts.monthIndex]}`;
+}
+
+function formatCourseStartKaz(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `${parts.year} \u0436\u044b\u043b\u0493\u044b ${parts.day} ${MONTHS_KAZ[parts.monthIndex]}`;
+}
+
+function formatCourseStartRus(value: string | null | undefined): string {
+  return formatDateRuWords(value, true);
 }
 
 function firstNotEmpty(...values: Array<string | null | undefined>): string {
@@ -108,13 +217,30 @@ export function resolveTemplateForCertificate(cert: Certificate): TemplateConfig
   return null;
 }
 
-export function buildPlaceholders(cert: Certificate, companyName: string): Record<string, string> {
+export function templateSupportsPhoto(template: TemplateConfig | null | undefined): boolean {
+  return !PHOTOLESS_TEMPLATE_KEYS.has(String(template?.key || ''));
+}
+
+export function buildPlaceholders(cert: Certificate, companyName: string, template?: TemplateConfig | null): Record<string, string> {
   const lastName = String(cert.last_name || '').trim();
   const firstName = String(cert.first_name || '').trim();
   const middleName = String(cert.middle_name || '').trim();
   const fullName = [lastName, firstName, middleName].filter(Boolean).join(' ');
   const chairman = String(cert.commission_chair || '').trim();
   const courseName = String(cert.course_name || '').trim();
+  const usesLongRussianDates = template?.key === 'tpl_03_fire_tech_minimum';
+  const usesIndustrialSafetyBilingualDates = INDUSTRIAL_SAFETY_TEMPLATE_KEYS.has(String(template?.key || ''));
+  const startDate = usesLongRussianDates ? formatDateRuWords(cert.start_date) : normalizeDate(cert.start_date);
+  const expiryDate = usesLongRussianDates ? formatDateRuWords(cert.expiry_date) : normalizeDate(cert.expiry_date);
+  const frontSideStartDate = usesIndustrialSafetyBilingualDates
+    ? formatIndustrialSafetyIssueDateFront(cert.start_date)
+    : startDate;
+  const backSideStartDate = usesIndustrialSafetyBilingualDates
+    ? formatIndustrialSafetyIssueDateBack(cert.start_date)
+    : startDate;
+  const documentValidDate = usesIndustrialSafetyBilingualDates
+    ? formatIndustrialSafetyValidUntil(cert.expiry_date)
+    : expiryDate;
 
   const values: Record<string, string> = {
     WORK_PLACE: firstNotEmpty(companyName, cert.employee_status),
@@ -152,11 +278,14 @@ export function buildPlaceholders(cert: Certificate, companyName: string): Recor
     GRADE: String(cert.grade || '').trim(),
     MANAGER: String(cert.manager || '').trim(),
     HEAD: String(cert.manager || '').trim(),
-    DATE: normalizeDate(cert.start_date),
-    DATE_ISSUE: normalizeDate(cert.start_date),
-    DATE_END: normalizeDate(cert.expiry_date),
-    DOC_VALID: normalizeDate(cert.expiry_date),
-    COURSE_START: normalizeDate(cert.start_date),
+    DATE: frontSideStartDate,
+    DATE_ISSUE: frontSideStartDate,
+    DATE_END: documentValidDate,
+    DOC_VALID: documentValidDate,
+    COURSE_START: frontSideStartDate,
+    COURSE_START_DIFFER: backSideStartDate,
+    COURSE_START_KAZ: formatCourseStartKaz(cert.start_date),
+    COURSE_START_RUS: formatCourseStartRus(cert.start_date),
   };
 
   const output: Record<string, string> = {};

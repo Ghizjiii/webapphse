@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
+import { useRef } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -15,8 +16,11 @@ import {
   buildProtocolDocumentPayload,
   callGenerateProtocolDocumentFunction,
   certificatesForProtocolRow,
+  isProtocolTemplateGenerationSupported,
   makeProtocolGeneratedFileName,
+  protocolCategoryLabel,
   protocolGroupKey,
+  syncCertificateProtocolNumbers,
 } from '../lib/protocolGeneration';
 import type { Certificate, Protocol, RefBitrixListItem } from '../types';
 
@@ -47,8 +51,9 @@ function sortProtocols(rows: Protocol[]): Protocol[] {
 }
 
 function normalizeProtocolCategoryLabel(row: Pick<Protocol, 'category_scope' | 'category_label'>): string {
-  if (row.category_scope === 'itr') return 'ИТР';
-  if (row.category_scope === 'worker') return 'Обычный';
+  if (row.category_scope === 'itr' || row.category_scope === 'worker' || row.category_scope === 'all') {
+    return protocolCategoryLabel(row.category_scope);
+  }
 
   const normalizedLabel = String(row.category_label || '').trim().toLocaleLowerCase('ru');
   if (normalizedLabel.includes('итр')) return 'ИТР';
@@ -152,6 +157,7 @@ export default function ProtocolsTable({
   const { showToast } = useToast();
 
   const [localProtocols, setLocalProtocols] = useState<Protocol[]>(protocols);
+  const localProtocolsRef = useRef<Protocol[]>(protocols);
   const [courseFilter, setCourseFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [generating, setGenerating] = useState(false);
@@ -168,10 +174,12 @@ export default function ProtocolsTable({
   } | null>(null);
 
   useEffect(() => {
-    setLocalProtocols(sortProtocols(protocols.map(row => ({
+    const nextProtocols = sortProtocols(protocols.map(row => ({
       ...row,
       category_label: normalizeProtocolCategoryLabel(row),
-    }))));
+    })));
+    localProtocolsRef.current = nextProtocols;
+    setLocalProtocols(nextProtocols);
   }, [protocols]);
 
   const courseOptions = useMemo(
@@ -184,6 +192,7 @@ export default function ProtocolsTable({
       const options: string[] = [];
       if (localProtocols.some(row => row.category_scope === 'itr')) options.push('ИТР');
       if (localProtocols.some(row => row.category_scope === 'worker')) options.push('Обычный');
+      if (localProtocols.some(row => row.category_scope === 'all')) options.push('Все сотрудники');
       return options;
     },
     [localProtocols],
@@ -195,6 +204,7 @@ export default function ProtocolsTable({
         if (courseFilter !== 'all' && row.course_name !== courseFilter) return false;
         if (categoryFilter === 'ИТР' && row.category_scope !== 'itr') return false;
         if (categoryFilter === 'Обычный' && row.category_scope !== 'worker') return false;
+        if (categoryFilter === 'Все сотрудники' && row.category_scope !== 'all') return false;
         return true;
       }),
     [localProtocols, courseFilter, categoryFilter],
@@ -214,12 +224,20 @@ export default function ProtocolsTable({
 
   function updateLocalRow(row: Protocol, patch: Partial<Protocol>) {
     const key = rowKey(row);
-    setLocalProtocols(current => sortProtocols(current.map(item => (rowKey(item) === key ? { ...item, ...patch } : item))));
+    const nextProtocols = sortProtocols(localProtocolsRef.current.map(item => (
+      rowKey(item) === key ? { ...item, ...patch } : item
+    )));
+    localProtocolsRef.current = nextProtocols;
+    setLocalProtocols(nextProtocols);
   }
 
   function replaceLocalRow(row: Protocol, nextRow: Protocol) {
     const key = rowKey(row);
-    setLocalProtocols(current => sortProtocols(current.map(item => (rowKey(item) === key ? nextRow : item))));
+    const nextProtocols = sortProtocols(localProtocolsRef.current.map(item => (
+      rowKey(item) === key ? nextRow : item
+    )));
+    localProtocolsRef.current = nextProtocols;
+    setLocalProtocols(nextProtocols);
   }
 
   async function persistProtocolRow(row: Protocol, patch: Partial<Protocol>): Promise<Protocol> {
@@ -278,13 +296,28 @@ export default function ProtocolsTable({
       is_draft: false,
     };
 
+    const nextProtocolsSnapshot = sortProtocols(
+      localProtocolsRef.current.map(item => (rowKey(item) === rowKey(row) ? savedRow : item)),
+    );
+
     replaceLocalRow(row, savedRow);
+
+    if (Object.prototype.hasOwnProperty.call(patch, 'protocol_number')) {
+      await syncCertificateProtocolNumbers({
+        certificates,
+        protocols: nextProtocolsSnapshot,
+      });
+    }
+
     return savedRow;
   }
 
   async function saveProtocolField(row: Protocol, patch: Partial<Protocol>) {
     try {
       await persistProtocolRow(row, patch);
+      if (Object.prototype.hasOwnProperty.call(patch, 'protocol_number')) {
+        onRefresh();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ошибка сохранения протокола';
       showToast('error', message);
@@ -353,6 +386,12 @@ export default function ProtocolsTable({
     for (let index = 0; index < visibleRows.length; index += 1) {
       const row = visibleRows[index];
       try {
+        if (!isProtocolTemplateGenerationSupported(row.template_key)) {
+          skipped += 1;
+          showToast('warning', `${row.course_name} / ${row.category_label}: для этого курса пока не подключен шаблон протокола`);
+          continue;
+        }
+
         const rowCertificates = certificatesForProtocolRow(row, certificates);
         if (rowCertificates.length === 0) {
           skipped += 1;

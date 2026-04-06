@@ -202,6 +202,10 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         bulkQualificationOptions={controller.bulkQualificationOptions}
         bulkElectricalSafetyGroup={controller.bulkElectricalSafetyGroup}
         bulkElectricalSafetyGroupOptions={controller.bulkElectricalSafetyGroupOptions}
+        bulkCommissionMembersProtocol={controller.bulkCommissionMembersProtocol}
+        bulkCommissionMembersProtocolOptions={controller.bulkCommissionMembersProtocolOptions}
+        bulkElectricalSafetyAdmissionProtocol={controller.bulkElectricalSafetyAdmissionProtocol}
+        bulkElectricalSafetyAdmissionProtocolOptions={controller.bulkElectricalSafetyAdmissionProtocolOptions}
         bulkMarkerPass={controller.bulkMarkerPass}
         markerPassOptions={controller.markerPassOptions}
         bulkTypeLearn={controller.bulkTypeLearn}
@@ -256,6 +260,14 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         onBulkFillElectricalSafetyGroup={() => {
           void controller.bulkFillElectricalSafetyGroup();
         }}
+        onBulkCommissionMembersProtocolChange={controller.setBulkCommissionMembersProtocol}
+        onBulkFillCommissionMembersProtocol={() => {
+          void controller.bulkFillCommissionMembersProtocol();
+        }}
+        onBulkElectricalSafetyAdmissionProtocolChange={controller.setBulkElectricalSafetyAdmissionProtocol}
+        onBulkFillElectricalSafetyAdmissionProtocol={() => {
+          void controller.bulkFillElectricalSafetyAdmissionProtocol();
+        }}
         onBulkMarkerPassChange={controller.setBulkMarkerPass}
         onBulkFillMarkerPass={() => {
           void controller.bulkFillMarkerPass();
@@ -301,6 +313,8 @@ export default function CertificatesTable(props: CertificatesTableProps) {
           void controller.saveDirectPatch(certId, patch);
         }}
         getCourseSpecificOptions={controller.getCourseSpecificOptions}
+        getCommissionMembersProtocolOptions={controller.getCommissionMembersProtocolOptions}
+        getElectricalSafetyAdmissionProtocolOptions={controller.getElectricalSafetyAdmissionProtocolOptions}
         onDeleteCertificate={id => {
           void controller.deleteCertificate(id);
         }}

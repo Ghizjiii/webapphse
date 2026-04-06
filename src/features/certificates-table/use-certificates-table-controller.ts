@@ -12,8 +12,9 @@ import {
  updateSmartProcessItem,
 } from '../../lib/bitrix';
 import { resolveCourseOption } from '../../lib/courseOptions';
-import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate } from '../../lib/documentGeneration';
+import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate, templateSupportsPhoto } from '../../lib/documentGeneration';
 import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
+import { reconcileProtocolsFromCertificates } from '../../lib/protocolGeneration';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import type { Certificate, Participant, RefBitrixListItem, RefCoursePrice, RefDocumentValidityRule, SortConfig } from '../../types';
@@ -171,6 +172,22 @@ export function useCertificatesTableController({
  return String(value || '').trim();
  }
 
+ function normalizeLocalCertificate(cert: Certificate): Certificate {
+ return {
+ ...cert,
+ issuer_company: String(cert.issuer_company || '').trim(),
+ commission_chair: String(cert.commission_chair || '').trim(),
+ manager: String(cert.manager || '').trim(),
+ commission_members_protocol: String(cert.commission_members_protocol || '').trim(),
+ electrical_safety_admission_protocol: String(cert.electrical_safety_admission_protocol || '').trim(),
+ marker_pass: normalizeMarkerPassValue(cert.marker_pass),
+ type_learn: normalizeTypeLearnValue(cert.type_learn),
+ commis_concl: normalizeCommisConclValue(cert.commis_concl),
+ grade: normalizeGradeValue(cert.grade),
+ employee_status: normalizeEmployeeStatusValue(cert.employee_status),
+ };
+ }
+
  function normalizeBitrixDate(value: unknown): string | null {
  const raw = String(value || '').trim();
  if (!raw) return null;
@@ -311,6 +328,8 @@ export function useCertificatesTableController({
   const [bulkManager, setBulkManager] = useState<string>('');
   const [bulkQualification, setBulkQualification] = useState<string>('');
   const [bulkElectricalSafetyGroup, setBulkElectricalSafetyGroup] = useState<string>('');
+  const [bulkCommissionMembersProtocol, setBulkCommissionMembersProtocol] = useState<string>('');
+  const [bulkElectricalSafetyAdmissionProtocol, setBulkElectricalSafetyAdmissionProtocol] = useState<string>('');
   const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
   const [bulkTypeLearn, setBulkTypeLearn] = useState<string>('');
   const [bulkCommisConcl, setBulkCommisConcl] = useState<string>('');
@@ -340,21 +359,11 @@ export function useCertificatesTableController({
   const lastResumeRefreshAtRef = useRef(0);
   const autoPriceBackfillAttemptedRef = useRef(false);
   const autoCourseSpecificCleanupAttemptedRef = useRef(false);
-  const autoCourseSelectionNormalizationAttemptedRef = useRef(false);
+ const autoCourseSelectionNormalizationAttemptedRef = useRef(false);
   const autoIssuerCompanyRelationsAttemptedRef = useRef(false);
 
  useEffect(() => {
- setLocalCertificates(certificates.map(cert => ({
-  ...cert,
-  issuer_company: String(cert.issuer_company || '').trim(),
-  commission_chair: String(cert.commission_chair || '').trim(),
-  manager: String(cert.manager || '').trim(),
-  marker_pass: normalizeMarkerPassValue(cert.marker_pass),
- type_learn: normalizeTypeLearnValue(cert.type_learn),
- commis_concl: normalizeCommisConclValue(cert.commis_concl),
- grade: normalizeGradeValue(cert.grade),
- employee_status: normalizeEmployeeStatusValue(cert.employee_status),
- })));
+ setLocalCertificates(certificates.map(normalizeLocalCertificate));
  }, [certificates]);
 
  useEffect(() => {
@@ -403,7 +412,7 @@ export function useCertificatesTableController({
   supabase
   .from('ref_bitrix_list_items')
   .select('*')
-  .in('list_key', ['MY_COMPANIES', 'COURSES', 'CATEGORIES', 'DOCUMENT_TYPE', 'MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS', 'QUALIFICATION', 'ELECTRICAL_SAFETY_GROUP'])
+  .in('list_key', ['MY_COMPANIES', 'COURSES', 'CATEGORIES', 'DOCUMENT_TYPE', 'MARKER_PASS', 'TYPE_LEARN', 'COMMIS_CONCL', 'GRADE', 'EMPLOYEE_STATUS', 'QUALIFICATION', 'ELECTRICAL_SAFETY_GROUP', 'ELECTRICAL_SAFETY_ADMISSION', 'COMMISSION_MEMBERS'])
   .order('list_key')
   .order('sort_order')
   .order('name'),
@@ -476,6 +485,41 @@ export function useCertificatesTableController({
   .replace(/\s+/g, ' ');
   }
 
+  function normalizeLooseCompanyName(value: string): string {
+  return String(value || '')
+  .trim()
+  .toLocaleLowerCase('ru')
+  .replace(/ё/g, 'е')
+  .replace(/[«»"'`]/g, ' ')
+  .replace(/\b(тоо|ооо|ао|ao|ип|llp|llc)\b/g, ' ')
+  .replace(/[^a-zа-я0-9]+/gi, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+  }
+
+  function companiesLookRelated(left: string, right: string): boolean {
+  const normalizedLeft = normalizeLooseCompanyName(left);
+  const normalizedRight = normalizeLooseCompanyName(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  return (
+  normalizedLeft === normalizedRight ||
+  normalizedLeft.includes(normalizedRight) ||
+  normalizedRight.includes(normalizedLeft)
+  );
+  }
+
+  function resolvePersonnelCategoryScope(value: string): 'itr' | 'worker' | '' {
+  const normalized = normalizeReferenceLookup(value);
+  if (!normalized) return '';
+  if (/(^| )итр( |$)|инженер|административ|управленчес|технологичес|техническ/.test(normalized)) {
+  return 'itr';
+  }
+  if (/обыч|рабоч|производствен/.test(normalized)) {
+  return 'worker';
+  }
+  return '';
+  }
+
   function findReferenceBitrixItemId(
   listItems: RefBitrixListItem[],
   listKey: RefBitrixListItem['list_key'],
@@ -516,6 +560,20 @@ export function useCertificatesTableController({
   .map(item => item.name),
   normalizeValue,
   );
+  }
+
+  function getBitrixListItemDetails(item: RefBitrixListItem): Record<string, unknown> {
+  return item.details_json && typeof item.details_json === 'object'
+  ? item.details_json
+  : {};
+  }
+
+  function getBitrixListItemDetailValue(item: RefBitrixListItem, key: string): string {
+  const value = getBitrixListItemDetails(item)[key];
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+  return String(value).trim();
+  }
+  return '';
   }
 
   function getMyCompanyChairman(item: RefBitrixListItem): string {
@@ -584,6 +642,66 @@ export function useCertificatesTableController({
   };
   }
 
+  function applyProtocolReferenceFields(
+  cert: Certificate,
+  patch: Partial<Certificate>,
+  ): Partial<Certificate> {
+  const nextPatch: Partial<Certificate> = { ...patch };
+  const touchesCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name');
+  const touchesIssuerCompany = Object.prototype.hasOwnProperty.call(patch, 'issuer_company');
+  const touchesCategory = Object.prototype.hasOwnProperty.call(patch, 'category');
+  const touchesCommissionMembersProtocol = Object.prototype.hasOwnProperty.call(patch, 'commission_members_protocol');
+  const touchesElectricalSafetyAdmissionProtocol = Object.prototype.hasOwnProperty.call(patch, 'electrical_safety_admission_protocol');
+
+  const nextCourseName = touchesCourseName
+  ? String(patch.course_name || '').trim()
+  : String(cert.course_name || '').trim();
+  const nextIssuerCompany = touchesIssuerCompany
+  ? String(patch.issuer_company || '').trim()
+  : String(cert.issuer_company || '').trim();
+  const nextCategory = touchesCategory
+  ? String(patch.category || '').trim()
+  : String(cert.category || '').trim();
+  const nextCommissionMembersProtocol = touchesCommissionMembersProtocol
+  ? String(patch.commission_members_protocol || '').trim()
+  : String(cert.commission_members_protocol || '').trim();
+  const nextElectricalSafetyAdmissionProtocol = touchesElectricalSafetyAdmissionProtocol
+  ? String(patch.electrical_safety_admission_protocol || '').trim()
+  : String(cert.electrical_safety_admission_protocol || '').trim();
+
+  if (touchesCommissionMembersProtocol) {
+  nextPatch.commission_members_protocol = nextCommissionMembersProtocol;
+  }
+  if (touchesElectricalSafetyAdmissionProtocol) {
+  nextPatch.electrical_safety_admission_protocol = nextElectricalSafetyAdmissionProtocol;
+  }
+
+  if ((touchesIssuerCompany || touchesCommissionMembersProtocol) && commissionMembersProtocolReferenceItems.length > 0) {
+  const options = getCommissionMembersProtocolOptions(nextIssuerCompany);
+  if (nextCommissionMembersProtocol && !isReferenceOptionAllowed(nextCommissionMembersProtocol, options)) {
+  nextPatch.commission_members_protocol = '';
+  }
+  }
+
+  const supportsElectricalSafetyAdmissionProtocol = isElectricalSafetyCourse(nextCourseName);
+  if ((touchesCourseName || touchesElectricalSafetyAdmissionProtocol) && !supportsElectricalSafetyAdmissionProtocol) {
+  nextPatch.electrical_safety_admission_protocol = '';
+  }
+
+  if (
+  supportsElectricalSafetyAdmissionProtocol &&
+  (touchesCourseName || touchesCategory || touchesElectricalSafetyAdmissionProtocol) &&
+  electricalSafetyAdmissionReferenceItems.length > 0
+  ) {
+  const options = getElectricalSafetyAdmissionProtocolOptions(nextCategory, nextCourseName);
+  if (nextElectricalSafetyAdmissionProtocol && !isReferenceOptionAllowed(nextElectricalSafetyAdmissionProtocol, options)) {
+  nextPatch.electrical_safety_admission_protocol = '';
+  }
+  }
+
+  return nextPatch;
+  }
+
   function normalizeCoursePriceLookup(value: string): string {
   const normalized = String(value || '')
   .trim()
@@ -596,6 +714,27 @@ export function useCertificatesTableController({
   }
 
   return normalized;
+  }
+
+  function buildDocumentNumberGroupKey(row: Certificate): string {
+  const parts = [
+  normalizeCoursePriceLookup(row.course_name),
+  normalizeCoursePriceLookup(row.category),
+  ];
+
+  if (isQualificationCourse(row.course_name)) {
+  parts.push(normalizeCoursePriceLookup(row.qualification));
+  }
+
+  if (isCourseSpecificFieldApplicable(row.course_name, 'electrical_safety_group')) {
+  parts.push(normalizeCoursePriceLookup(row.electrical_safety_group));
+  }
+
+  return parts.join('::');
+  }
+
+  function isElectricalSafetyCourse(courseName: string): boolean {
+  return normalizeCoursePriceLookup(courseName).includes('электробезопас');
   }
 
   function resolveReferencePrice(
@@ -762,7 +901,8 @@ export function useCertificatesTableController({
   patch: Partial<Certificate>,
   ): { patch: Partial<Certificate>; missingRule: boolean } {
   const patchWithRelations = applyIssuerCompanyRelations(referenceBitrixListItems, patch);
-  const patchWithCourseSpecificFields = applyCourseSpecificFields(cert, patchWithRelations);
+  const patchWithProtocolReferences = applyProtocolReferenceFields(cert, patchWithRelations);
+  const patchWithCourseSpecificFields = applyCourseSpecificFields(cert, patchWithProtocolReferences);
   const patchWithPrice = autoPricePatchForCertificate(cert, patchWithCourseSpecificFields);
   return autoExpiryPatchForCertificate(cert, patchWithPrice);
   }
@@ -988,6 +1128,66 @@ export function useCertificatesTableController({
   () => referenceBitrixListItems.filter(item => item.list_key === 'MY_COMPANIES'),
   [referenceBitrixListItems]
   );
+  const commissionMembersProtocolReferenceItems = useMemo(
+  () => referenceBitrixListItems.filter(item => item.list_key === 'COMMISSION_MEMBERS'),
+  [referenceBitrixListItems]
+  );
+  const electricalSafetyAdmissionReferenceItems = useMemo(
+  () => referenceBitrixListItems.filter(item => item.list_key === 'ELECTRICAL_SAFETY_ADMISSION'),
+  [referenceBitrixListItems]
+  );
+
+  function isReferenceOptionAllowed(value: string, options: string[]): boolean {
+  const normalizedValue = normalizeReferenceLookup(value);
+  if (!normalizedValue) return false;
+  return options.some(option => normalizeReferenceLookup(option) === normalizedValue);
+  }
+
+  function getCommissionMembersProtocolOptions(issuerCompany: string): string[] {
+  const normalizedIssuerCompany = normalizeReferenceLookup(issuerCompany);
+  const relevantItems = commissionMembersProtocolReferenceItems.filter(item => {
+  if (!normalizedIssuerCompany) return true;
+  const referenceCompany = getBitrixListItemDetailValue(item, 'my_company');
+  return (
+  normalizeReferenceLookup(referenceCompany) === normalizedIssuerCompany ||
+  companiesLookRelated(referenceCompany, issuerCompany)
+  );
+  });
+
+  if (relevantItems.length > 0) {
+  return normalizeSelectValues(relevantItems.map(item => item.name));
+  }
+
+  if (commissionMembersProtocolReferenceItems.length > 0) {
+  return normalizeSelectValues(commissionMembersProtocolReferenceItems.map(item => item.name));
+  }
+
+  return normalizeSelectValues(localCertificates.map(cert => cert.commission_members_protocol));
+  }
+
+  function getElectricalSafetyAdmissionProtocolOptions(category: string, courseName: string): string[] {
+  if (!isElectricalSafetyCourse(courseName)) return [];
+
+  const normalizedCategory = normalizeReferenceLookup(category);
+  const categoryScope = resolvePersonnelCategoryScope(category);
+  const relevantItems = electricalSafetyAdmissionReferenceItems.filter(item => {
+  const itemCategory = getBitrixListItemDetailValue(item, 'category');
+  const itemScope = resolvePersonnelCategoryScope(itemCategory);
+  if (!normalizedCategory) return true;
+  if (categoryScope && itemScope) return itemScope === categoryScope;
+  return normalizeReferenceLookup(itemCategory) === normalizedCategory;
+  });
+
+  if (relevantItems.length > 0) {
+  return normalizeSelectValues(relevantItems.map(item => item.name));
+  }
+
+  return normalizeSelectValues(
+  localCertificates
+  .filter(cert => isElectricalSafetyCourse(cert.course_name))
+  .map(cert => cert.electrical_safety_admission_protocol)
+  );
+  }
 
   const categoryValueOptions = useMemo(
   () => buildReferenceOptions(
@@ -1182,6 +1382,20 @@ export function useCertificatesTableController({
   visibleRows.flatMap(row => getCourseSpecificOptions(row.course_name, 'electrical_safety_group'))
   ),
   [visibleRows, courseSpecificOptionsByCourse]
+  );
+  const bulkCommissionMembersProtocolOptions = useMemo(
+  () => mergeSelectOptions(
+  ...visibleRows.map(row => getCommissionMembersProtocolOptions(row.issuer_company)),
+  normalizeSelectValues(visibleRows.map(row => row.commission_members_protocol)),
+  ),
+  [visibleRows, commissionMembersProtocolReferenceItems, localCertificates]
+  );
+  const bulkElectricalSafetyAdmissionProtocolOptions = useMemo(
+  () => mergeSelectOptions(
+  ...visibleRows.map(row => getElectricalSafetyAdmissionProtocolOptions(row.category, row.course_name)),
+  normalizeSelectValues(visibleRows.map(row => row.electrical_safety_admission_protocol)),
+  ),
+  [visibleRows, electricalSafetyAdmissionReferenceItems, localCertificates]
   );
   const targetRowsInfo = [
   courseFilter === 'all' ? 'все курсы' : `курс: ${courseFilter}`,
@@ -1493,10 +1707,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  const counters = new Map<string, number>();
  await runBulk(
  visibleRows.map(row => {
- const groupKey = [
- normalizeCoursePriceLookup(row.course_name),
- normalizeCoursePriceLookup(row.category),
- ].join('::');
+ const groupKey = buildDocumentNumberGroupKey(row);
  const nextNumber = (counters.get(groupKey) || 0) + 1;
  counters.set(groupKey, nextNumber);
  return {
@@ -1528,31 +1739,28 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
 
  async function bulkFillProtocolWithMode() {
  if (bulkSaving) return;
- const modeRaw = window.prompt(
- `Режим заполнения поля протокол (${targetRowsInfo}):\n1 - последовательный\n2 - одинаковое значение`,
- '1'
- );
- if (modeRaw === null) return;
-
- const mode = modeRaw.trim();
- if (mode === '1') {
- await bulkFillNumber('protocol_number', 'протокола');
+ if (localCertificates.length === 0) {
+ showToast('warning', 'Нет строк для автонумерации протоколов');
  return;
  }
 
- if (mode === '2') {
- const value = window.prompt(`Введите значение для протокола (${targetRowsInfo}):`, '');
- if (value === null) return;
- await runBulk(
- visibleRows.map(row => ({
- id: row.id,
- patch: { protocol_number: value } as Partial<Certificate>,
- }))
- );
- return;
+ setBulkSaving(true);
+ try {
+ const reconciled = await reconcileProtocolsFromCertificates({
+ questionnaireId,
+ dealId,
+ companyId,
+ certificates: localCertificates,
+ });
+ setLocalCertificates(reconciled.certificates.map(normalizeLocalCertificate));
+ showToast('success', 'Автонумерация протоколов обновлена по курсам и категориям');
+ onRefresh();
+ } catch (error) {
+ const message = error instanceof Error ? error.message : 'Не удалось обновить автонумерацию протоколов';
+ showToast('error', message);
+ } finally {
+ setBulkSaving(false);
  }
-
- showToast('warning', 'Укажите режим: 1 или 2');
  }
 
   async function bulkFillText(field: keyof Certificate, label: string) {
@@ -1711,6 +1919,61 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   'electrical_safety_group',
   bulkElectricalSafetyGroup,
   'Группа электробезопасности',
+  );
+  }
+
+  async function bulkFillReferenceFilteredField(
+  fieldKey: 'commission_members_protocol' | 'electrical_safety_admission_protocol',
+  value: string,
+  label: string,
+  resolveOptions: (row: Certificate) => string[],
+  ) {
+  if (bulkSaving) return;
+
+  const normalizedValue = String(value || '').trim();
+  if (!normalizedValue) {
+  showToast('warning', `Выберите значение для поля "${label}"`);
+  return;
+  }
+
+  const applicableRows = visibleRows.filter(row => {
+  const options = resolveOptions(row);
+  return options.length > 0 && isReferenceOptionAllowed(normalizedValue, options);
+  });
+  const skippedCount = visibleRows.length - applicableRows.length;
+
+  if (applicableRows.length === 0) {
+  showToast('warning', `В текущем наборе нет строк, где доступно значение для поля "${label}"`);
+  return;
+  }
+
+  await runBulk(
+  applicableRows.map(row => ({
+  id: row.id,
+  patch: { [fieldKey]: normalizedValue } as Partial<Certificate>,
+  }))
+  );
+
+  if (skippedCount > 0) {
+  showToast('warning', `Поле "${label}" применено не ко всем строкам: пропущено ${skippedCount}.`);
+  }
+  }
+
+  async function bulkFillCommissionMembersProtocol() {
+  await bulkFillReferenceFilteredField(
+  'commission_members_protocol',
+  bulkCommissionMembersProtocol,
+  'Члены комиссии протокол',
+  row => getCommissionMembersProtocolOptions(row.issuer_company),
+  );
+  }
+
+  async function bulkFillElectricalSafetyAdmissionProtocol() {
+  await bulkFillReferenceFilteredField(
+  'electrical_safety_admission_protocol',
+  bulkElectricalSafetyAdmissionProtocol,
+  'Допуск электробезопасности протокол',
+  row => getElectricalSafetyAdmissionProtocolOptions(row.category, row.course_name),
   );
   }
 
@@ -1890,8 +2153,10 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  rows: [],
  };
 
- const placeholders = buildPlaceholders(cert, companyName);
- const photoUrl = cert.participant_id ? String(participantPhotoById.get(cert.participant_id) || '') : '';
+ const placeholders = buildPlaceholders(cert, companyName, template);
+ const photoUrl = templateSupportsPhoto(template) && cert.participant_id
+ ? String(participantPhotoById.get(cert.participant_id) || '')
+ : '';
  group.rows.push({ cert, placeholders, photoUrl });
  grouped.set(key, group);
  }
@@ -2274,6 +2539,10 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   bulkQualificationOptions,
   bulkElectricalSafetyGroup,
   bulkElectricalSafetyGroupOptions,
+  bulkCommissionMembersProtocol,
+  bulkCommissionMembersProtocolOptions,
+  bulkElectricalSafetyAdmissionProtocol,
+  bulkElectricalSafetyAdmissionProtocolOptions,
   bulkMarkerPass,
   markerPassOptions,
   bulkTypeLearn,
@@ -2314,6 +2583,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   setBulkManager,
   setBulkQualification,
   setBulkElectricalSafetyGroup,
+  setBulkCommissionMembersProtocol,
+  setBulkElectricalSafetyAdmissionProtocol,
   setBulkMarkerPass,
   setBulkTypeLearn,
   setBulkCommisConcl,
@@ -2340,6 +2611,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   bulkFillManager,
   bulkFillQualification,
   bulkFillElectricalSafetyGroup,
+  bulkFillCommissionMembersProtocol,
+  bulkFillElectricalSafetyAdmissionProtocol,
   bulkFillMarkerPass,
   bulkFillTypeLearn,
  bulkFillCommisConcl,
@@ -2349,6 +2622,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   bulkFillPrice,
   bulkFillDate,
   saveDirectPatch,
+  getCommissionMembersProtocolOptions,
+  getElectricalSafetyAdmissionProtocolOptions,
   getCourseSpecificOptions,
   generateDocuments,
   syncCertificatesToBitrix,

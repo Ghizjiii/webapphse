@@ -32,6 +32,10 @@ interface CertificatesGridProps {
   bulkQualificationOptions: string[];
   bulkElectricalSafetyGroup: string;
   bulkElectricalSafetyGroupOptions: string[];
+  bulkCommissionMembersProtocol: string;
+  bulkCommissionMembersProtocolOptions: string[];
+  bulkElectricalSafetyAdmissionProtocol: string;
+  bulkElectricalSafetyAdmissionProtocolOptions: string[];
   bulkMarkerPass: string;
   markerPassOptions: string[];
   bulkTypeLearn: string;
@@ -66,6 +70,10 @@ interface CertificatesGridProps {
   onBulkQualificationChange: (value: string) => void;
   onBulkFillElectricalSafetyGroup: () => void;
   onBulkElectricalSafetyGroupChange: (value: string) => void;
+  onBulkFillCommissionMembersProtocol: () => void;
+  onBulkCommissionMembersProtocolChange: (value: string) => void;
+  onBulkFillElectricalSafetyAdmissionProtocol: () => void;
+  onBulkElectricalSafetyAdmissionProtocolChange: (value: string) => void;
   onBulkFillMarkerPass: () => void;
   onBulkMarkerPassChange: (value: string) => void;
   onBulkFillTypeLearn: () => void;
@@ -92,6 +100,8 @@ interface CertificatesGridProps {
     courseName: string,
     fieldKey: 'qualification' | 'electrical_safety_group',
   ) => string[];
+  getCommissionMembersProtocolOptions: (issuerCompany: string) => string[];
+  getElectricalSafetyAdmissionProtocolOptions: (category: string, courseName: string) => string[];
   onDeleteCertificate: (id: string) => void;
 }
 
@@ -137,6 +147,10 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     bulkQualificationOptions,
     bulkElectricalSafetyGroup,
     bulkElectricalSafetyGroupOptions,
+    bulkCommissionMembersProtocol,
+    bulkCommissionMembersProtocolOptions,
+    bulkElectricalSafetyAdmissionProtocol,
+    bulkElectricalSafetyAdmissionProtocolOptions,
     bulkMarkerPass,
     markerPassOptions,
     bulkTypeLearn,
@@ -171,6 +185,10 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onBulkQualificationChange,
     onBulkFillElectricalSafetyGroup,
     onBulkElectricalSafetyGroupChange,
+    onBulkFillCommissionMembersProtocol,
+    onBulkCommissionMembersProtocolChange,
+    onBulkFillElectricalSafetyAdmissionProtocol,
+    onBulkElectricalSafetyAdmissionProtocolChange,
     onBulkFillMarkerPass,
     onBulkMarkerPassChange,
     onBulkFillTypeLearn,
@@ -194,6 +212,8 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onSaveEdit,
     onSaveDirectPatch,
     getCourseSpecificOptions,
+    getCommissionMembersProtocolOptions,
+    getElectricalSafetyAdmissionProtocolOptions,
     onDeleteCertificate,
   } = props;
 
@@ -483,6 +503,56 @@ export function CertificatesGrid(props: CertificatesGridProps) {
           <button
             onClick={onBulkFillElectricalSafetyGroup}
             disabled={bulkSaving || !bulkElectricalSafetyGroup}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'commission_members_protocol') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkCommissionMembersProtocol}
+            onChange={event => onBulkCommissionMembersProtocolChange(event.target.value)}
+            className="min-w-[190px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving || bulkCommissionMembersProtocolOptions.length === 0}
+          >
+            <option value="">Выбрать...</option>
+            {bulkCommissionMembersProtocolOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillCommissionMembersProtocol}
+            disabled={bulkSaving || !bulkCommissionMembersProtocol}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'electrical_safety_admission_protocol') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkElectricalSafetyAdmissionProtocol}
+            onChange={event => onBulkElectricalSafetyAdmissionProtocolChange(event.target.value)}
+            className="min-w-[210px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving || bulkElectricalSafetyAdmissionProtocolOptions.length === 0}
+          >
+            <option value="">Выбрать...</option>
+            {bulkElectricalSafetyAdmissionProtocolOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillElectricalSafetyAdmissionProtocol}
+            disabled={bulkSaving || !bulkElectricalSafetyAdmissionProtocol}
             className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
           >
             Заполнить
@@ -837,6 +907,42 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                               />
                             );
                           })()
+                        ) : textField.key === 'commission_members_protocol' ? (
+                          (() => {
+                            const options = Array.from(new Set([
+                              ...getCommissionMembersProtocolOptions(cert.issuer_company),
+                              String(cert.commission_members_protocol || '').trim(),
+                            ].filter(Boolean)));
+                            if (options.length === 0) {
+                              return <ReadonlyCell value="" />;
+                            }
+                            return (
+                              <SelectCell
+                                certId={cert.id}
+                                field={textField.key}
+                                value={String(cert[textField.key] ?? '')}
+                                options={options}
+                              />
+                            );
+                          })()
+                        ) : textField.key === 'electrical_safety_admission_protocol' ? (
+                          (() => {
+                            const options = Array.from(new Set([
+                              ...getElectricalSafetyAdmissionProtocolOptions(cert.category, cert.course_name),
+                              String(cert.electrical_safety_admission_protocol || '').trim(),
+                            ].filter(Boolean)));
+                            if (options.length === 0) {
+                              return <ReadonlyCell value="" />;
+                            }
+                            return (
+                              <SelectCell
+                                certId={cert.id}
+                                field={textField.key}
+                                value={String(cert[textField.key] ?? '')}
+                                options={options}
+                              />
+                            );
+                          })()
                         ) : textField.key === 'level' ? (
                           (() => {
                             const isApplicable = getCourseSpecificOptions(cert.course_name, 'qualification').length > 0;
@@ -875,6 +981,8 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                             value={String(cert[textField.key] ?? '')}
                             options={employeeStatusOptions}
                           />
+                        ) : textField.key === 'protocol_number' ? (
+                          <ReadonlyCell value={String(cert[textField.key] ?? '')} />
                         ) : (
                           <EditableCell certId={cert.id} field={textField.key} value={String(cert[textField.key] ?? '')} />
                         )}
