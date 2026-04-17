@@ -19,6 +19,8 @@ const HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD") || "ufCrm10_1775228369";
 const HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD") || "ufCrm10_1775228326";
+const HR_EXTERNAL_EMPLOYEE_DATIVE_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_DATIVE_FIELD") || "ufCrm10_1776360538300";
 const HR_EXTERNAL_POSITION_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_FIELD") || "ufCrm10_1775330493";
 const HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
@@ -759,9 +761,11 @@ function numberToWordsRu(num: number): string {
   return num < 0 ? `минус ${output}` : output;
 }
 
-async function toGenitiveCase(value: string): Promise<string> {
+type MorpherCaseName = "genitive" | "dative";
+
+async function fetchMorpherForms(value: string): Promise<PlainObject> {
   const text = plain(value);
-  if (!text) return "";
+  if (!text) return {};
 
   const url = new URL("https://ws3.morpher.ru/russian/declension");
   url.searchParams.set("s", text);
@@ -781,30 +785,50 @@ async function toGenitiveCase(value: string): Promise<string> {
   const contentType = response.headers.get("content-type") || "";
 
   if (contentType.includes("application/json") || raw.trim().startsWith("{")) {
-    let parsed: PlainObject = {};
     try {
-      parsed = raw ? JSON.parse(raw) as PlainObject : {};
+      return raw ? JSON.parse(raw) as PlainObject : {};
     } catch {
-      parsed = {};
+      return {};
     }
-
-    const genitive = plain(parsed["\u0420"] || parsed.r);
-    if (!genitive) {
-      throw new Error(`Morpher JSON without genitive case: ${raw || "empty response"}`);
-    }
-
-    return genitive;
   }
 
-  const genitive =
-    trimNonEmptyString(raw.match(/<Р>([^<]+)<\/Р>/u)?.[1]) ||
-    trimNonEmptyString(raw.match(/<r>([^<]+)<\/r>/i)?.[1]);
+  const forms: PlainObject = {
+    "\u0420":
+      trimNonEmptyString(raw.match(/<Р>([^<]+)<\/Р>/u)?.[1]) ||
+      trimNonEmptyString(raw.match(/<r>([^<]+)<\/r>/i)?.[1]) ||
+      "",
+    "\u0414":
+      trimNonEmptyString(raw.match(/<Д>([^<]+)<\/Д>/u)?.[1]) ||
+      trimNonEmptyString(raw.match(/<d>([^<]+)<\/d>/i)?.[1]) ||
+      "",
+  };
 
-  if (!genitive) {
-    throw new Error(`Morpher response without genitive case: ${raw || "empty response"}`);
+  if (!plain(forms["\u0420"]) && !plain(forms["\u0414"])) {
+    throw new Error(`Morpher response without expected cases: ${raw || "empty response"}`);
   }
 
-  return genitive;
+  return forms;
+}
+
+function requireMorpherCase(forms: PlainObject, caseName: MorpherCaseName): string {
+  const fieldMap: Record<MorpherCaseName, string[]> = {
+    genitive: ["\u0420", "r"],
+    dative: ["\u0414", "d"],
+  };
+
+  for (const key of fieldMap[caseName]) {
+    const value = plain(forms[key]);
+    if (value) return value;
+  }
+
+  throw new Error(`Morpher response without ${caseName} case`);
+}
+
+async function toMorpherCase(value: string, caseName: MorpherCaseName): Promise<string> {
+  const text = plain(value);
+  if (!text) return "";
+
+  return requireMorpherCase(await fetchMorpherForms(text), caseName);
 }
 
 function startDatePaths(): string[] {
@@ -967,7 +991,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
 
   if (sourcePosition) {
     try {
-      genitivePosition = await toGenitiveCase(sourcePosition);
+      genitivePosition = await toMorpherCase(sourcePosition, "genitive");
       const currentGenitive = normalizeComparableText(getFieldValue(item, HR_POSITION_GENITIVE_FIELD));
 
       if (currentGenitive !== normalizeComparableText(genitivePosition)) {
@@ -983,11 +1007,14 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
 
   let externalEmployeeInitials = "";
   let externalEmployeeGenitive = "";
+  let externalEmployeeDative = "";
   let externalEmployeeError = "";
   let updateExternalEmployeeInitialsFieldKey = "";
   let updateExternalEmployeeGenitiveFieldKey = "";
+  let updateExternalEmployeeDativeFieldKey = "";
   let hasExternalEmployeeInitialsSuccess = false;
   let hasExternalEmployeeGenitiveSuccess = false;
+  let hasExternalEmployeeDativeSuccess = false;
 
   if (sourceExternalEmployeeFullName) {
     externalEmployeeInitials = formatSurnameWithInitials(sourceExternalEmployeeFullName);
@@ -1002,7 +1029,8 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     }
 
     try {
-      externalEmployeeGenitive = await toGenitiveCase(sourceExternalEmployeeFullName);
+      const externalEmployeeForms = await fetchMorpherForms(sourceExternalEmployeeFullName);
+      externalEmployeeGenitive = requireMorpherCase(externalEmployeeForms, "genitive");
       hasExternalEmployeeGenitiveSuccess = Boolean(externalEmployeeGenitive);
       const currentExternalEmployeeGenitive = normalizeComparableText(
         getFieldValue(item, HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD),
@@ -1011,6 +1039,17 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
       if (currentExternalEmployeeGenitive !== normalizeComparableText(externalEmployeeGenitive)) {
         updateExternalEmployeeGenitiveFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD);
         fieldsToUpdate[updateExternalEmployeeGenitiveFieldKey] = externalEmployeeGenitive;
+      }
+
+      externalEmployeeDative = requireMorpherCase(externalEmployeeForms, "dative");
+      hasExternalEmployeeDativeSuccess = Boolean(externalEmployeeDative);
+      const currentExternalEmployeeDative = normalizeComparableText(
+        getFieldValue(item, HR_EXTERNAL_EMPLOYEE_DATIVE_FIELD),
+      );
+
+      if (currentExternalEmployeeDative !== normalizeComparableText(externalEmployeeDative)) {
+        updateExternalEmployeeDativeFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_EMPLOYEE_DATIVE_FIELD);
+        fieldsToUpdate[updateExternalEmployeeDativeFieldKey] = externalEmployeeDative;
       }
     } catch (error) {
       externalEmployeeError = error instanceof Error ? error.message : String(error);
@@ -1027,7 +1066,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
   if (sourceExternalPosition) {
     try {
       externalPositionSourceLower = toLowerCaseRu(sourceExternalPosition);
-      externalPositionGenitiveLower = toLowerCaseRu(await toGenitiveCase(externalPositionSourceLower));
+      externalPositionGenitiveLower = toLowerCaseRu(await toMorpherCase(externalPositionSourceLower, "genitive"));
       const currentExternalPositionGenitive = normalizeComparableText(
         getFieldValue(item, HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD),
       );
@@ -1050,7 +1089,8 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
   const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
   const hasPositionSuccess = Boolean(positionAttempted && !positionError);
   const hasExternalEmployeeSuccess = Boolean(
-    externalEmployeeAttempted && (hasExternalEmployeeInitialsSuccess || hasExternalEmployeeGenitiveSuccess),
+    externalEmployeeAttempted &&
+    (hasExternalEmployeeInitialsSuccess || hasExternalEmployeeGenitiveSuccess || hasExternalEmployeeDativeSuccess),
   );
   const hasExternalPositionSuccess = Boolean(externalPositionAttempted && !externalPositionError);
   const hasAnySuccess = hasDaysSuccess || hasPositionSuccess || hasExternalEmployeeSuccess || hasExternalPositionSuccess;
@@ -1086,6 +1126,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     sourceExternalEmployeeFullName,
     externalEmployeeInitials,
     externalEmployeeGenitive,
+    externalEmployeeDative,
     sourceExternalPosition,
     externalPositionGenitiveLower,
     warnings,
@@ -1093,6 +1134,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     updatePositionFieldKey,
     updateExternalEmployeeInitialsFieldKey,
     updateExternalEmployeeGenitiveFieldKey,
+    updateExternalEmployeeDativeFieldKey,
     updateExternalPositionFieldKey,
   }));
 
@@ -1114,6 +1156,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     sourceExternalEmployeeFullName,
     externalEmployeeInitials,
     externalEmployeeGenitive,
+    externalEmployeeDative,
     sourceExternalPosition,
     externalPositionSourceLower,
     externalPositionGenitiveLower,
@@ -1124,6 +1167,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     updatePositionFieldKey,
     updateExternalEmployeeInitialsFieldKey,
     updateExternalEmployeeGenitiveFieldKey,
+    updateExternalEmployeeDativeFieldKey,
     updateExternalPositionFieldKey,
   };
 }

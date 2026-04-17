@@ -16,6 +16,8 @@ const EXTERNAL_EMPLOYEE_INITIALS_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_INITIALS_FIELD") || "ufCrm10_1775228369";
 const EXTERNAL_EMPLOYEE_GENITIVE_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_GENITIVE_FIELD") || "ufCrm10_1775228326";
+const EXTERNAL_EMPLOYEE_DATIVE_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_EMPLOYEE_DATIVE_FIELD") || "ufCrm10_1776360538300";
 const EXTERNAL_POSITION_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_FIELD") || "ufCrm10_1775330493";
 const EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
@@ -170,9 +172,11 @@ async function callBitrix(method: string, params: PlainObject): Promise<PlainObj
   return (parsed.result as PlainObject) || {};
 }
 
-async function toGenitiveCase(value: string): Promise<string> {
+type MorpherCaseName = "genitive" | "dative";
+
+async function fetchMorpherForms(value: string): Promise<PlainObject> {
   const text = String(value || "").trim();
-  if (!text) return "";
+  if (!text) return {};
 
   const url = new URL("https://ws3.morpher.ru/russian/declension");
   url.searchParams.set("s", text);
@@ -197,12 +201,28 @@ async function toGenitiveCase(value: string): Promise<string> {
     parsed = {};
   }
 
-  const genitive = String(parsed["\u0420"] || parsed.r || "").trim();
-  if (!genitive) {
-    throw new Error("Morpher did not return genitive form");
+  return parsed;
+}
+
+function requireMorpherCase(forms: PlainObject, caseName: MorpherCaseName): string {
+  const fieldMap: Record<MorpherCaseName, string[]> = {
+    genitive: ["\u0420", "r"],
+    dative: ["\u0414", "d"],
+  };
+
+  for (const key of fieldMap[caseName]) {
+    const value = String(forms[key] || "").trim();
+    if (value) return value;
   }
 
-  return genitive;
+  throw new Error(`Morpher did not return ${caseName} form`);
+}
+
+async function toMorpherCase(value: string, caseName: MorpherCaseName): Promise<string> {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  return requireMorpherCase(await fetchMorpherForms(text), caseName);
 }
 
 function normalizeFieldCode(code: string): string {
@@ -717,7 +737,7 @@ Deno.serve(async (req: Request) => {
 
     if (sourcePosition) {
       try {
-        genitivePosition = await toGenitiveCase(sourcePosition);
+        genitivePosition = await toMorpherCase(sourcePosition, "genitive");
         const currentGenitive = normalizeComparableText(findFieldValue(item, POSITION_GENITIVE_FIELD));
 
         if (currentGenitive !== normalizeComparableText(genitivePosition)) {
@@ -733,11 +753,14 @@ Deno.serve(async (req: Request) => {
 
     let externalEmployeeInitials = "";
     let externalEmployeeGenitive = "";
+    let externalEmployeeDative = "";
     let externalEmployeeError = "";
     let updateExternalEmployeeInitialsFieldKey = "";
     let updateExternalEmployeeGenitiveFieldKey = "";
+    let updateExternalEmployeeDativeFieldKey = "";
     let hasExternalEmployeeInitialsSuccess = false;
     let hasExternalEmployeeGenitiveSuccess = false;
+    let hasExternalEmployeeDativeSuccess = false;
 
     if (sourceExternalEmployeeFullName) {
       externalEmployeeInitials = formatSurnameWithInitials(sourceExternalEmployeeFullName);
@@ -752,7 +775,8 @@ Deno.serve(async (req: Request) => {
       }
 
       try {
-        externalEmployeeGenitive = await toGenitiveCase(sourceExternalEmployeeFullName);
+        const externalEmployeeForms = await fetchMorpherForms(sourceExternalEmployeeFullName);
+        externalEmployeeGenitive = requireMorpherCase(externalEmployeeForms, "genitive");
         hasExternalEmployeeGenitiveSuccess = Boolean(externalEmployeeGenitive);
 
         const currentExternalEmployeeGenitive = normalizeComparableText(
@@ -762,6 +786,18 @@ Deno.serve(async (req: Request) => {
         if (currentExternalEmployeeGenitive !== normalizeComparableText(externalEmployeeGenitive)) {
           updateExternalEmployeeGenitiveFieldKey = resolveUpdateFieldKey(item, EXTERNAL_EMPLOYEE_GENITIVE_FIELD);
           fieldsToUpdate[updateExternalEmployeeGenitiveFieldKey] = externalEmployeeGenitive;
+        }
+
+        externalEmployeeDative = requireMorpherCase(externalEmployeeForms, "dative");
+        hasExternalEmployeeDativeSuccess = Boolean(externalEmployeeDative);
+
+        const currentExternalEmployeeDative = normalizeComparableText(
+          findFieldValue(item, EXTERNAL_EMPLOYEE_DATIVE_FIELD),
+        );
+
+        if (currentExternalEmployeeDative !== normalizeComparableText(externalEmployeeDative)) {
+          updateExternalEmployeeDativeFieldKey = resolveUpdateFieldKey(item, EXTERNAL_EMPLOYEE_DATIVE_FIELD);
+          fieldsToUpdate[updateExternalEmployeeDativeFieldKey] = externalEmployeeDative;
         }
       } catch (error) {
         externalEmployeeError = error instanceof Error ? error.message : String(error);
@@ -778,7 +814,7 @@ Deno.serve(async (req: Request) => {
     if (sourceExternalPosition) {
       try {
         externalPositionSourceLower = toLowerCaseRu(sourceExternalPosition);
-        externalPositionGenitiveLower = toLowerCaseRu(await toGenitiveCase(externalPositionSourceLower));
+        externalPositionGenitiveLower = toLowerCaseRu(await toMorpherCase(externalPositionSourceLower, "genitive"));
         const currentExternalPositionGenitive = normalizeComparableText(
           findFieldValue(item, EXTERNAL_POSITION_GENITIVE_LOWER_FIELD),
         );
@@ -801,7 +837,8 @@ Deno.serve(async (req: Request) => {
     const hasDaysSuccess = Boolean(daysAttempted && startDate && endDate && days !== null);
     const hasPositionSuccess = Boolean(positionAttempted && !positionError);
     const hasExternalEmployeeSuccess = Boolean(
-      externalEmployeeAttempted && (hasExternalEmployeeInitialsSuccess || hasExternalEmployeeGenitiveSuccess),
+      externalEmployeeAttempted &&
+      (hasExternalEmployeeInitialsSuccess || hasExternalEmployeeGenitiveSuccess || hasExternalEmployeeDativeSuccess),
     );
     const hasExternalPositionSuccess = Boolean(externalPositionAttempted && !externalPositionError);
     const hasAnySuccess = hasDaysSuccess || hasPositionSuccess || hasExternalEmployeeSuccess || hasExternalPositionSuccess;
@@ -821,6 +858,7 @@ Deno.serve(async (req: Request) => {
         sourceExternalEmployeeFullName,
         externalEmployeeInitials,
         externalEmployeeGenitive,
+        externalEmployeeDative,
         sourceExternalPosition,
         externalPositionSourceLower,
         externalPositionGenitiveLower,
@@ -860,6 +898,7 @@ Deno.serve(async (req: Request) => {
         sourceExternalEmployeeFullName,
         externalEmployeeInitials,
         externalEmployeeGenitive,
+        externalEmployeeDative,
         sourceExternalPosition,
         externalPositionSourceLower,
         externalPositionGenitiveLower,
@@ -888,6 +927,7 @@ Deno.serve(async (req: Request) => {
       sourceExternalEmployeeFullName,
       externalEmployeeInitials,
       externalEmployeeGenitive,
+      externalEmployeeDative,
       sourceExternalPosition,
       externalPositionSourceLower,
       externalPositionGenitiveLower,
@@ -898,6 +938,7 @@ Deno.serve(async (req: Request) => {
       updatePositionFieldKey,
       updateExternalEmployeeInitialsFieldKey,
       updateExternalEmployeeGenitiveFieldKey,
+      updateExternalEmployeeDativeFieldKey,
       updateExternalPositionFieldKey,
     });
   } catch (error) {
