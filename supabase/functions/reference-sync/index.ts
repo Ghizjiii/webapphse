@@ -25,6 +25,8 @@ const HR_EXTERNAL_POSITION_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_FIELD") || "ufCrm10_1775330493";
 const HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD") || "ufCrm10_1775330315";
+const HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD") || "ufCrm10_1776697890";
 const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 const SYNC_SCOPE = "reference_lists";
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
@@ -1060,13 +1062,18 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
 
   let externalPositionSourceLower = "";
   let externalPositionGenitiveLower = "";
+  let externalPositionDativeLower = "";
   let externalPositionError = "";
   let updateExternalPositionFieldKey = "";
+  let updateExternalPositionDativeFieldKey = "";
 
   if (sourceExternalPosition) {
     try {
       externalPositionSourceLower = toLowerCaseRu(sourceExternalPosition);
-      externalPositionGenitiveLower = toLowerCaseRu(await toMorpherCase(externalPositionSourceLower, "genitive"));
+      const externalPositionForms = await fetchMorpherForms(externalPositionSourceLower);
+      externalPositionGenitiveLower = toLowerCaseRu(requireMorpherCase(externalPositionForms, "genitive"));
+      externalPositionDativeLower = toLowerCaseRu(requireMorpherCase(externalPositionForms, "dative"));
+
       const currentExternalPositionGenitive = normalizeComparableText(
         getFieldValue(item, HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD),
       );
@@ -1075,11 +1082,20 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
         updateExternalPositionFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD);
         fieldsToUpdate[updateExternalPositionFieldKey] = externalPositionGenitiveLower;
       }
+
+      const currentExternalPositionDative = normalizeComparableText(
+        getFieldValue(item, HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD),
+      );
+
+      if (currentExternalPositionDative !== normalizeComparableText(externalPositionDativeLower)) {
+        updateExternalPositionDativeFieldKey = resolveUpdateFieldKey(item, HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD);
+        fieldsToUpdate[updateExternalPositionDativeFieldKey] = externalPositionDativeLower;
+      }
     } catch (error) {
       externalPositionError = error instanceof Error ? error.message : String(error);
     }
   } else {
-    warnings.push("External position genitive sync skipped because source position field is empty");
+    warnings.push("External position genitive/dative sync skipped because source position field is empty");
   }
 
   const daysAttempted = Boolean(startDateValue || endDateValue);
@@ -1129,6 +1145,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     externalEmployeeDative,
     sourceExternalPosition,
     externalPositionGenitiveLower,
+    externalPositionDativeLower,
     warnings,
     updateFieldKeys,
     updatePositionFieldKey,
@@ -1136,6 +1153,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     updateExternalEmployeeGenitiveFieldKey,
     updateExternalEmployeeDativeFieldKey,
     updateExternalPositionFieldKey,
+    updateExternalPositionDativeFieldKey,
   }));
 
   return {
@@ -1160,6 +1178,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     sourceExternalPosition,
     externalPositionSourceLower,
     externalPositionGenitiveLower,
+    externalPositionDativeLower,
     warnings,
     updateFieldKeys,
     updateDaysNumberFieldKey,
@@ -1169,6 +1188,7 @@ async function runHrFieldSync(source: string, eventName: string, body: PlainObje
     updateExternalEmployeeGenitiveFieldKey,
     updateExternalEmployeeDativeFieldKey,
     updateExternalPositionFieldKey,
+    updateExternalPositionDativeFieldKey,
   };
 }
 

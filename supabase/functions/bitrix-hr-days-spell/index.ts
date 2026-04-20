@@ -22,6 +22,8 @@ const EXTERNAL_POSITION_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_FIELD") || "ufCrm10_1775330493";
 const EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD") || "ufCrm10_1775330315";
+const EXTERNAL_POSITION_DATIVE_LOWER_FIELD =
+  Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD") || "ufCrm10_1776697890";
 const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 
 type PlainObject = Record<string, unknown>;
@@ -808,13 +810,18 @@ Deno.serve(async (req: Request) => {
 
     let externalPositionSourceLower = "";
     let externalPositionGenitiveLower = "";
+    let externalPositionDativeLower = "";
     let externalPositionError = "";
     let updateExternalPositionFieldKey = "";
+    let updateExternalPositionDativeFieldKey = "";
 
     if (sourceExternalPosition) {
       try {
         externalPositionSourceLower = toLowerCaseRu(sourceExternalPosition);
-        externalPositionGenitiveLower = toLowerCaseRu(await toMorpherCase(externalPositionSourceLower, "genitive"));
+        const externalPositionForms = await fetchMorpherForms(externalPositionSourceLower);
+        externalPositionGenitiveLower = toLowerCaseRu(requireMorpherCase(externalPositionForms, "genitive"));
+        externalPositionDativeLower = toLowerCaseRu(requireMorpherCase(externalPositionForms, "dative"));
+
         const currentExternalPositionGenitive = normalizeComparableText(
           findFieldValue(item, EXTERNAL_POSITION_GENITIVE_LOWER_FIELD),
         );
@@ -823,11 +830,20 @@ Deno.serve(async (req: Request) => {
           updateExternalPositionFieldKey = resolveUpdateFieldKey(item, EXTERNAL_POSITION_GENITIVE_LOWER_FIELD);
           fieldsToUpdate[updateExternalPositionFieldKey] = externalPositionGenitiveLower;
         }
+
+        const currentExternalPositionDative = normalizeComparableText(
+          findFieldValue(item, EXTERNAL_POSITION_DATIVE_LOWER_FIELD),
+        );
+
+        if (currentExternalPositionDative !== normalizeComparableText(externalPositionDativeLower)) {
+          updateExternalPositionDativeFieldKey = resolveUpdateFieldKey(item, EXTERNAL_POSITION_DATIVE_LOWER_FIELD);
+          fieldsToUpdate[updateExternalPositionDativeFieldKey] = externalPositionDativeLower;
+        }
       } catch (error) {
         externalPositionError = error instanceof Error ? error.message : String(error);
       }
     } else {
-      warnings.push("External position genitive sync skipped because source position field is empty");
+      warnings.push("External position genitive/dative sync skipped because source position field is empty");
     }
 
     const daysAttempted = Boolean(startDateValue || endDateValue);
@@ -843,6 +859,7 @@ Deno.serve(async (req: Request) => {
     const hasExternalPositionSuccess = Boolean(externalPositionAttempted && !externalPositionError);
     const hasAnySuccess = hasDaysSuccess || hasPositionSuccess || hasExternalEmployeeSuccess || hasExternalPositionSuccess;
     const firstBlockingError = daysError || positionError || externalEmployeeError || externalPositionError;
+    const hasExternalPositionDativeSuccess = Boolean(externalPositionAttempted && !externalPositionError && externalPositionDativeLower);
 
     if (firstBlockingError && !hasAnySuccess) {
       return jsonResponse(req, daysError ? 400 : 502, {
@@ -862,6 +879,7 @@ Deno.serve(async (req: Request) => {
         sourceExternalPosition,
         externalPositionSourceLower,
         externalPositionGenitiveLower,
+        externalPositionDativeLower,
         warnings,
       });
     }
@@ -902,6 +920,7 @@ Deno.serve(async (req: Request) => {
         sourceExternalPosition,
         externalPositionSourceLower,
         externalPositionGenitiveLower,
+        externalPositionDativeLower,
         warnings,
       });
     }
@@ -931,6 +950,7 @@ Deno.serve(async (req: Request) => {
       sourceExternalPosition,
       externalPositionSourceLower,
       externalPositionGenitiveLower,
+      externalPositionDativeLower,
       warnings,
       updateFieldKeys: Object.keys(fieldsToUpdate),
       updateDaysNumberFieldKey,
@@ -940,6 +960,7 @@ Deno.serve(async (req: Request) => {
       updateExternalEmployeeGenitiveFieldKey,
       updateExternalEmployeeDativeFieldKey,
       updateExternalPositionFieldKey,
+      updateExternalPositionDativeFieldKey,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
