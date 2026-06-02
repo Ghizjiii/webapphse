@@ -27,6 +27,7 @@ const HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_GENITIVE_LOWER_FIELD") || "ufCrm10_1775330315";
 const HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD =
   Deno.env.get("BITRIX_HR_EXTERNAL_POSITION_DATIVE_LOWER_FIELD") || "ufCrm10_1776697890";
+const BITRIX_REGION_LIST_IBLOCK_ID = Number(Deno.env.get("BITRIX_REGION_LIST_IBLOCK_ID") || "118");
 const MORPHER_API_TOKEN = Deno.env.get("MORPHER_API_TOKEN") || "";
 const SYNC_SCOPE = "reference_lists";
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
@@ -148,6 +149,7 @@ const BITRIX_REFERENCE_LISTS = {
   TYPE_LEARN: { iblockId: 78, name: "Вид проверки знаний / тип обучения" },
   COMMIS_CONCL: { iblockId: 80, name: "Заключение комиссии" },
   COURSE_PRICES: { iblockId: 84, name: "Course default prices" },
+  REGIONS: { iblockId: BITRIX_REGION_LIST_IBLOCK_ID, name: "Отделы и регионы" },
   QUALIFICATION: { iblockId: 86, name: "Квалификация" },
   ELECTRICAL_SAFETY_ADMISSION: { iblockId: 88, name: "Допуск электробезопасность" },
   ELECTRICAL_SAFETY_GROUP: { iblockId: 90, name: "Группа электробезопасность" },
@@ -168,6 +170,7 @@ const BITRIX_REFERENCE_LIST_ORDER = [
   "TYPE_LEARN",
   "COMMIS_CONCL",
   "COURSE_PRICES",
+  "REGIONS",
   "QUALIFICATION",
   "ELECTRICAL_SAFETY_ADMISSION",
   "ELECTRICAL_SAFETY_GROUP",

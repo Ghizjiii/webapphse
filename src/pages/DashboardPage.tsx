@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext';
 import type { QuestionnaireLink, Company, AppRole } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 import { getPublicFormUrl } from '../lib/publicFormUrl';
+import { getQuestionnaireRegionLabel, getQuestionnaireRequestLabel } from '../lib/questionnaires';
 import CreateLinkModal from '../components/CreateLinkModal';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -96,6 +97,7 @@ export default function DashboardPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [creatorFilter, setCreatorFilter] = useState<CreatorFilterValue>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | QuestionnaireLink['status']>('all');
+  const [regionFilter, setRegionFilter] = useState('all');
   const [companySearch, setCompanySearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
@@ -104,6 +106,15 @@ export default function DashboardPage() {
   const currentProfileEmail = profile?.email || '';
   const currentProfileFullName = profile?.full_name || '';
   const currentProfileRole = profile?.role || null;
+  const currentResponsibleName = getProfileDisplayName(
+    profile ? {
+      user_id: profile.user_id,
+      email: profile.email,
+      full_name: profile.full_name,
+      role: profile.role,
+    } : null,
+    currentProfileEmail || currentUserEmail,
+  );
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -248,7 +259,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [companySearch, creatorFilter, pageSize, statusFilter]);
+  }, [companySearch, creatorFilter, pageSize, regionFilter, statusFilter]);
 
   const creatorFilterOptions = useMemo<CreatorFilterOption[]>(() => {
     const creators = new Map<string, { label: string; role: AppRole | null; sortName: string }>();
@@ -291,6 +302,20 @@ export default function DashboardPage() {
     }
   }, [creatorFilter, creatorFilterOptions]);
 
+  const regionFilterOptions = useMemo(() => {
+    return Array.from(new Set(
+      rows
+        .map(({ questionnaire }) => getQuestionnaireRegionLabel(questionnaire))
+        .filter(Boolean)
+    )).sort((left, right) => left.localeCompare(right, 'ru-RU'));
+  }, [rows]);
+
+  useEffect(() => {
+    if (regionFilter !== 'all' && !regionFilterOptions.includes(regionFilter)) {
+      setRegionFilter('all');
+    }
+  }, [regionFilter, regionFilterOptions]);
+
   const normalizedCompanySearch = companySearch.trim().toLowerCase();
   const filteredRows = useMemo(
     () => rows.filter(({ questionnaire, company }) => {
@@ -309,6 +334,10 @@ export default function DashboardPage() {
         return false;
       }
 
+      if (regionFilter !== 'all' && getQuestionnaireRegionLabel(questionnaire) !== regionFilter) {
+        return false;
+      }
+
       if (normalizedCompanySearch) {
         const companyName = String(company?.name || '').trim().toLowerCase();
         if (!companyName.includes(normalizedCompanySearch)) {
@@ -318,7 +347,7 @@ export default function DashboardPage() {
 
       return true;
     }),
-    [creatorFilter, currentUserId, normalizedCompanySearch, rows, statusFilter],
+    [creatorFilter, currentUserId, normalizedCompanySearch, regionFilter, rows, statusFilter],
   );
 
   useEffect(() => {
@@ -365,7 +394,7 @@ export default function DashboardPage() {
     return `${value.toLocaleString('ru-RU')} ₸`;
   }
 
-  const hasActiveFilters = creatorFilter !== 'all' || statusFilter !== 'all' || companySearch.trim() !== '';
+  const hasActiveFilters = creatorFilter !== 'all' || statusFilter !== 'all' || regionFilter !== 'all' || companySearch.trim() !== '';
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = useMemo(
     () => filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
@@ -377,6 +406,7 @@ export default function DashboardPage() {
   function resetFilters() {
     setCreatorFilter('all');
     setStatusFilter('all');
+    setRegionFilter('all');
     setCompanySearch('');
   }
 
@@ -430,17 +460,24 @@ export default function DashboardPage() {
     );
   }
 
-  async function handleCreate(data: { title: string; expires_at: string | null; payment_order_optional: boolean }) {
-    const { error } = await supabase.from('questionnaires').insert({
-      title: data.title,
+  async function handleCreate(data: {
+    region_bitrix_item_id: string;
+    region_name: string;
+    expires_at: string | null;
+    payment_order_optional: boolean;
+  }) {
+    const { data: createdQuestionnaire, error } = await supabase.from('questionnaires').insert({
+      title: '',
+      region_bitrix_item_id: data.region_bitrix_item_id,
+      region_name: data.region_name,
       expires_at: data.expires_at,
       payment_order_optional: data.payment_order_optional,
       is_active: true,
       status: 'active',
       created_by: user?.id,
-    });
+    }).select('*').single();
     if (error) { showToast('error', 'Ошибка создания анкеты'); return; }
-    showToast('success', 'Анкета создана');
+    showToast('success', `${getQuestionnaireRequestLabel(createdQuestionnaire as QuestionnaireLink)} создана`);
     setShowCreateModal(false);
     loadData();
   }
@@ -476,7 +513,7 @@ export default function DashboardPage() {
           <>
           <div className="border-b border-gray-100 px-5 py-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Показывать</span>
                   <select
@@ -519,6 +556,22 @@ export default function DashboardPage() {
                     className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   />
                 </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Отделы и регионы</span>
+                  <select
+                    value={regionFilter}
+                    onChange={(event) => setRegionFilter(event.target.value)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все отделы и регионы</option>
+                    {regionFilterOptions.map((regionName) => (
+                      <option key={regionName} value={regionName}>
+                        {regionName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               {hasActiveFilters && (
@@ -538,6 +591,7 @@ export default function DashboardPage() {
               <tr className="border-b border-gray-100 bg-gray-50/60">
                 <th className="text-left px-5 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider w-16">№</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявка / Название компании</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Отделы и регионы</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Статус</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявок</th>
@@ -551,7 +605,7 @@ export default function DashboardPage() {
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">
+                  <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-500">
                     По выбранным фильтрам анкеты не найдены.
                   </td>
                 </tr>
@@ -563,6 +617,9 @@ export default function DashboardPage() {
                   creatorProfile,
                   q.created_by === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
                 );
+                const requestLabel = getQuestionnaireRequestLabel(q);
+                const regionLabel = getQuestionnaireRegionLabel(q);
+                const fallbackSubtitle = String(q.title || '').trim();
                 return (
                   <tr
                     key={q.id}
@@ -571,8 +628,21 @@ export default function DashboardPage() {
                   >
                     <td className="px-5 py-4 text-gray-400 font-medium align-top">{rowNumber}</td>
                     <td className="px-4 py-4">
-                      <div className="font-medium text-gray-900">{q.title || 'Без названия'}</div>
-                      {company && <div className="text-gray-500 text-xs mt-0.5">{company.name}</div>}
+                      <div className="font-medium text-gray-900">{requestLabel}</div>
+                      {company?.name ? (
+                        <div className="mt-0.5 text-xs text-gray-500">{company.name}</div>
+                      ) : fallbackSubtitle && fallbackSubtitle !== requestLabel ? (
+                        <div className="mt-0.5 text-xs text-gray-500">{fallbackSubtitle}</div>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-4 text-gray-600">
+                      {regionLabel ? (
+                        <span className="inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                          {regionLabel}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-4">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cfg.className}`}>
@@ -641,7 +711,11 @@ export default function DashboardPage() {
       </div>
 
       {showCreateModal && (
-        <CreateLinkModal onClose={() => setShowCreateModal(false)} onCreate={handleCreate} />
+        <CreateLinkModal
+          responsibleName={currentResponsibleName}
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreate}
+        />
       )}
 
       {deleteTarget && (

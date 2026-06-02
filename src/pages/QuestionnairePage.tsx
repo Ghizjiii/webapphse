@@ -13,6 +13,7 @@ import { supabase } from '../lib/supabase';
 import { buildCourseCostSummarySet } from '../lib/courseCostSummary';
 import { buildProtocolDraftRows, reconcileProtocolsFromCertificates } from '../lib/protocolGeneration';
 import { getPublicFormUrl } from '../lib/publicFormUrl';
+import { getQuestionnaireRegionLabel, getQuestionnaireRequestLabel } from '../lib/questionnaires';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
@@ -152,9 +153,6 @@ export default function QuestionnairePage() {
   const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
-  const [titleEditing, setTitleEditing] = useState(false);
-  const [titleDraft, setTitleDraft] = useState('');
-  const [savingTitle, setSavingTitle] = useState(false);
   const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
   const courseCostSummaries = buildCourseCostSummarySet(certificates);
 
@@ -292,12 +290,6 @@ export default function QuestionnairePage() {
     });
   }, [loadData]);
 
-  useEffect(() => {
-    if (!titleEditing) {
-      setTitleDraft(questionnaire?.title || '');
-    }
-  }, [questionnaire?.title, titleEditing]);
-
   async function saveCompany() {
     if (!company) return;
     setSavingCompany(true);
@@ -393,36 +385,6 @@ export default function QuestionnairePage() {
     await supabase.from('questionnaires').update({ is_active: !questionnaire.is_active }).eq('id', questionnaire.id);
     showToast('success', questionnaire.is_active ? 'Ссылка деактивирована' : 'Ссылка активирована');
     loadData();
-  }
-
-  async function saveQuestionnaireTitle() {
-    if (!questionnaire) return;
-    const nextTitle = titleDraft.trim();
-    if (!nextTitle) {
-      showToast('warning', 'Введите название анкеты');
-      return;
-    }
-
-    setSavingTitle(true);
-    const updatedAt = new Date().toISOString();
-    const { error } = await supabase
-      .from('questionnaires')
-      .update({
-        title: nextTitle,
-        updated_at: updatedAt,
-      })
-      .eq('id', questionnaire.id);
-
-    if (error) {
-      showToast('error', 'Не удалось сохранить название анкеты');
-      setSavingTitle(false);
-      return;
-    }
-
-    setQuestionnaire(prev => (prev ? { ...prev, title: nextTitle, updated_at: updatedAt } : prev));
-    setTitleEditing(false);
-    setSavingTitle(false);
-    showToast('success', 'Название анкеты сохранено');
   }
 
   async function saveExpiry() {
@@ -538,6 +500,8 @@ export default function QuestionnairePage() {
     creatorProfile,
     questionnaire.created_by === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
   );
+  const requestLabel = getQuestionnaireRequestLabel(questionnaire);
+  const regionLabel = getQuestionnaireRegionLabel(questionnaire);
   const paymentSource = companyEditing ? companyDraft : company;
   const paymentOrderUrl = String(paymentSource?.payment_order_url || '').trim();
   const paymentOrderName = String(paymentSource?.payment_order_name || '').trim();
@@ -551,74 +515,28 @@ export default function QuestionnairePage() {
     <DashboardLayout
       breadcrumbs={[
         { label: 'Анкеты', to: '/dashboard' },
-        { label: questionnaire.title || 'Без названия' },
+        { label: requestLabel },
       ]}
     >
       <div className="min-w-0 space-y-3">
         <div className="min-w-0 rounded-2xl border border-gray-200 bg-gradient-to-br from-white via-white to-slate-50 p-4 shadow-sm">
           <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.95fr)]">
             <div className="min-w-0 space-y-3">
-              {titleEditing ? (
-                <div className="flex flex-wrap items-start gap-2">
-                  <input
-                    autoFocus
-                    value={titleDraft}
-                    onChange={event => setTitleDraft(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter') void saveQuestionnaireTitle();
-                      if (event.key === 'Escape') {
-                        setTitleEditing(false);
-                        setTitleDraft(questionnaire.title || '');
-                      }
-                    }}
-                    placeholder="Название анкеты"
-                    className="min-w-[280px] flex-1 rounded-xl border border-gray-300 px-4 py-2.5 text-2xl font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void saveQuestionnaireTitle()}
-                    disabled={savingTitle}
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 disabled:opacity-60"
-                  >
-                    <Check size={15} />
-                    {savingTitle ? 'Сохраняем...' : 'Сохранить'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTitleEditing(false);
-                      setTitleDraft(questionnaire.title || '');
-                    }}
-                    disabled={savingTitle}
-                    className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50 disabled:opacity-60"
-                  >
-                    <X size={15} />
-                    Отмена
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-start gap-3">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-start gap-3">
+                  <div>
                     <h1 className="max-w-3xl break-words text-[30px] font-bold tracking-tight text-gray-900">
-                      {questionnaire.title || 'Без названия'}
+                      {requestLabel}
                     </h1>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTitleDraft(questionnaire.title || '');
-                        setTitleEditing(true);
-                      }}
-                      className={`${secondaryButtonClass} shrink-0 self-start`}
-                    >
-                      <Pencil size={14} />
-                      Изменить название
-                    </button>
+                    {regionLabel ? (
+                      <p className="mt-1 text-sm font-medium text-blue-700">Регион: {regionLabel}</p>
+                    ) : null}
                   </div>
-                  <p className="text-xs leading-5 text-gray-500">
-                    Короткая сводка по анкете: статус, ссылка, сделка Bitrix24 и данные клиента.
-                  </p>
                 </div>
-              )}
+                <p className="text-xs leading-5 text-gray-500">
+                  Короткая сводка по заявке: статус, ссылка, сделка Bitrix24 и данные клиента.
+                </p>
+              </div>
 
               <div className="flex flex-wrap gap-2">
                 <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
@@ -654,7 +572,9 @@ export default function QuestionnairePage() {
                 </span>
               </div>
 
-              <div className="grid max-w-3xl gap-2 sm:grid-cols-3">
+              <div className="grid max-w-4xl gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                <SummaryBadge label="Номер заявки" value={questionnaire.request_number || '—'} />
+                <SummaryBadge label="Регион" value={regionLabel || '—'} />
                 <SummaryBadge label="Сотрудники" value={participants.length} />
                 <SummaryBadge label="Курсы" value={uniqueCoursesCount} />
                 <SummaryBadge label="Заявки" value={totalCourseRequests} />
