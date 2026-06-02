@@ -2,6 +2,9 @@
   id: string;
   secret_token: string;
   title: string;
+  request_number: number | null;
+  region_bitrix_item_id: string;
+  region_name: string;
   is_active: boolean;
   payment_order_optional: boolean;
   expires_at: string | null;
