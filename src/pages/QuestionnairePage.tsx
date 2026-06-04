@@ -14,10 +14,21 @@ import { buildCourseCostSummarySet } from '../lib/courseCostSummary';
 import { buildProtocolDraftRows, reconcileProtocolsFromCertificates } from '../lib/protocolGeneration';
 import { getPublicFormUrl } from '../lib/publicFormUrl';
 import { getQuestionnaireRegionLabel, getQuestionnaireRequestLabel } from '../lib/questionnaires';
+import {
+  WORKFLOW_EVENT_LABELS,
+  WORKFLOW_STATUS_LABELS,
+  durationBetween,
+  formatDuration,
+  getSlaSecondsLeft,
+  loadQuestionnaireEvents,
+  resolveWorkflowStatus,
+  transitionQuestionnaireWorkflow,
+  type WorkflowTransition,
+} from '../lib/questionnaireWorkflow';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
-import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol } from '../types';
+import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol, QuestionnaireEvent } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 
 type Tab = 'participants' | 'certificates' | 'course_costs' | 'protocols' | 'printed_documents';
@@ -142,6 +153,7 @@ export default function QuestionnairePage() {
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
+  const [workflowEvents, setWorkflowEvents] = useState<QuestionnaireEvent[]>([]);
   const [availableCourses, setAvailableCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('participants');
@@ -150,6 +162,7 @@ export default function QuestionnairePage() {
   const [companyDraft, setCompanyDraft] = useState<Partial<Company>>({});
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
@@ -275,6 +288,13 @@ export default function QuestionnairePage() {
       .eq('questionnaire_id', id)
       .order('generated_at', { ascending: false });
     setGeneratedDocuments(docsData || []);
+
+    try {
+      setWorkflowEvents(await loadQuestionnaireEvents(id));
+    } catch (error) {
+      console.warn('Workflow history fallback', error);
+      setWorkflowEvents([]);
+    }
 
     setLoading(false);
   }, [currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
@@ -404,6 +424,48 @@ export default function QuestionnairePage() {
     loadData();
   }
 
+  async function changeWorkflow(nextStatus: WorkflowTransition, successMessage: string) {
+    if (!questionnaire) return;
+    setSavingWorkflow(true);
+    try {
+      const updated = await transitionQuestionnaireWorkflow(questionnaire.id, nextStatus);
+      setQuestionnaire(updated);
+      setWorkflowEvents(await loadQuestionnaireEvents(questionnaire.id));
+      showToast('success', successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось обновить этап заявки';
+      showToast('error', message);
+    } finally {
+      setSavingWorkflow(false);
+    }
+  }
+
+  async function openSyncModal() {
+    if (!questionnaire) return;
+    const workflowStatus = resolveWorkflowStatus(questionnaire);
+
+    if (
+      questionnaire.submitted_at &&
+      workflowStatus !== 'completed' &&
+      !questionnaire.processing_started_at
+    ) {
+      setSavingWorkflow(true);
+      try {
+        const updated = await transitionQuestionnaireWorkflow(questionnaire.id, 'in_progress');
+        setQuestionnaire(updated);
+        setWorkflowEvents(await loadQuestionnaireEvents(questionnaire.id));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Не удалось зафиксировать начало обработки';
+        showToast('error', message);
+        setSavingWorkflow(false);
+        return;
+      }
+      setSavingWorkflow(false);
+    }
+
+    setShowSyncModal(true);
+  }
+
   function getFormUrl() {
     return getPublicFormUrl(questionnaire?.secret_token);
   }
@@ -510,6 +572,27 @@ export default function QuestionnairePage() {
   const paymentOrderAmount = paymentSource?.payment_order_amount ?? null;
   const paymentUploadedAt = String(paymentSource?.payment_order_uploaded_at || '').trim();
   const paymentIsPaid = Boolean(paymentSource?.payment_is_paid);
+  const workflowStatus = resolveWorkflowStatus(questionnaire);
+  const workflowLabel = WORKFLOW_STATUS_LABELS[workflowStatus] || workflowStatus;
+  const slaSecondsLeft = getSlaSecondsLeft(questionnaire.sla_due_at);
+  const isSlaOverdue = Boolean(questionnaire.is_overdue || workflowStatus === 'overdue' || (slaSecondsLeft !== null && slaSecondsLeft < 0));
+  const slaText = workflowStatus === 'completed'
+    ? (questionnaire.completed_in_time === false ? 'Завершена с просрочкой' : 'Завершена в срок')
+    : questionnaire.sla_due_at
+      ? isSlaOverdue
+        ? `Просрочено на ${formatDuration(Math.abs(slaSecondsLeft || 0))}`
+        : `Осталось ${formatDuration(slaSecondsLeft)}`
+      : 'SLA начнется после поступления заявки';
+  const workflowBadgeClass = workflowStatus === 'completed'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : isSlaOverdue
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : workflowStatus === 'awaiting_submission'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-blue-200 bg-blue-50 text-blue-700';
+  const canAcceptWorkflow = Boolean(questionnaire.submitted_at) && !questionnaire.accepted_at && workflowStatus !== 'completed';
+  const canStartWorkflow = Boolean(questionnaire.submitted_at) && !questionnaire.processing_started_at && workflowStatus !== 'completed';
+  const canCompleteWorkflow = Boolean(questionnaire.submitted_at) && workflowStatus !== 'completed';
 
   return (
     <DashboardLayout
@@ -602,8 +685,9 @@ export default function QuestionnairePage() {
                   </button>
                   {canSyncToBitrix && (
                     <button
-                      onClick={() => setShowSyncModal(true)}
-                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700"
+                      onClick={() => void openSyncModal()}
+                      disabled={savingWorkflow}
+                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                     >
                       {deal?.bitrix_deal_id ? <><RefreshCw size={14} /> Обновить в Битрикс24</> : <><RefreshCw size={14} /> Отправить в Битрикс24</>}
                     </button>
@@ -709,6 +793,100 @@ export default function QuestionnairePage() {
               <CompactField label="Срок действия">
                 {questionnaire.expires_at ? formatDateTime(questionnaire.expires_at) : 'Бессрочно'}
               </CompactField>
+            </div>
+          </TopSectionCard>
+
+          <TopSectionCard
+            icon={<Clock size={18} />}
+            title="SLA и этапы обработки"
+            description="Каждый этап должен укладываться в 24 часа"
+            className="h-full"
+            actions={questionnaire.submitted_at ? (
+              <>
+                {canAcceptWorkflow && (
+                  <button
+                    type="button"
+                    onClick={() => void changeWorkflow('accepted', 'Заявка принята в работу')}
+                    disabled={savingWorkflow}
+                    className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-all hover:bg-blue-100 disabled:opacity-60"
+                  >
+                    <Check size={14} />
+                    Взять в работу
+                  </button>
+                )}
+                {canStartWorkflow && (
+                  <button
+                    type="button"
+                    onClick={() => void changeWorkflow('in_progress', 'Обработка заявки начата')}
+                    disabled={savingWorkflow}
+                    className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-all hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    <RefreshCw size={14} />
+                    Начать обработку
+                  </button>
+                )}
+                {canCompleteWorkflow && (
+                  <button
+                    type="button"
+                    onClick={() => void changeWorkflow('completed', 'Заявка завершена')}
+                    disabled={savingWorkflow}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    <Check size={14} />
+                    Завершить
+                  </button>
+                )}
+              </>
+            ) : null}
+          >
+            <div className="grid gap-2 sm:grid-cols-2">
+              <CompactField label="Текущий этап">
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${workflowBadgeClass}`}>
+                  {workflowLabel}
+                </span>
+              </CompactField>
+              <CompactField label="SLA">
+                <span className={isSlaOverdue ? 'text-red-600' : 'text-gray-900'}>{slaText}</span>
+              </CompactField>
+              <CompactField label="Принята в работу">
+                {questionnaire.accepted_at ? formatDateTime(questionnaire.accepted_at) : '—'}
+              </CompactField>
+              <CompactField label="Начало обработки">
+                {questionnaire.processing_started_at ? formatDateTime(questionnaire.processing_started_at) : '—'}
+              </CompactField>
+              <CompactField label="Завершена">
+                {questionnaire.completed_at ? formatDateTime(questionnaire.completed_at) : '—'}
+              </CompactField>
+              <CompactField label="Общее время">
+                {questionnaire.total_processing_seconds
+                  ? formatDuration(questionnaire.total_processing_seconds)
+                  : durationBetween(questionnaire.submitted_at, questionnaire.completed_at)}
+              </CompactField>
+            </div>
+
+            <div className="mt-3 rounded-xl border border-gray-200 bg-slate-50/70 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">История заявки</div>
+              {workflowEvents.length === 0 ? (
+                <div className="text-sm text-gray-500">История появится после первого этапа обработки.</div>
+              ) : (
+                <div className="space-y-2">
+                  {workflowEvents.slice(0, 6).map(event => (
+                    <div key={event.id} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm">
+                      <div>
+                        <div className={event.is_overdue ? 'font-medium text-red-700' : 'font-medium text-gray-900'}>
+                          {WORKFLOW_EVENT_LABELS[event.event_type] || event.event_type}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {event.from_status && event.to_status
+                            ? `${WORKFLOW_STATUS_LABELS[event.from_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.from_status} → ${WORKFLOW_STATUS_LABELS[event.to_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.to_status}`
+                            : 'Событие заявки'}
+                        </div>
+                      </div>
+                      <div className="whitespace-nowrap text-xs text-gray-500">{formatDateTime(event.occurred_at)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </TopSectionCard>
 

@@ -757,12 +757,6 @@ function preferredBooleanValue(localValue: boolean | null | undefined, currentBi
   return undefined;
 }
 
-function preferredNumberValue(localValue: number | null | undefined, currentBitrixValue: unknown): number | undefined {
-  if (typeof localValue === "number" && Number.isFinite(localValue)) return localValue;
-  const currentNumber = normalizeBitrixNumber(currentBitrixValue);
-  return currentNumber ?? undefined;
-}
-
 function preferredEnumValue(
   localValue: unknown,
   currentBitrixValue: unknown,
@@ -2471,6 +2465,15 @@ Deno.serve(async (req: Request) => {
         payment_file_sync_key: paymentFileSyncKey,
       })
       .eq("questionnaire_id", questionnaireId);
+
+    const { error: workflowCompleteError } = await supabase.rpc("transition_questionnaire_workflow", {
+      p_questionnaire_id: questionnaireId,
+      p_next_status: "completed",
+      p_actor_user_id: auth.user.id,
+    });
+    if (workflowCompleteError) {
+      console.warn("Failed to complete questionnaire workflow", workflowCompleteError);
+    }
 
     return jsonResponse(req, 200, {
       ok: true,

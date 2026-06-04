@@ -859,8 +859,6 @@ Deno.serve(async (req: Request) => {
     const hasExternalPositionSuccess = Boolean(externalPositionAttempted && !externalPositionError);
     const hasAnySuccess = hasDaysSuccess || hasPositionSuccess || hasExternalEmployeeSuccess || hasExternalPositionSuccess;
     const firstBlockingError = daysError || positionError || externalEmployeeError || externalPositionError;
-    const hasExternalPositionDativeSuccess = Boolean(externalPositionAttempted && !externalPositionError && externalPositionDativeLower);
-
     if (firstBlockingError && !hasAnySuccess) {
       return jsonResponse(req, daysError ? 400 : 502, {
         error: firstBlockingError,
