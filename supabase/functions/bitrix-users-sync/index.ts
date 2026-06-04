@@ -9,7 +9,7 @@ type PlainObject = Record<string, unknown>;
 
 type AppProfileRow = {
   user_id: string;
-  role: "admin" | "coordinator" | "user";
+  role: "admin" | "coordinator" | "department_head" | "user";
   is_active: boolean;
 };
 

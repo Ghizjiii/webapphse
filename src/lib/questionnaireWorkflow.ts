@@ -80,7 +80,7 @@ export async function loadQuestionnaireEvents(questionnaireId: string): Promise<
     .from('questionnaire_events')
     .select('*')
     .eq('questionnaire_id', questionnaireId)
-    .order('occurred_at', { ascending: false });
+    .order('occurred_at', { ascending: true });
 
   if (error) throw error;
   return (data || []) as QuestionnaireEvent[];

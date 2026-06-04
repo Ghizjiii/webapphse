@@ -59,6 +59,12 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
 
     try {
       const accessToken = await getFreshAccessToken();
+      const { error: workflowError } = await supabase.rpc('transition_questionnaire_workflow', {
+        p_questionnaire_id: questionnaireId,
+        p_next_status: 'in_progress',
+      });
+      if (workflowError) throw workflowError;
+
       const { data, error } = await supabase.functions.invoke('bitrix-sync', {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -81,6 +87,28 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
         ? data.photoFailureSamples.map((value: unknown) => String(value))
         : [];
       const resultTitle = String(data?.dealTitle || dealTitle);
+      const processingStartedAt = new Date().toISOString();
+      const keepProcessingRes = await supabase.rpc('keep_questionnaire_in_progress_after_bitrix_sync', {
+        p_questionnaire_id: questionnaireId,
+      });
+
+      if (keepProcessingRes.error) {
+        const slaDueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await supabase
+          .from('questionnaires')
+          .update({
+            workflow_status: 'in_progress',
+            processing_started_at: processingStartedAt,
+            current_stage_started_at: processingStartedAt,
+            sla_due_at: slaDueAt,
+            completed_at: null,
+            completed_by: null,
+            completed_in_time: null,
+            total_processing_seconds: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', questionnaireId);
+      }
 
       setProgress({ step: 'Готово!', current: 1, total: 1, status: 'done' });
 

@@ -214,7 +214,7 @@ type PhotoContract = {
 
 type AppProfileAuthRow = {
   user_id: string;
-  role: "admin" | "coordinator" | "user";
+  role: "admin" | "coordinator" | "department_head" | "user";
   is_active: boolean;
   bitrix_user_id: string | null;
   bitrix_user_name: string | null;
@@ -2465,15 +2465,6 @@ Deno.serve(async (req: Request) => {
         payment_file_sync_key: paymentFileSyncKey,
       })
       .eq("questionnaire_id", questionnaireId);
-
-    const { error: workflowCompleteError } = await supabase.rpc("transition_questionnaire_workflow", {
-      p_questionnaire_id: questionnaireId,
-      p_next_status: "completed",
-      p_actor_user_id: auth.user.id,
-    });
-    if (workflowCompleteError) {
-      console.warn("Failed to complete questionnaire workflow", workflowCompleteError);
-    }
 
     return jsonResponse(req, 200, {
       ok: true,

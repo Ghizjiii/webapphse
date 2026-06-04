@@ -6,6 +6,9 @@ type CreateUserPayload = {
   password?: unknown;
   full_name?: unknown;
   role?: unknown;
+  region_bitrix_item_id?: unknown;
+  region_name?: unknown;
+  questionnaire_access?: unknown;
   bitrix_user_id?: unknown;
   bitrix_user_name?: unknown;
 };
@@ -21,13 +24,16 @@ type UpdateUserPayload = {
   full_name?: unknown;
   role?: unknown;
   is_active?: unknown;
+  region_bitrix_item_id?: unknown;
+  region_name?: unknown;
+  questionnaire_access?: unknown;
   bitrix_user_id?: unknown;
   bitrix_user_name?: unknown;
 };
 
 type AppProfileRow = {
   user_id: string;
-  role: "admin" | "coordinator" | "user";
+  role: "admin" | "coordinator" | "department_head" | "user";
   is_active: boolean;
 };
 
@@ -43,12 +49,23 @@ function plain(value: unknown): string {
   return String(value || "").trim();
 }
 
-function normalizeRole(value: unknown): "admin" | "coordinator" | "user" {
+type AppRole = "admin" | "coordinator" | "department_head" | "user";
+type QuestionnaireAccessScope = "own" | "all";
+
+function normalizeRole(value: unknown): AppRole {
   const role = plain(value).toLowerCase();
-  if (role === "admin" || role === "coordinator" || role === "user") {
+  if (role === "admin" || role === "coordinator" || role === "department_head" || role === "user") {
     return role;
   }
   return "user";
+}
+
+function normalizeQuestionnaireAccess(value: unknown, role: AppRole): QuestionnaireAccessScope {
+  if (role === "admin") return "all";
+
+  const access = plain(value).toLowerCase();
+  if (access === "all" || access === "own") return access;
+  return "own";
 }
 
 function normalizeOriginRule(value: string): string {
@@ -251,7 +268,10 @@ async function upsertAppProfile(params: {
   userId: string;
   email: string;
   fullName: string;
-  role: "admin" | "coordinator" | "user";
+  role: AppRole;
+  regionBitrixItemId: string;
+  regionName: string;
+  questionnaireAccess: QuestionnaireAccessScope;
   bitrixUserId: string;
   bitrixUserName: string;
   isActive?: boolean;
@@ -264,6 +284,9 @@ async function upsertAppProfile(params: {
       full_name: params.fullName,
       role: params.role,
       is_active: params.isActive ?? true,
+      region_bitrix_item_id: params.regionBitrixItemId || "",
+      region_name: params.regionName || "",
+      questionnaire_access: params.questionnaireAccess,
       bitrix_user_id: params.bitrixUserId || "",
       bitrix_user_name: params.bitrixUserName || "",
       updated_at: new Date().toISOString(),
@@ -280,6 +303,9 @@ async function createUser(body: CreateUserPayload) {
   const password = plain(body.password);
   const fullName = plain(body.full_name);
   const role = normalizeRole(body.role);
+  const questionnaireAccess = normalizeQuestionnaireAccess(body.questionnaire_access, role);
+  const regionBitrixItemId = plain(body.region_bitrix_item_id);
+  const regionName = plain(body.region_name);
   const bitrixUserId = plain(body.bitrix_user_id);
   const bitrixUserName = plain(body.bitrix_user_name);
 
@@ -327,6 +353,9 @@ async function createUser(body: CreateUserPayload) {
     fullName,
     role,
     isActive: true,
+    regionBitrixItemId,
+    regionName,
+    questionnaireAccess,
     bitrixUserId,
     bitrixUserName,
   }, supabase);
@@ -378,6 +407,9 @@ async function updateUser(body: UpdateUserPayload) {
   const fullName = plain(body.full_name);
   const role = normalizeRole(body.role);
   const isActive = normalizeBoolean(body.is_active, true);
+  const questionnaireAccess = normalizeQuestionnaireAccess(body.questionnaire_access, role);
+  const regionBitrixItemId = plain(body.region_bitrix_item_id);
+  const regionName = plain(body.region_name);
   const bitrixUserId = plain(body.bitrix_user_id);
   const bitrixUserName = plain(body.bitrix_user_name);
 
@@ -400,6 +432,9 @@ async function updateUser(body: UpdateUserPayload) {
     fullName,
     role,
     isActive,
+    regionBitrixItemId,
+    regionName,
+    questionnaireAccess,
     bitrixUserId,
     bitrixUserName,
   }, supabase);

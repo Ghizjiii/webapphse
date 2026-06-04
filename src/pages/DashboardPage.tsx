@@ -5,10 +5,15 @@ import DashboardLayout from '../components/DashboardLayout';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import type { QuestionnaireLink, Company, AppRole } from '../types';
+import type { QuestionnaireLink, Company, AppRole, QuestionnaireRequestType } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 import { getPublicFormUrl } from '../lib/publicFormUrl';
-import { getQuestionnaireRegionLabel, getQuestionnaireRequestLabel } from '../lib/questionnaires';
+import {
+  getQuestionnaireRegionLabel,
+  getQuestionnaireRequestLabel,
+  getQuestionnaireRequestType,
+  getQuestionnaireRequestTypeLabel,
+} from '../lib/questionnaires';
 import CreateLinkModal from '../components/CreateLinkModal';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -57,7 +62,8 @@ const STATUS_CONFIG = {
 const APP_ROLE_SORT_ORDER: Record<AppRole, number> = {
   admin: 0,
   coordinator: 1,
-  user: 2,
+  department_head: 2,
+  user: 3,
 };
 
 function getCreatorFilterValue(userId: string): `user:${string}` {
@@ -97,6 +103,7 @@ export default function DashboardPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [creatorFilter, setCreatorFilter] = useState<CreatorFilterValue>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | QuestionnaireLink['status']>('all');
+  const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | QuestionnaireRequestType>('all');
   const [regionFilter, setRegionFilter] = useState('all');
   const [companySearch, setCompanySearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
@@ -106,6 +113,7 @@ export default function DashboardPage() {
   const currentProfileEmail = profile?.email || '';
   const currentProfileFullName = profile?.full_name || '';
   const currentProfileRole = profile?.role || null;
+  const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
   const currentResponsibleName = getProfileDisplayName(
     profile ? {
       user_id: profile.user_id,
@@ -118,10 +126,16 @@ export default function DashboardPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const { data: questionnaires, error } = await supabase
+    let questionnairesQuery = supabase
       .from('questionnaires')
       .select('*')
       .order('created_at', { ascending: false });
+
+    if (!canSeeAllQuestionnaires && currentUserId) {
+      questionnairesQuery = questionnairesQuery.eq('created_by', currentUserId);
+    }
+
+    const { data: questionnaires, error } = await questionnairesQuery;
 
     if (error) {
       showToast('error', 'Ошибка загрузки данных');
@@ -253,13 +267,13 @@ export default function DashboardPage() {
 
     setRows(result);
     setLoading(false);
-  }, [currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, showToast]);
+  }, [canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, showToast]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [companySearch, creatorFilter, pageSize, regionFilter, statusFilter]);
+  }, [companySearch, creatorFilter, pageSize, regionFilter, requestTypeFilter, statusFilter]);
 
   const creatorFilterOptions = useMemo<CreatorFilterOption[]>(() => {
     const creators = new Map<string, { label: string; role: AppRole | null; sortName: string }>();
@@ -334,6 +348,10 @@ export default function DashboardPage() {
         return false;
       }
 
+      if (requestTypeFilter !== 'all' && getQuestionnaireRequestType(questionnaire) !== requestTypeFilter) {
+        return false;
+      }
+
       if (regionFilter !== 'all' && getQuestionnaireRegionLabel(questionnaire) !== regionFilter) {
         return false;
       }
@@ -347,7 +365,7 @@ export default function DashboardPage() {
 
       return true;
     }),
-    [creatorFilter, currentUserId, normalizedCompanySearch, regionFilter, rows, statusFilter],
+    [creatorFilter, currentUserId, normalizedCompanySearch, regionFilter, requestTypeFilter, rows, statusFilter],
   );
 
   useEffect(() => {
@@ -394,7 +412,7 @@ export default function DashboardPage() {
     return `${value.toLocaleString('ru-RU')} ₸`;
   }
 
-  const hasActiveFilters = creatorFilter !== 'all' || statusFilter !== 'all' || regionFilter !== 'all' || companySearch.trim() !== '';
+  const hasActiveFilters = creatorFilter !== 'all' || statusFilter !== 'all' || requestTypeFilter !== 'all' || regionFilter !== 'all' || companySearch.trim() !== '';
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = useMemo(
     () => filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
@@ -406,6 +424,7 @@ export default function DashboardPage() {
   function resetFilters() {
     setCreatorFilter('all');
     setStatusFilter('all');
+    setRequestTypeFilter('all');
     setRegionFilter('all');
     setCompanySearch('');
   }
@@ -461,6 +480,7 @@ export default function DashboardPage() {
   }
 
   async function handleCreate(data: {
+    request_type: QuestionnaireRequestType;
     region_bitrix_item_id: string;
     region_name: string;
     expires_at: string | null;
@@ -468,6 +488,7 @@ export default function DashboardPage() {
   }) {
     const { data: createdQuestionnaire, error } = await supabase.from('questionnaires').insert({
       title: '',
+      request_type: data.request_type,
       region_bitrix_item_id: data.region_bitrix_item_id,
       region_name: data.region_name,
       expires_at: data.expires_at,
@@ -513,7 +534,7 @@ export default function DashboardPage() {
           <>
           <div className="border-b border-gray-100 px-5 py-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Показывать</span>
                   <select
@@ -548,6 +569,19 @@ export default function DashboardPage() {
                 </label>
 
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Тип заявки</span>
+                  <select
+                    value={requestTypeFilter}
+                    onChange={(event) => setRequestTypeFilter(event.target.value as 'all' | QuestionnaireRequestType)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все типы</option>
+                    <option value="external">Внешние</option>
+                    <option value="internal">Внутренние</option>
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Компания</span>
                   <input
                     value={companySearch}
@@ -558,13 +592,13 @@ export default function DashboardPage() {
                 </label>
 
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
-                  <span>Отделы и регионы</span>
+                  <span>Регион / отдел</span>
                   <select
                     value={regionFilter}
                     onChange={(event) => setRegionFilter(event.target.value)}
                     className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   >
-                    <option value="all">Все отделы и регионы</option>
+                    <option value="all">Все регионы / отделы</option>
                     {regionFilterOptions.map((regionName) => (
                       <option key={regionName} value={regionName}>
                         {regionName}
@@ -591,7 +625,8 @@ export default function DashboardPage() {
               <tr className="border-b border-gray-100 bg-gray-50/60">
                 <th className="text-left px-5 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider w-16">№</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявка / Название компании</th>
-                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Отделы и регионы</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Регион / отдел</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Тип</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Статус</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявок</th>
@@ -605,12 +640,18 @@ export default function DashboardPage() {
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-sm text-gray-500">
                     По выбранным фильтрам анкеты не найдены.
                   </td>
                 </tr>
               ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile }, index) => {
                 const cfg = STATUS_CONFIG[q.status] || STATUS_CONFIG.active;
+                const slaDueAtMs = q.sla_due_at ? new Date(q.sla_due_at).getTime() : NaN;
+                const isWorkflowOverdue = Boolean(
+                  q.processing_started_at &&
+                  !q.completed_at &&
+                  (q.is_overdue || q.workflow_status === 'overdue' || (Number.isFinite(slaDueAtMs) && Date.now() > slaDueAtMs))
+                );
                 const rowNumber = (currentPage - 1) * pageSize + index + 1;
                 const responsibleRole = creatorProfile?.role || (q.created_by === currentUserId ? currentProfileRole : null);
                 const responsibleName = getProfileDisplayName(
@@ -619,11 +660,17 @@ export default function DashboardPage() {
                 );
                 const requestLabel = getQuestionnaireRequestLabel(q);
                 const regionLabel = getQuestionnaireRegionLabel(q);
+                const requestType = getQuestionnaireRequestType(q);
+                const requestTypeLabel = getQuestionnaireRequestTypeLabel(q);
                 const fallbackSubtitle = String(q.title || '').trim();
                 return (
                   <tr
                     key={q.id}
-                    className="border-b border-gray-50 hover:bg-blue-50/30 cursor-pointer transition-colors"
+                    className={`cursor-pointer border-b transition-colors ${
+                      isWorkflowOverdue
+                        ? 'border-red-100 bg-red-50/60 hover:bg-red-50'
+                        : 'border-gray-50 hover:bg-blue-50/30'
+                    }`}
                     onClick={() => navigate(`/dashboard/questionnaire/${q.id}`)}
                   >
                     <td className="px-5 py-4 text-gray-400 font-medium align-top">{rowNumber}</td>
@@ -645,9 +692,21 @@ export default function DashboardPage() {
                       )}
                     </td>
                     <td className="px-4 py-4">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
+                        requestType === 'internal'
+                          ? 'border-violet-100 bg-violet-50 text-violet-700'
+                          : 'border-slate-200 bg-slate-50 text-slate-700'
+                      }`}>
+                        {requestTypeLabel}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cfg.className}`}>
                         {cfg.icon}{cfg.label}
                       </span>
+                      {isWorkflowOverdue && (
+                        <div className="mt-1 text-xs font-medium text-red-600">Просрочена</div>
+                      )}
                     </td>
                     <td className="px-4 py-4 text-gray-600">{participantCount}</td>
                     <td className="px-4 py-4 text-gray-600">{requestCount}</td>

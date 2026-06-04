@@ -308,7 +308,7 @@ export default function ReferencePage() {
     { key: 'commis-concl' as Tab, group: 'secondary' as TabGroup, label: 'Заключение комиссии', icon: <ShieldCheck size={15} />, count: commisConclItems.length },
     { key: 'electrical-safety-admission' as Tab, group: 'secondary' as TabGroup, label: 'Допуск электробезопасности', icon: <Shield size={15} />, count: electricalSafetyAdmissionRows.length },
     { key: 'electrical-safety-group' as Tab, group: 'secondary' as TabGroup, label: 'Группа электробезопасности', icon: <ShieldCheck size={15} />, count: electricalSafetyGroupRows.length },
-    { key: 'regions' as Tab, group: 'secondary' as TabGroup, label: 'Отделы и регионы', icon: <MapPinned size={15} />, count: regionItems.length },
+    { key: 'regions' as Tab, group: 'secondary' as TabGroup, label: 'Регион / отдел', icon: <MapPinned size={15} />, count: regionItems.length },
     { key: 'cities' as Tab, group: 'secondary' as TabGroup, label: 'Города', icon: <MapPinned size={15} />, count: cityItems.length },
     { key: 'commission-members' as Tab, group: 'secondary' as TabGroup, label: 'Члены комиссии', icon: <Users size={15} />, count: commissionMemberRows.length },
     { key: 'commission-my-companies' as Tab, group: 'secondary' as TabGroup, label: 'Мои компании (комиссия)', icon: <Building2 size={15} />, count: commissionMyCompaniesItems.length },
@@ -723,7 +723,7 @@ export default function ReferencePage() {
               />
             ) : tab === 'regions' ? (
               <ReadonlyReferenceTab
-                title="Отделы и регионы"
+                title="Регион / отдел"
                 items={regionItems}
               />
             ) : tab === 'cities' ? (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { BarChart3, Clock, Filter, TrendingUp, Users } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 import { formatDuration, durationBetween } from '../lib/questionnaireWorkflow';
 import { loadProfileDirectory, getProfileDisplayName, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 import type { Certificate, Company, QuestionnaireLink } from '../types';
@@ -74,6 +75,7 @@ function StatCard({
 }
 
 export default function AnalyticsPage() {
+  const { user, profile } = useAuth();
   const [questionnaires, setQuestionnaires] = useState<QuestionnaireLink[]>([]);
   const [companies, setCompanies] = useState<AnalyticsCompany[]>([]);
   const [certificates, setCertificates] = useState<AnalyticsCertificate[]>([]);
@@ -84,26 +86,42 @@ export default function AnalyticsPage() {
   const [coordinatorFilter, setCoordinatorFilter] = useState('all');
   const [courseFilter, setCourseFilter] = useState('all');
   const [companyScopeFilter, setCompanyScopeFilter] = useState<'all' | 'internal' | 'external'>('all');
+  const currentUserId = user?.id || '';
+  const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
 
   const loadData = useCallback(async () => {
     setLoading(true);
 
-    const [questionnairesRes, companiesRes, certificatesRes] = await Promise.all([
-      supabase.from('questionnaires').select('*').order('created_at', { ascending: false }),
-      supabase.from('companies').select('questionnaire_id, name'),
-      supabase.from('certificates').select('questionnaire_id, participant_id, course_name'),
-    ]);
+    let questionnairesQuery = supabase
+      .from('questionnaires')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!canSeeAllQuestionnaires && currentUserId) {
+      questionnairesQuery = questionnairesQuery.eq('created_by', currentUserId);
+    }
+
+    const questionnairesRes = await questionnairesQuery;
 
     const nextQuestionnaires = (questionnairesRes.data || []) as QuestionnaireLink[];
+    const questionnaireIds = nextQuestionnaires.map(questionnaire => questionnaire.id);
     const coordinatorIds = Array.from(new Set(nextQuestionnaires.map(getCoordinatorId).filter(Boolean)));
-    const nextProfiles = await loadProfileDirectory(coordinatorIds);
+    const [companiesRes, certificatesRes, nextProfiles] = await Promise.all([
+      questionnaireIds.length > 0
+        ? supabase.from('companies').select('questionnaire_id, name').in('questionnaire_id', questionnaireIds)
+        : Promise.resolve({ data: [], error: null }),
+      questionnaireIds.length > 0
+        ? supabase.from('certificates').select('questionnaire_id, participant_id, course_name').in('questionnaire_id', questionnaireIds)
+        : Promise.resolve({ data: [], error: null }),
+      loadProfileDirectory(coordinatorIds),
+    ]);
 
     setQuestionnaires(nextQuestionnaires);
     setCompanies((companiesRes.data || []) as AnalyticsCompany[]);
     setCertificates((certificatesRes.data || []) as AnalyticsCertificate[]);
     setProfiles(nextProfiles);
     setLoading(false);
-  }, []);
+  }, [canSeeAllQuestionnaires, currentUserId]);
 
   useEffect(() => {
     void loadData();
@@ -287,7 +305,7 @@ export default function AnalyticsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Аналитика заявок</h1>
           <p className="mt-1 text-sm text-gray-500">
-            SLA, эффективность координаторов, регионы и обученные сотрудники по курсам.
+            Сроки обработки, эффективность координаторов, регионы / отделы и обученные сотрудники по курсам.
           </p>
         </div>
         <button
@@ -315,7 +333,7 @@ export default function AnalyticsPage() {
           <label className="flex flex-col gap-1.5 text-sm text-gray-600">
             <span>Регион / отдел</span>
             <select value={regionFilter} onChange={event => setRegionFilter(event.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-100">
-              <option value="all">Все регионы</option>
+              <option value="all">Все регионы / отделы</option>
               {regionOptions.map(region => <option key={region} value={region}>{region}</option>)}
             </select>
           </label>
@@ -354,17 +372,17 @@ export default function AnalyticsPage() {
             <StatCard title="Выполнено заявок" value={completedCount} hint="По дате завершения" icon={<BarChart3 size={18} />} />
             <StatCard title="Среднее время" value={formatDuration(avgSeconds)} hint="От поступления до завершения" icon={<Clock size={18} />} />
             <StatCard title="В срок" value={inTimeCount} hint={formatPercent(completedCount ? (inTimeCount / completedCount) * 100 : 0)} icon={<TrendingUp size={18} />} />
-            <StatCard title="Просрочено" value={overdueCount} hint="Есть событие SLA или завершена поздно" icon={<Clock size={18} />} />
+            <StatCard title="Просрочено" value={overdueCount} hint="Есть просрочка по сроку или завершена поздно" icon={<Clock size={18} />} />
           </div>
 
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-gray-900">Регионы и отделы</h2>
+              <h2 className="mb-3 text-base font-semibold text-gray-900">Регион / отдел</h2>
               <div className="overflow-hidden rounded-xl border border-gray-100">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
                     <tr>
-                      <th className="px-3 py-2 text-left">Регион</th>
+                      <th className="px-3 py-2 text-left">Регион / отдел</th>
                       <th className="px-3 py-2 text-left">Поступило</th>
                       <th className="px-3 py-2 text-left">Завершено</th>
                       <th className="px-3 py-2 text-left">Просрочено</th>
