@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { QuestionnaireRequestType } from '../types';
 
 type CreateQuestionnairePayload = {
+  request_type: QuestionnaireRequestType;
   region_bitrix_item_id: string;
   region_name: string;
   expires_at: string | null;
@@ -23,6 +25,7 @@ interface Props {
 export default function CreateLinkModal({ responsibleName, onClose, onCreate }: Props) {
   const [hasExpiry, setHasExpiry] = useState(false);
   const [expiryDate, setExpiryDate] = useState('');
+  const [requestType, setRequestType] = useState<QuestionnaireRequestType>('external');
   const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
   const [regions, setRegions] = useState<RegionOption[]>([]);
   const [selectedRegionId, setSelectedRegionId] = useState('');
@@ -47,7 +50,7 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
 
       if (error) {
         setRegions([]);
-        setRegionsError('Не удалось загрузить список регионов.');
+        setRegionsError('Не удалось загрузить список регионов / отделов.');
         setLoadingRegions(false);
         return;
       }
@@ -83,6 +86,7 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
     }
 
     onCreate({
+      request_type: requestType,
       region_bitrix_item_id: selectedRegion.bitrix_item_id,
       region_name: selectedRegion.name,
       expires_at,
@@ -115,6 +119,29 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
           </div>
 
           <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">Тип заявки</label>
+            <div className="grid grid-cols-2 rounded-xl border border-gray-200 bg-gray-50 p-1">
+              {([
+                { value: 'external', label: 'Внешняя' },
+                { value: 'internal', label: 'Внутренняя' },
+              ] as const).map(option => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setRequestType(option.value)}
+                  className={`rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                    requestType === option.value
+                      ? 'bg-white text-blue-700 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700">Регион / отдел</label>
             <select
               value={selectedRegionId}
@@ -126,7 +153,7 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
               {loadingRegions ? (
                 <option value="">Загрузка списка...</option>
               ) : regions.length === 0 ? (
-                <option value="">Нет доступных регионов</option>
+                <option value="">Нет доступных регионов / отделов</option>
               ) : (
                 regions.map((region) => (
                   <option key={region.bitrix_item_id} value={region.bitrix_item_id}>
@@ -139,7 +166,7 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
               <p className="mt-1.5 text-xs text-red-500">{regionsError}</p>
             ) : regions.length === 0 && !loadingRegions ? (
               <p className="mt-1.5 text-xs text-amber-600">
-                Список пуст. Сначала создайте и синхронизируйте справочник регионов из Bitrix24.
+                Список пуст. Сначала создайте и синхронизируйте справочник регионов / отделов из Bitrix24.
               </p>
             ) : (
               <p className="mt-1.5 text-xs text-gray-500">

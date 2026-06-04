@@ -2,6 +2,7 @@
   id: string;
   secret_token: string;
   title: string;
+  request_type?: QuestionnaireRequestType | null;
   request_number: number | null;
   region_bitrix_item_id: string;
   region_name: string;
@@ -27,6 +28,8 @@
   completed_in_time?: boolean | null;
   total_processing_seconds?: number | null;
 }
+
+export type QuestionnaireRequestType = 'external' | 'internal';
 
 export type QuestionnaireWorkflowStatus =
   | 'awaiting_submission'
@@ -174,7 +177,9 @@ export interface ReferenceSyncStatus {
   updated_at: string;
 }
 
-export type AppRole = 'admin' | 'coordinator' | 'user';
+export type AppRole = 'admin' | 'coordinator' | 'department_head' | 'user';
+
+export type QuestionnaireAccessScope = 'own' | 'all';
 
 export interface AppProfile {
   user_id: string;
@@ -182,6 +187,9 @@ export interface AppProfile {
   full_name: string;
   role: AppRole;
   is_active: boolean;
+  region_bitrix_item_id: string | null;
+  region_name: string | null;
+  questionnaire_access: QuestionnaireAccessScope;
   bitrix_user_id: string | null;
   bitrix_user_name: string | null;
   created_at: string;

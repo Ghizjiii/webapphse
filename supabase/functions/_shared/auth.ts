@@ -5,8 +5,11 @@ export type AppProfileRow = {
   user_id: string;
   email: string;
   full_name: string;
-  role: "admin" | "coordinator" | "user";
+  role: "admin" | "coordinator" | "department_head" | "user";
   is_active: boolean;
+  region_bitrix_item_id: string | null;
+  region_name: string | null;
+  questionnaire_access: "own" | "all";
   bitrix_user_id: string | null;
   bitrix_user_name: string | null;
 };
@@ -48,7 +51,7 @@ export async function getAuthenticatedUser(req: Request, supabase = adminClient(
 export async function getAppProfile(userId: string, supabase = adminClient()): Promise<AppProfileRow> {
   const { data, error } = await supabase
     .from("app_profiles")
-    .select("user_id, email, full_name, role, is_active, bitrix_user_id, bitrix_user_name")
+    .select("user_id, email, full_name, role, is_active, region_bitrix_item_id, region_name, questionnaire_access, bitrix_user_id, bitrix_user_name")
     .eq("user_id", userId)
     .maybeSingle();
 

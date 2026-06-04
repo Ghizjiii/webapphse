@@ -6,6 +6,7 @@ export type ProfileDirectoryEntry = Pick<AppProfile, 'user_id' | 'email' | 'full
 export const APP_ROLE_LABELS: Record<AppRole, string> = {
   admin: 'Администратор',
   coordinator: 'Координатор',
+  department_head: 'Руководитель отдела',
   user: 'Пользователь',
 };
 
