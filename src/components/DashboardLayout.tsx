@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, ChevronRight, LayoutDashboard, LogOut, Shield, Users } from 'lucide-react';
+import { BarChart3, BookOpen, ChevronRight, LayoutDashboard, LogOut, Shield, Users } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { APP_ROLE_LABELS } from '../lib/profileDirectory';
 
@@ -45,6 +45,20 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
             <LayoutDashboard size={16} />
             Анкеты
           </Link>
+
+          {isAdmin && (
+            <Link
+              to="/dashboard/analytics"
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
+                location.pathname.startsWith('/dashboard/analytics')
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <BarChart3 size={16} />
+              Аналитика
+            </Link>
+          )}
 
           {isAdmin && (
             <Link

@@ -13,11 +13,26 @@ import { supabase } from '../lib/supabase';
 import { buildCourseCostSummarySet } from '../lib/courseCostSummary';
 import { buildProtocolDraftRows, reconcileProtocolsFromCertificates } from '../lib/protocolGeneration';
 import { getPublicFormUrl } from '../lib/publicFormUrl';
-import { getQuestionnaireRegionLabel, getQuestionnaireRequestLabel } from '../lib/questionnaires';
+import {
+  getQuestionnaireRegionLabel,
+  getQuestionnaireRequestLabel,
+  getQuestionnaireRequestTypeLabel,
+} from '../lib/questionnaires';
+import {
+  WORKFLOW_EVENT_LABELS,
+  WORKFLOW_STATUS_LABELS,
+  durationBetween,
+  formatDuration,
+  getSlaSecondsLeft,
+  loadQuestionnaireEvents,
+  resolveWorkflowStatus,
+  transitionQuestionnaireWorkflow,
+  type WorkflowTransition,
+} from '../lib/questionnaireWorkflow';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
-import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol } from '../types';
+import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol, QuestionnaireEvent } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 
 type Tab = 'participants' | 'certificates' | 'course_costs' | 'protocols' | 'printed_documents';
@@ -60,6 +75,7 @@ function TopSectionCard({
   actions,
   children,
   className = '',
+  compact = false,
 }: {
   icon: ReactNode;
   title: string;
@@ -67,12 +83,13 @@ function TopSectionCard({
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
+  compact?: boolean;
 }) {
   return (
-    <div className={`min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm ${className}`.trim()}>
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600">
+    <div className={`min-w-0 rounded-2xl border border-gray-200 bg-white shadow-sm ${compact ? 'p-3' : 'p-4'} ${className}`.trim()}>
+      <div className={`${compact ? 'mb-2 gap-2' : 'mb-3 gap-3'} flex flex-wrap items-start justify-between`}>
+        <div className={`${compact ? 'gap-2' : 'gap-3'} flex min-w-0 items-start`}>
+          <div className={`flex flex-shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600 ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}>
             {icon}
           </div>
           <div className="min-w-0">
@@ -80,7 +97,7 @@ function TopSectionCard({
             <p className="mt-0.5 text-xs leading-5 text-gray-500">{description}</p>
           </div>
         </div>
-        {actions ? <div className="flex flex-wrap items-center gap-2 justify-end">{actions}</div> : null}
+        {actions ? <div className={`flex flex-wrap items-center justify-end ${compact ? 'gap-1.5' : 'gap-2'}`}>{actions}</div> : null}
       </div>
       {children}
     </div>
@@ -133,6 +150,11 @@ export default function QuestionnairePage() {
   const currentProfileEmail = profile?.email || '';
   const currentProfileFullName = profile?.full_name || '';
   const currentProfileRole = profile?.role || null;
+  const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
+  const canManageWorkflow =
+    profile?.role === 'admin' ||
+    profile?.role === 'coordinator' ||
+    profile?.role === 'department_head';
 
   const [questionnaire, setQuestionnaire] = useState<QuestionnaireLink | null>(null);
   const [creatorProfile, setCreatorProfile] = useState<ProfileDirectoryEntry | null>(null);
@@ -142,6 +164,7 @@ export default function QuestionnairePage() {
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
+  const [workflowEvents, setWorkflowEvents] = useState<QuestionnaireEvent[]>([]);
   const [availableCourses, setAvailableCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('participants');
@@ -150,6 +173,7 @@ export default function QuestionnairePage() {
   const [companyDraft, setCompanyDraft] = useState<Partial<Company>>({});
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
@@ -171,8 +195,29 @@ export default function QuestionnairePage() {
       return;
     }
 
+    let questionnaireRow = qRes.data as QuestionnaireLink;
+
+    if (!canSeeAllQuestionnaires && questionnaireRow.created_by !== currentUserId) {
+      setCreatorProfile(null);
+      navigate('/dashboard');
+      return;
+    }
+
+    if (
+      canManageWorkflow &&
+      questionnaireRow.submitted_at &&
+      !questionnaireRow.accepted_at &&
+      questionnaireRow.workflow_status !== 'completed'
+    ) {
+      try {
+        questionnaireRow = await transitionQuestionnaireWorkflow(questionnaireRow.id, 'accepted');
+      } catch (error) {
+        console.warn('Auto-accept questionnaire fallback', error);
+      }
+    }
+
     let nextCreatorProfile: ProfileDirectoryEntry | null = null;
-    const creatorId = String(qRes.data.created_by || '').trim();
+    const creatorId = String(questionnaireRow.created_by || '').trim();
     if (creatorId) {
       const creatorProfiles = await loadProfileDirectory([creatorId]);
       nextCreatorProfile = creatorProfiles[0] || null;
@@ -210,7 +255,7 @@ export default function QuestionnairePage() {
         }
       : resolvedDeal;
 
-    setQuestionnaire(qRes.data);
+    setQuestionnaire(questionnaireRow);
     setCreatorProfile(nextCreatorProfile);
     setCompany(resolvedCompany);
     setDeal(resolvedDealWithUrl);
@@ -276,8 +321,15 @@ export default function QuestionnairePage() {
       .order('generated_at', { ascending: false });
     setGeneratedDocuments(docsData || []);
 
+    try {
+      setWorkflowEvents(await loadQuestionnaireEvents(id));
+    } catch (error) {
+      console.warn('Workflow history fallback', error);
+      setWorkflowEvents([]);
+    }
+
     setLoading(false);
-  }, [currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
+  }, [canManageWorkflow, canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
 
   useEffect(() => {
     loadData();
@@ -404,6 +456,27 @@ export default function QuestionnairePage() {
     loadData();
   }
 
+  async function changeWorkflow(nextStatus: WorkflowTransition, successMessage: string) {
+    if (!questionnaire) return;
+    setSavingWorkflow(true);
+    try {
+      const updated = await transitionQuestionnaireWorkflow(questionnaire.id, nextStatus);
+      setQuestionnaire(updated);
+      setWorkflowEvents(await loadQuestionnaireEvents(questionnaire.id));
+      showToast('success', successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось обновить этап заявки';
+      showToast('error', message);
+    } finally {
+      setSavingWorkflow(false);
+    }
+  }
+
+  async function openSyncModal() {
+    if (!questionnaire) return;
+    setShowSyncModal(true);
+  }
+
   function getFormUrl() {
     return getPublicFormUrl(questionnaire?.secret_token);
   }
@@ -502,6 +575,7 @@ export default function QuestionnairePage() {
   );
   const requestLabel = getQuestionnaireRequestLabel(questionnaire);
   const regionLabel = getQuestionnaireRegionLabel(questionnaire);
+  const requestTypeLabel = getQuestionnaireRequestTypeLabel(questionnaire);
   const paymentSource = companyEditing ? companyDraft : company;
   const paymentOrderUrl = String(paymentSource?.payment_order_url || '').trim();
   const paymentOrderName = String(paymentSource?.payment_order_name || '').trim();
@@ -510,6 +584,174 @@ export default function QuestionnairePage() {
   const paymentOrderAmount = paymentSource?.payment_order_amount ?? null;
   const paymentUploadedAt = String(paymentSource?.payment_order_uploaded_at || '').trim();
   const paymentIsPaid = Boolean(paymentSource?.payment_is_paid);
+  const requiredProtocolCount = protocols.filter(protocol => Number(protocol.employees_count || 0) > 0).length;
+  const generatedProtocolCount = protocols.filter(protocol => (
+    Number(protocol.employees_count || 0) > 0 &&
+    !protocol.is_draft &&
+    !String(protocol.id || '').startsWith('draft:') &&
+    Boolean(String(protocol.file_url || '').trim())
+  )).length;
+  const hasGeneratedProtocols = requiredProtocolCount > 0 && generatedProtocolCount >= requiredProtocolCount;
+  const hasPrintedDocuments = generatedDocuments.some(document => Boolean(String(document.file_url || '').trim()));
+  const completionBlockedReason = !hasGeneratedProtocols
+    ? 'Сначала сгенерируйте все протоколы.'
+    : !hasPrintedDocuments
+      ? 'Сначала сформируйте распечатанные документы.'
+      : '';
+  const workflowStatus = resolveWorkflowStatus(questionnaire);
+  const workflowLabel = WORKFLOW_STATUS_LABELS[workflowStatus] || workflowStatus;
+  const slaSecondsLeft = getSlaSecondsLeft(questionnaire.sla_due_at);
+  const hasProcessingStarted = Boolean(questionnaire.processing_started_at);
+  const isSlaOverdue = Boolean(
+    hasProcessingStarted &&
+    workflowStatus !== 'completed' &&
+    (questionnaire.is_overdue || workflowStatus === 'overdue' || (slaSecondsLeft !== null && slaSecondsLeft < 0))
+  );
+  const slaText = workflowStatus === 'completed'
+    ? (questionnaire.completed_in_time === false ? 'Завершена с просрочкой' : 'Завершена в срок')
+    : hasProcessingStarted && questionnaire.sla_due_at
+      ? isSlaOverdue
+        ? `Просрочено на ${formatDuration(Math.abs(slaSecondsLeft || 0))}`
+        : `Осталось ${formatDuration(slaSecondsLeft)}`
+      : 'Отсчет начнется после начала обработки';
+  const workflowBadgeClass = workflowStatus === 'completed'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : isSlaOverdue
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : workflowStatus === 'awaiting_submission'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-blue-200 bg-blue-50 text-blue-700';
+  const canAcceptWorkflow = Boolean(questionnaire.submitted_at) && !questionnaire.accepted_at && workflowStatus !== 'completed';
+  const canShowCompleteWorkflow = Boolean(questionnaire.submitted_at && questionnaire.processing_started_at) && workflowStatus !== 'completed';
+  const canCompleteWorkflow = canShowCompleteWorkflow && hasGeneratedProtocols && hasPrintedDocuments;
+  const linkManagementCard = (
+    <TopSectionCard
+      icon={<Link2 size={18} />}
+      title="Управление ссылкой"
+      description="Публичная форма и статус заполнения"
+      className="self-start"
+      compact
+      actions={linkEditing ? (
+        <>
+          <button
+            type="button"
+            onClick={() => void saveExpiry()}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700"
+          >
+            <Check size={14} />
+            Сохранить
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLinkEditing(false);
+              setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
+            }}
+            className={secondaryButtonClass}
+          >
+            <X size={14} />
+            Отмена
+          </button>
+          <button type="button" onClick={() => void clearExpiry()} className={secondaryButtonClass}>
+            Снять срок
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={copyFormUrl} className={secondaryButtonClass}>
+            <Copy size={14} />
+            Скопировать
+          </button>
+          <button
+            type="button"
+            onClick={() => window.open(getFormUrl(), '_blank')}
+            className={secondaryButtonClass}
+          >
+            <ExternalLink size={14} />
+            Открыть форму
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLinkEditing(true);
+              setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
+            }}
+            className={secondaryButtonClass}
+          >
+            <Pencil size={14} />
+            Изменить срок
+          </button>
+        </>
+      )}
+    >
+      {linkEditing ? (
+        <CompactField label="Дата окончания действия" className="min-h-[86px]">
+          <div className="space-y-2">
+            <input
+              type="date"
+              value={expiryDraft}
+              onChange={e => setExpiryDraft(e.target.value)}
+              className="w-full max-w-sm rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <div className="text-xs text-gray-500">Оставьте поле пустым, если ссылка должна быть бессрочной.</div>
+          </div>
+        </CompactField>
+      ) : (
+        <CompactField label="Публичная ссылка" valueClassName="font-mono text-xs text-gray-700">
+          <div className="truncate" title={getFormUrl()}>
+            {getFormUrl()}
+          </div>
+        </CompactField>
+      )}
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <CompactField label="Создана">{formatDateTime(questionnaire.created_at)}</CompactField>
+        <CompactField label="Заполнена клиентом">
+          {questionnaire.submitted_at ? formatDateTime(questionnaire.submitted_at) : 'Еще не заполнена'}
+        </CompactField>
+        <CompactField label="Срок действия">
+          {questionnaire.expires_at ? formatDateTime(questionnaire.expires_at) : 'Бессрочно'}
+        </CompactField>
+      </div>
+    </TopSectionCard>
+  );
+  const companyInfoCard = (
+    <TopSectionCard
+      icon={<Building2 size={18} />}
+      title="Информация о компании"
+      description="Основные реквизиты клиента"
+      actions={renderCompanyActions('Редактировать')}
+    >
+      {company ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {[
+            { key: 'name', label: 'Название компании' },
+            { key: 'bin_iin', label: 'БИН/ИИН компании' },
+            { key: 'phone', label: 'Телефон' },
+            { key: 'city', label: 'Город' },
+            { key: 'email', label: 'Email' },
+            { key: 'bitrix_company_id', label: 'ID компании в Битрикс' },
+          ].map(({ key, label }) => (
+            <CompactField key={key} label={label} valueClassName="break-words">
+              {companyEditing ? (
+                <input
+                  value={getRecordValue(companyDraft, key)}
+                  onChange={e => setCompanyDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              ) : (
+                getRecordValue(company, key) || '—'
+              )}
+            </CompactField>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">
+          Клиент еще не заполнил форму, поэтому данные компании пока отсутствуют.
+        </div>
+      )}
+    </TopSectionCard>
+  );
 
   return (
     <DashboardLayout
@@ -529,7 +771,7 @@ export default function QuestionnairePage() {
                       {requestLabel}
                     </h1>
                     {regionLabel ? (
-                      <p className="mt-1 text-sm font-medium text-blue-700">Регион: {regionLabel}</p>
+                      <p className="mt-1 text-sm font-medium text-blue-700">Регион / отдел: {regionLabel}</p>
                     ) : null}
                   </div>
                 </div>
@@ -572,9 +814,10 @@ export default function QuestionnairePage() {
                 </span>
               </div>
 
-              <div className="grid max-w-4xl gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="grid max-w-5xl gap-2 sm:grid-cols-2 xl:grid-cols-6">
                 <SummaryBadge label="Номер заявки" value={questionnaire.request_number || '—'} />
-                <SummaryBadge label="Регион" value={regionLabel || '—'} />
+                <SummaryBadge label="Регион / отдел" value={regionLabel || '—'} />
+                <SummaryBadge label="Тип заявки" value={requestTypeLabel} />
                 <SummaryBadge label="Сотрудники" value={participants.length} />
                 <SummaryBadge label="Курсы" value={uniqueCoursesCount} />
                 <SummaryBadge label="Заявки" value={totalCourseRequests} />
@@ -602,8 +845,9 @@ export default function QuestionnairePage() {
                   </button>
                   {canSyncToBitrix && (
                     <button
-                      onClick={() => setShowSyncModal(true)}
-                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700"
+                      onClick={() => void openSyncModal()}
+                      disabled={savingWorkflow}
+                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                     >
                       {deal?.bitrix_deal_id ? <><RefreshCw size={14} /> Обновить в Битрикс24</> : <><RefreshCw size={14} /> Отправить в Битрикс24</>}
                     </button>
@@ -622,101 +866,14 @@ export default function QuestionnairePage() {
           </div>
         </div>
 
-        <div className="grid min-w-0 gap-3 xl:grid-cols-2">
-          <TopSectionCard
-            icon={<Link2 size={18} />}
-            title="Управление ссылкой"
-            description="Публичная форма и статус заполнения"
-            className="h-full"
-            actions={linkEditing ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => void saveExpiry()}
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700"
-                >
-                  <Check size={14} />
-                  Сохранить
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLinkEditing(false);
-                    setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
-                  }}
-                  className={secondaryButtonClass}
-                >
-                  <X size={14} />
-                  Отмена
-                </button>
-                <button type="button" onClick={() => void clearExpiry()} className={secondaryButtonClass}>
-                  Снять срок
-                </button>
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={copyFormUrl} className={secondaryButtonClass}>
-                  <Copy size={14} />
-                  Скопировать
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.open(getFormUrl(), '_blank')}
-                  className={secondaryButtonClass}
-                >
-                  <ExternalLink size={14} />
-                  Открыть форму
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLinkEditing(true);
-                    setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
-                  }}
-                  className={secondaryButtonClass}
-                >
-                  <Pencil size={14} />
-                  Изменить срок
-                </button>
-              </>
-            )}
-          >
-            {linkEditing ? (
-              <CompactField label="Дата окончания действия" className="min-h-[86px]">
-                <div className="space-y-2">
-                  <input
-                    type="date"
-                    value={expiryDraft}
-                    onChange={e => setExpiryDraft(e.target.value)}
-                    className="w-full max-w-sm rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                  <div className="text-xs text-gray-500">Оставьте поле пустым, если ссылка должна быть бессрочной.</div>
-                </div>
-              </CompactField>
-            ) : (
-              <CompactField label="Публичная ссылка" valueClassName="font-mono text-xs text-gray-700">
-                <div className="truncate" title={getFormUrl()}>
-                  {getFormUrl()}
-                </div>
-              </CompactField>
-            )}
-
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              <CompactField label="Создана">{formatDateTime(questionnaire.created_at)}</CompactField>
-              <CompactField label="Заполнена клиентом">
-                {questionnaire.submitted_at ? formatDateTime(questionnaire.submitted_at) : 'Еще не заполнена'}
-              </CompactField>
-              <CompactField label="Срок действия">
-                {questionnaire.expires_at ? formatDateTime(questionnaire.expires_at) : 'Бессрочно'}
-              </CompactField>
-            </div>
-          </TopSectionCard>
+        <div className="grid min-w-0 gap-3 xl:grid-cols-2 xl:items-start">
+          <div className="min-w-0 space-y-3">
+          {companyInfoCard}
 
           <TopSectionCard
             icon={<FileText size={18} />}
             title="Сделка в Битрикс24"
             description="Связанная сделка и статус синхронизации"
-            className="h-full"
             actions={deal?.deal_url ? (
               <a
                 href={deal.deal_url}
@@ -747,47 +904,9 @@ export default function QuestionnairePage() {
           </TopSectionCard>
 
           <TopSectionCard
-            icon={<Building2 size={18} />}
-            title="Информация о компании"
-            description="Основные реквизиты клиента"
-            className="h-full"
-            actions={renderCompanyActions('Редактировать')}
-          >
-            {company ? (
-              <div className="grid gap-2 sm:grid-cols-2">
-                {[
-                  { key: 'name', label: 'Название компании' },
-                  { key: 'bin_iin', label: 'БИН/ИИН компании' },
-                  { key: 'phone', label: 'Телефон' },
-                  { key: 'city', label: 'Город' },
-                  { key: 'email', label: 'Email' },
-                  { key: 'bitrix_company_id', label: 'ID компании в Битрикс' },
-                ].map(({ key, label }) => (
-                  <CompactField key={key} label={label} valueClassName="break-words">
-                    {companyEditing ? (
-                      <input
-                        value={getRecordValue(companyDraft, key)}
-                        onChange={e => setCompanyDraft(prev => ({ ...prev, [key]: e.target.value }))}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                    ) : (
-                      getRecordValue(company, key) || '—'
-                    )}
-                  </CompactField>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">
-                Клиент еще не заполнил форму, поэтому данные компании пока отсутствуют.
-              </div>
-            )}
-          </TopSectionCard>
-
-          <TopSectionCard
             icon={<FileText size={18} />}
             title="Оплата и документы"
             description={questionnaire.payment_order_optional ? 'Платежка для этой анкеты не обязательна' : 'Платежное поручение и статус оплаты'}
-            className="h-full"
             actions={company ? renderCompanyActions('Редактировать оплату') : undefined}
           >
             {!company ? (
@@ -944,6 +1063,106 @@ export default function QuestionnairePage() {
               </div>
             )}
           </TopSectionCard>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+          {linkManagementCard}
+
+          <TopSectionCard
+            icon={<Clock size={18} />}
+            title="Срок и этапы обработки"
+            description="После начала обработки заявка должна быть завершена в течение 24 часов"
+            className={isSlaOverdue ? 'border-red-200 bg-red-50/70' : ''}
+            actions={questionnaire.submitted_at ? (
+              <>
+                {canAcceptWorkflow && (
+                  <button
+                    type="button"
+                    onClick={() => void changeWorkflow('accepted', 'Заявка принята в работу')}
+                    disabled={savingWorkflow}
+                    className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-all hover:bg-blue-100 disabled:opacity-60"
+                  >
+                    <Check size={14} />
+                    Взять в работу
+                  </button>
+                )}
+                {canShowCompleteWorkflow && (
+                  <button
+                    type="button"
+                    onClick={() => void changeWorkflow('completed', 'Заявка завершена')}
+                    disabled={savingWorkflow || !canCompleteWorkflow}
+                    title={completionBlockedReason || 'Завершить заявку'}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+                  >
+                    <Check size={14} />
+                    Завершить
+                  </button>
+                )}
+              </>
+            ) : null}
+          >
+            {isSlaOverdue && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                Заявка просрочена. Завершите обработку или проверьте текущий этап.
+              </div>
+            )}
+            {canShowCompleteWorkflow && completionBlockedReason && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {completionBlockedReason}
+              </div>
+            )}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <CompactField label="Текущий этап">
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${workflowBadgeClass}`}>
+                  {workflowLabel}
+                </span>
+              </CompactField>
+              <CompactField label="Срок обработки">
+                <span className={isSlaOverdue ? 'text-red-600' : 'text-gray-900'}>{slaText}</span>
+              </CompactField>
+              <CompactField label="Принята в работу">
+                {questionnaire.accepted_at ? formatDateTime(questionnaire.accepted_at) : '—'}
+              </CompactField>
+              <CompactField label="Начало обработки">
+                {questionnaire.processing_started_at ? formatDateTime(questionnaire.processing_started_at) : '—'}
+              </CompactField>
+              <CompactField label="Завершена">
+                {questionnaire.completed_at ? formatDateTime(questionnaire.completed_at) : '—'}
+              </CompactField>
+              <CompactField label="Общее время">
+                {questionnaire.total_processing_seconds
+                  ? formatDuration(questionnaire.total_processing_seconds)
+                  : durationBetween(questionnaire.submitted_at, questionnaire.completed_at)}
+              </CompactField>
+            </div>
+
+            <div className="mt-3 rounded-xl border border-gray-200 bg-slate-50/70 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">История заявки</div>
+              {workflowEvents.length === 0 ? (
+                <div className="text-sm text-gray-500">История появится после первого этапа обработки.</div>
+              ) : (
+                <div className="space-y-2">
+                  {workflowEvents.slice(0, 6).map(event => (
+                    <div key={event.id} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm">
+                      <div>
+                        <div className={event.is_overdue ? 'font-medium text-red-700' : 'font-medium text-gray-900'}>
+                          {WORKFLOW_EVENT_LABELS[event.event_type] || event.event_type}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {event.from_status && event.to_status
+                            ? `${WORKFLOW_STATUS_LABELS[event.from_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.from_status} → ${WORKFLOW_STATUS_LABELS[event.to_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.to_status}`
+                            : 'Событие заявки'}
+                        </div>
+                      </div>
+                      <div className="whitespace-nowrap text-xs text-gray-500">{formatDateTime(event.occurred_at)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TopSectionCard>
+
+          </div>
         </div>
 
         <div>

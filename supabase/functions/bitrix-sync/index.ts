@@ -214,7 +214,7 @@ type PhotoContract = {
 
 type AppProfileAuthRow = {
   user_id: string;
-  role: "admin" | "coordinator" | "user";
+  role: "admin" | "coordinator" | "department_head" | "user";
   is_active: boolean;
   bitrix_user_id: string | null;
   bitrix_user_name: string | null;
@@ -755,12 +755,6 @@ function preferredBooleanValue(localValue: boolean | null | undefined, currentBi
   if (currentBool === true) return "Y";
   if (currentBool === false) return "N";
   return undefined;
-}
-
-function preferredNumberValue(localValue: number | null | undefined, currentBitrixValue: unknown): number | undefined {
-  if (typeof localValue === "number" && Number.isFinite(localValue)) return localValue;
-  const currentNumber = normalizeBitrixNumber(currentBitrixValue);
-  return currentNumber ?? undefined;
 }
 
 function preferredEnumValue(

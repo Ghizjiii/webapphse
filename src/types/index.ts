@@ -2,6 +2,7 @@
   id: string;
   secret_token: string;
   title: string;
+  request_type?: QuestionnaireRequestType | null;
   request_number: number | null;
   region_bitrix_item_id: string;
   region_name: string;
@@ -13,6 +14,52 @@
   updated_at: string;
   submitted_at: string | null;
   status: 'active' | 'submitted' | 'archived' | 'synced' | 'expired';
+  workflow_status?: QuestionnaireWorkflowStatus;
+  accepted_at?: string | null;
+  accepted_by?: string | null;
+  processing_started_at?: string | null;
+  processing_started_by?: string | null;
+  completed_at?: string | null;
+  completed_by?: string | null;
+  current_stage_started_at?: string | null;
+  sla_due_at?: string | null;
+  is_overdue?: boolean;
+  overdue_at?: string | null;
+  completed_in_time?: boolean | null;
+  total_processing_seconds?: number | null;
+}
+
+export type QuestionnaireRequestType = 'external' | 'internal';
+
+export type QuestionnaireWorkflowStatus =
+  | 'awaiting_submission'
+  | 'submitted'
+  | 'accepted'
+  | 'in_progress'
+  | 'completed'
+  | 'overdue'
+  | 'archived';
+
+export type QuestionnaireWorkflowEventType =
+  | 'submitted'
+  | 'accepted'
+  | 'processing_started'
+  | 'completed'
+  | 'overdue'
+  | 'archived';
+
+export interface QuestionnaireEvent {
+  id: string;
+  questionnaire_id: string;
+  event_type: QuestionnaireWorkflowEventType | string;
+  from_status: QuestionnaireWorkflowStatus | string | null;
+  to_status: QuestionnaireWorkflowStatus | string | null;
+  occurred_at: string;
+  actor_user_id: string | null;
+  is_overdue: boolean;
+  deadline_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface Company {
@@ -130,7 +177,9 @@ export interface ReferenceSyncStatus {
   updated_at: string;
 }
 
-export type AppRole = 'admin' | 'coordinator' | 'user';
+export type AppRole = 'admin' | 'coordinator' | 'department_head' | 'user';
+
+export type QuestionnaireAccessScope = 'own' | 'all';
 
 export interface AppProfile {
   user_id: string;
@@ -138,6 +187,9 @@ export interface AppProfile {
   full_name: string;
   role: AppRole;
   is_active: boolean;
+  region_bitrix_item_id: string | null;
+  region_name: string | null;
+  questionnaire_access: QuestionnaireAccessScope;
   bitrix_user_id: string | null;
   bitrix_user_name: string | null;
   created_at: string;
