@@ -224,7 +224,10 @@ function buildSeparateSummary(certificates: Certificate[]): CourseCostSummary {
     return compareNullableNumbers(left.unitPrice, right.unitPrice);
   });
 
-  const summaryRows = rows.map(({ categorySortOrder: _categorySortOrder, ...row }) => row);
+  const summaryRows = rows.map(({ categorySortOrder, ...row }) => {
+    void categorySortOrder;
+    return row;
+  });
   const totalParticipantsCount = countUniqueParticipants(certificates);
   const totalRequestsCount = summaryRows.reduce((sum, row) => sum + row.employeesCount, 0);
   const pricedRequestsCount = summaryRows

@@ -8,6 +8,7 @@ import QuestionnairePage from './pages/QuestionnairePage';
 import PublicFormPage from './pages/PublicFormPage';
 import ReferencePage from './pages/ReferencePage';
 import AdminUsersPage from './pages/AdminUsersPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 import ConnectionWarningModal from './components/ConnectionWarningModal';
 
 export default function App() {
@@ -32,6 +33,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <QuestionnairePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/analytics"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <AnalyticsPage />
                 </ProtectedRoute>
               }
             />

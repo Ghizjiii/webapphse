@@ -37,6 +37,7 @@ URL будет вида:
 - `BITRIX_HR_DAYS_WORDS_FIELD=ufCrm10_1772131937986`
 - `BITRIX_HR_POSITION_FIELD=ufCrm10_1772992837`
 - `BITRIX_HR_POSITION_GENITIVE_FIELD=ufCrm10_1771778817`
+- `BITRIX_HR_EXTERNAL_EMPLOYEE_DATIVE_FIELD=ufCrm10_1776360538300`
 - `MORPHER_API_TOKEN` — опционально, если нужен авторизованный доступ к Morpher
 
 ## 3. Настройка исходящего webhook в Bitrix24
