@@ -113,6 +113,14 @@ export default function DashboardPage() {
   const currentProfileEmail = profile?.email || '';
   const currentProfileFullName = profile?.full_name || '';
   const currentProfileRole = profile?.role || null;
+  const currentProfileRegionId = String(profile?.region_bitrix_item_id || '').trim();
+  const currentProfileRegionName = String(profile?.region_name || '').trim();
+  const currentProfileRegion = currentProfileRegionId
+    ? {
+        bitrix_item_id: currentProfileRegionId,
+        name: currentProfileRegionName || 'Мой регион / отдел',
+      }
+    : null;
   const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
   const currentResponsibleName = getProfileDisplayName(
     profile ? {
@@ -486,13 +494,23 @@ export default function DashboardPage() {
     expires_at: string | null;
     payment_order_optional: boolean;
   }) {
+    const isDepartmentHeadScoped = currentProfileRole === 'department_head' && Boolean(currentProfileRegionId);
+    const createPayload = isDepartmentHeadScoped
+      ? {
+          ...data,
+          request_type: 'internal' as const,
+          region_bitrix_item_id: currentProfileRegionId,
+          region_name: currentProfileRegionName || data.region_name || 'Мой регион / отдел',
+        }
+      : data;
+
     const { data: createdQuestionnaire, error } = await supabase.from('questionnaires').insert({
       title: '',
-      request_type: data.request_type,
-      region_bitrix_item_id: data.region_bitrix_item_id,
-      region_name: data.region_name,
-      expires_at: data.expires_at,
-      payment_order_optional: data.payment_order_optional,
+      request_type: createPayload.request_type,
+      region_bitrix_item_id: createPayload.region_bitrix_item_id,
+      region_name: createPayload.region_name,
+      expires_at: createPayload.expires_at,
+      payment_order_optional: createPayload.payment_order_optional,
       is_active: true,
       status: 'active',
       created_by: user?.id,
@@ -772,6 +790,7 @@ export default function DashboardPage() {
       {showCreateModal && (
         <CreateLinkModal
           responsibleName={currentResponsibleName}
+          defaultRegion={currentProfileRegion}
           onClose={() => setShowCreateModal(false)}
           onCreate={handleCreate}
         />

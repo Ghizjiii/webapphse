@@ -1,0 +1,63 @@
+name: Deploy frontend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-frontend
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      VITE_PUBLIC_APP_URL: ${{ secrets.VITE_PUBLIC_APP_URL }}
+      VITE_BITRIX_WEBHOOK: ${{ secrets.VITE_BITRIX_WEBHOOK }}
+      VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD: ${{ secrets.VITE_BITRIX_DEAL_PAYMENT_FILE_FIELD }}
+      VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD: ${{ secrets.VITE_BITRIX_DEAL_PAYMENT_STATUS_FIELD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        run: |
+          RELEASE_PATH="${{ secrets.VPS_DEPLOY_PATH }}/releases/${{ github.sha }}"
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "mkdir -p $RELEASE_PATH"
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.VPS_PORT }}" dist/ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$RELEASE_PATH/"
+
+      - name: Activate release
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "ln -sfn ${{ secrets.VPS_DEPLOY_PATH }}/releases/${{ github.sha }} ${{ secrets.VPS_DEPLOY_PATH }}/current"

@@ -18,19 +18,30 @@ type RegionOption = {
 
 interface Props {
   responsibleName: string;
+  defaultRegion?: RegionOption | null;
   onClose: () => void;
   onCreate: (data: CreateQuestionnairePayload) => void;
 }
 
-export default function CreateLinkModal({ responsibleName, onClose, onCreate }: Props) {
+export default function CreateLinkModal({ responsibleName, defaultRegion, onClose, onCreate }: Props) {
+  const defaultRegionId = defaultRegion?.bitrix_item_id || '';
+  const defaultRegionName = defaultRegion?.name || '';
+  const hasDefaultRegion = Boolean(defaultRegionId);
   const [hasExpiry, setHasExpiry] = useState(false);
   const [expiryDate, setExpiryDate] = useState('');
-  const [requestType, setRequestType] = useState<QuestionnaireRequestType>('external');
+  const [requestType, setRequestType] = useState<QuestionnaireRequestType>(hasDefaultRegion ? 'internal' : 'external');
   const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
   const [regions, setRegions] = useState<RegionOption[]>([]);
-  const [selectedRegionId, setSelectedRegionId] = useState('');
+  const [selectedRegionId, setSelectedRegionId] = useState(defaultRegionId);
   const [loadingRegions, setLoadingRegions] = useState(true);
   const [regionsError, setRegionsError] = useState('');
+
+  useEffect(() => {
+    if (!hasDefaultRegion) return;
+
+    setRequestType('internal');
+    setSelectedRegionId(defaultRegionId);
+  }, [defaultRegionId, hasDefaultRegion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,21 +60,38 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
       if (cancelled) return;
 
       if (error) {
-        setRegions([]);
+        const fallbackRegions = defaultRegionId && defaultRegionName
+          ? [{ bitrix_item_id: defaultRegionId, name: defaultRegionName }]
+          : [];
+
+        setRegions(fallbackRegions);
+        setSelectedRegionId((current) => current || defaultRegionId);
         setRegionsError('Не удалось загрузить список регионов / отделов.');
         setLoadingRegions(false);
         return;
       }
 
-      const nextRegions = (data || [])
+      const loadedRegions = (data || [])
         .map((item) => ({
           bitrix_item_id: String(item.bitrix_item_id || '').trim(),
           name: String(item.name || '').trim(),
         }))
         .filter((item) => item.bitrix_item_id && item.name);
 
+      const nextRegions = [...loadedRegions];
+      if (
+        defaultRegionId &&
+        defaultRegionName &&
+        !nextRegions.some((region) => region.bitrix_item_id === defaultRegionId)
+      ) {
+        nextRegions.unshift({ bitrix_item_id: defaultRegionId, name: defaultRegionName });
+      }
+
       setRegions(nextRegions);
-      setSelectedRegionId((current) => current || nextRegions[0]?.bitrix_item_id || '');
+      setSelectedRegionId((current) => {
+        if (hasDefaultRegion) return defaultRegionId;
+        return current || nextRegions[0]?.bitrix_item_id || '';
+      });
       setLoadingRegions(false);
     }
 
@@ -72,13 +100,15 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [defaultRegionId, defaultRegionName, hasDefaultRegion]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    const selectedRegion = regions.find((region) => region.bitrix_item_id === selectedRegionId);
-    if (!selectedRegion) return;
+    const selectedRegion = requestType === 'internal'
+      ? regions.find((region) => region.bitrix_item_id === selectedRegionId)
+      : null;
+    if (requestType === 'internal' && !selectedRegion) return;
 
     let expires_at: string | null = null;
     if (hasExpiry && expiryDate) {
@@ -87,15 +117,22 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
 
     onCreate({
       request_type: requestType,
-      region_bitrix_item_id: selectedRegion.bitrix_item_id,
-      region_name: selectedRegion.name,
+      region_bitrix_item_id: selectedRegion?.bitrix_item_id || '',
+      region_name: selectedRegion?.name || '',
       expires_at,
       payment_order_optional: paymentOrderOptional,
     });
   }
 
   const minDate = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-  const canSubmit = !loadingRegions && regions.length > 0 && Boolean(selectedRegionId);
+  const requestTypeOptions = hasDefaultRegion
+    ? ([{ value: 'internal', label: 'Внутренняя' }] as const)
+    : ([
+        { value: 'external', label: 'Внешняя' },
+        { value: 'internal', label: 'Внутренняя' },
+      ] as const);
+  const showsRegionSelect = requestType === 'internal';
+  const canSubmit = !showsRegionSelect || (!loadingRegions && regions.length > 0 && Boolean(selectedRegionId));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -120,11 +157,8 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
 
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700">Тип заявки</label>
-            <div className="grid grid-cols-2 rounded-xl border border-gray-200 bg-gray-50 p-1">
-              {([
-                { value: 'external', label: 'Внешняя' },
-                { value: 'internal', label: 'Внутренняя' },
-              ] as const).map(option => (
+            <div className={`grid ${requestTypeOptions.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} rounded-xl border border-gray-200 bg-gray-50 p-1`}>
+              {requestTypeOptions.map(option => (
                 <button
                   key={option.value}
                   type="button"
@@ -141,39 +175,41 @@ export default function CreateLinkModal({ responsibleName, onClose, onCreate }: 
             </div>
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">Регион / отдел</label>
-            <select
-              value={selectedRegionId}
-              onChange={(event) => setSelectedRegionId(event.target.value)}
-              disabled={loadingRegions || regions.length === 0}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
-              required
-            >
-              {loadingRegions ? (
-                <option value="">Загрузка списка...</option>
-              ) : regions.length === 0 ? (
-                <option value="">Нет доступных регионов / отделов</option>
+          {showsRegionSelect && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">Регион / отдел</label>
+              <select
+                value={selectedRegionId}
+                onChange={(event) => setSelectedRegionId(event.target.value)}
+                disabled={loadingRegions || regions.length === 0 || hasDefaultRegion}
+                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+                required
+              >
+                {loadingRegions ? (
+                  <option value="">Загрузка списка...</option>
+                ) : regions.length === 0 ? (
+                  <option value="">Нет доступных регионов / отделов</option>
+                ) : (
+                  regions.map((region) => (
+                    <option key={region.bitrix_item_id} value={region.bitrix_item_id}>
+                      {region.name}
+                    </option>
+                  ))
+                )}
+              </select>
+              {regionsError ? (
+                <p className="mt-1.5 text-xs text-red-500">{regionsError}</p>
+              ) : regions.length === 0 && !loadingRegions ? (
+                <p className="mt-1.5 text-xs text-amber-600">
+                  Список пуст. Сначала создайте и синхронизируйте справочник регионов / отделов из Bitrix24.
+                </p>
               ) : (
-                regions.map((region) => (
-                  <option key={region.bitrix_item_id} value={region.bitrix_item_id}>
-                    {region.name}
-                  </option>
-                ))
+                <p className="mt-1.5 text-xs text-gray-500">
+                  Значения берутся из справочника Bitrix24.
+                </p>
               )}
-            </select>
-            {regionsError ? (
-              <p className="mt-1.5 text-xs text-red-500">{regionsError}</p>
-            ) : regions.length === 0 && !loadingRegions ? (
-              <p className="mt-1.5 text-xs text-amber-600">
-                Список пуст. Сначала создайте и синхронизируйте справочник регионов / отделов из Bitrix24.
-              </p>
-            ) : (
-              <p className="mt-1.5 text-xs text-gray-500">
-                Значения берутся из справочника Bitrix24.
-              </p>
-            )}
-          </div>
+            </div>
+          )}
 
           <div>
             <label className="flex cursor-pointer items-center gap-2.5">
