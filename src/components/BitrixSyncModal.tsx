@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, RefreshCw, CheckCircle2, AlertCircle, Send } from 'lucide-react';
 import { getFreshAccessToken, supabase } from '../lib/supabase';
 import { useToast } from '../context/ToastContext';
+import { addBusinessHours } from '../lib/businessCalendar';
 import type { Company, Participant, BitrixSyncProgress, Deal } from '../types';
 
 interface Props {
@@ -93,7 +94,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       });
 
       if (keepProcessingRes.error) {
-        const slaDueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const slaDueAt = addBusinessHours(new Date(processingStartedAt)).toISOString();
         await supabase
           .from('questionnaires')
           .update({
