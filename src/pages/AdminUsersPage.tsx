@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { KeyRound, RefreshCw, Save, UserPlus } from 'lucide-react';
+import { KeyRound, RefreshCw, RotateCcw, Save, UserMinus, UserPlus } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -30,6 +30,16 @@ const QUESTIONNAIRE_ACCESS_LABELS: Record<QuestionnaireAccessScope, string> = {
 };
 
 const QUESTIONNAIRE_ACCESS_OPTIONS: QuestionnaireAccessScope[] = ['own', 'all'];
+
+function getTodayDateValue(): string {
+  const now = new Date();
+  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 10);
+}
+
+function toDateInputValue(value: string | null | undefined): string {
+  return String(value || '').slice(0, 10);
+}
 
 function sortProfiles(left: AppProfile, right: AppProfile): number {
   const roleWeight: Record<AppRole, number> = {
@@ -137,6 +147,20 @@ export default function AdminUsersPage() {
     );
   }
 
+  async function setDismissedStatus(profile: AppProfile, dismissed: boolean) {
+    const nextProfile = {
+      ...profile,
+      is_active: !dismissed,
+      dismissed_at: dismissed ? toDateInputValue(profile.dismissed_at) || getTodayDateValue() : null,
+    };
+
+    updateProfileRow(profile.user_id, {
+      is_active: nextProfile.is_active,
+      dismissed_at: nextProfile.dismissed_at,
+    });
+    await saveProfile(nextProfile);
+  }
+
   function getRegionPatch(regionBitrixItemId: string) {
     const selectedRegion = sortedRegionOptions.find(region => region.bitrix_item_id === regionBitrixItemId) || null;
 
@@ -216,6 +240,8 @@ export default function AdminUsersPage() {
           questionnaire_access: getQuestionnaireAccessForRole(form.role, form.questionnaire_access),
           bitrix_user_id: bitrixEmployee?.bitrix_user_id || '',
           bitrix_user_name: bitrixEmployee?.full_name || '',
+          registered_at: getTodayDateValue(),
+          dismissed_at: null,
         },
       });
 
@@ -265,6 +291,8 @@ export default function AdminUsersPage() {
           questionnaire_access: getQuestionnaireAccessForRole(profile.role, profile.questionnaire_access || 'own'),
           bitrix_user_id: bitrixEmployee?.bitrix_user_id || '',
           bitrix_user_name: bitrixEmployee?.full_name || '',
+          registered_at: toDateInputValue(profile.registered_at) || getTodayDateValue(),
+          dismissed_at: profile.is_active ? null : toDateInputValue(profile.dismissed_at) || getTodayDateValue(),
         },
       });
 
@@ -459,7 +487,9 @@ export default function AdminUsersPage() {
                     <th className="px-4 py-3 text-left font-medium">Роль</th>
                     <th className="px-4 py-3 text-left font-medium">Регион / отдел</th>
                     <th className="px-4 py-3 text-left font-medium">Права</th>
-                    <th className="px-4 py-3 text-left font-medium">Активен</th>
+                    <th className="px-4 py-3 text-left font-medium">Дата регистрации</th>
+                    <th className="px-4 py-3 text-left font-medium">Дата увольнения</th>
+                    <th className="px-4 py-3 text-left font-medium">Статус</th>
                     <th className="px-4 py-3 text-left font-medium">Сотрудник Bitrix</th>
                     <th className="px-4 py-3 text-left font-medium">Новый пароль</th>
                     <th className="px-4 py-3 text-right font-medium">Действия</th>
@@ -468,9 +498,13 @@ export default function AdminUsersPage() {
                 <tbody>
                   {profiles.map(profile => {
                     const isCurrentUser = profile.user_id === user?.id;
+                    const isDismissed = !profile.is_active;
 
                     return (
-                      <tr key={profile.user_id} className="border-t border-gray-100 align-top">
+                      <tr
+                        key={profile.user_id}
+                        className={`border-t border-gray-100 align-top ${isDismissed ? 'bg-rose-50/40' : ''}`}
+                      >
                         <td className="px-4 py-3 text-gray-900">
                           <div>{profile.email}</div>
                           {profile.bitrix_user_id && (
@@ -540,15 +574,63 @@ export default function AdminUsersPage() {
                           </select>
                         </td>
                         <td className="px-4 py-3">
-                          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                            <input
-                              type="checkbox"
-                              checked={profile.is_active}
-                              onChange={event => updateProfileRow(profile.user_id, { is_active: event.target.checked })}
-                              disabled={isCurrentUser}
-                            />
-                            {profile.is_active ? 'Да' : 'Нет'}
-                          </label>
+                          <input
+                            type="date"
+                            value={toDateInputValue(profile.registered_at)}
+                            onChange={event =>
+                              updateProfileRow(profile.user_id, {
+                                registered_at: event.target.value || getTodayDateValue(),
+                              })
+                            }
+                            className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="date"
+                            value={toDateInputValue(profile.dismissed_at)}
+                            onChange={event =>
+                              updateProfileRow(profile.user_id, {
+                                dismissed_at: event.target.value || null,
+                              })
+                            }
+                            disabled={!isDismissed}
+                            className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex w-36 flex-col items-start gap-2">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                                isDismissed
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-emerald-100 text-emerald-700'
+                              }`}
+                            >
+                              {isDismissed ? 'Уволен' : 'Работает'}
+                            </span>
+                            {isDismissed ? (
+                              <button
+                                type="button"
+                                onClick={() => void setDismissedStatus(profile, false)}
+                                disabled={isCurrentUser || savingUserId === profile.user_id}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-white disabled:opacity-60"
+                              >
+                                <RotateCcw size={13} />
+                                Вернуть
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void setDismissedStatus(profile, true)}
+                                disabled={isCurrentUser || savingUserId === profile.user_id}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-white disabled:opacity-60"
+                              >
+                                <UserMinus size={13} />
+                                Уволить
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <select

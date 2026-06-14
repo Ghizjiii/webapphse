@@ -7,6 +7,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+supabase-backup
 dist
 dist-ssr
 *.local
@@ -21,3 +22,4 @@ dist-ssr
 *.sln
 *.sw?
 .env
+

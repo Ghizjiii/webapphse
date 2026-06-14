@@ -11,6 +11,8 @@ type CreateUserPayload = {
   questionnaire_access?: unknown;
   bitrix_user_id?: unknown;
   bitrix_user_name?: unknown;
+  registered_at?: unknown;
+  dismissed_at?: unknown;
 };
 
 type SetPasswordPayload = {
@@ -29,6 +31,8 @@ type UpdateUserPayload = {
   questionnaire_access?: unknown;
   bitrix_user_id?: unknown;
   bitrix_user_name?: unknown;
+  registered_at?: unknown;
+  dismissed_at?: unknown;
 };
 
 type AppProfileRow = {
@@ -47,6 +51,18 @@ const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
 
 function plain(value: unknown): string {
   return String(value || "").trim();
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeDate(value: unknown): string | null {
+  const raw = plain(value);
+  if (!raw) return null;
+
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
 }
 
 type AppRole = "admin" | "coordinator" | "department_head" | "user";
@@ -274,6 +290,8 @@ async function upsertAppProfile(params: {
   questionnaireAccess: QuestionnaireAccessScope;
   bitrixUserId: string;
   bitrixUserName: string;
+  registeredAt: string;
+  dismissedAt: string | null;
   isActive?: boolean;
 }, supabase = adminClient()) {
   const { error } = await supabase
@@ -289,6 +307,8 @@ async function upsertAppProfile(params: {
       questionnaire_access: params.questionnaireAccess,
       bitrix_user_id: params.bitrixUserId || "",
       bitrix_user_name: params.bitrixUserName || "",
+      registered_at: params.registeredAt,
+      dismissed_at: params.dismissedAt,
       updated_at: new Date().toISOString(),
     });
 
@@ -308,6 +328,8 @@ async function createUser(body: CreateUserPayload) {
   const regionName = plain(body.region_name);
   const bitrixUserId = plain(body.bitrix_user_id);
   const bitrixUserName = plain(body.bitrix_user_name);
+  const registeredAt = normalizeDate(body.registered_at) || todayIsoDate();
+  const dismissedAt = normalizeDate(body.dismissed_at);
 
   if (!email || !password) {
     throw new Error("email and password are required");
@@ -358,6 +380,8 @@ async function createUser(body: CreateUserPayload) {
     questionnaireAccess,
     bitrixUserId,
     bitrixUserName,
+    registeredAt,
+    dismissedAt,
   }, supabase);
 
   return {
@@ -412,6 +436,9 @@ async function updateUser(body: UpdateUserPayload) {
   const regionName = plain(body.region_name);
   const bitrixUserId = plain(body.bitrix_user_id);
   const bitrixUserName = plain(body.bitrix_user_name);
+  const registeredAt = normalizeDate(body.registered_at) || todayIsoDate();
+  const dismissedAtInput = normalizeDate(body.dismissed_at);
+  const dismissedAt = isActive ? null : dismissedAtInput || todayIsoDate();
 
   if (!userId || !email) {
     throw new Error("user_id and email are required");
@@ -437,6 +464,8 @@ async function updateUser(body: UpdateUserPayload) {
     questionnaireAccess,
     bitrixUserId,
     bitrixUserName,
+    registeredAt,
+    dismissedAt,
   }, supabase);
 
   return {
