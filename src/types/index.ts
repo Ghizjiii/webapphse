@@ -192,6 +192,8 @@ export interface AppProfile {
   questionnaire_access: QuestionnaireAccessScope;
   bitrix_user_id: string | null;
   bitrix_user_name: string | null;
+  registered_at: string;
+  dismissed_at: string | null;
   created_at: string;
   updated_at: string;
 }
