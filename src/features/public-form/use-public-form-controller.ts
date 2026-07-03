@@ -67,6 +67,7 @@ export function usePublicFormController(token: string | undefined) {
  const [currentPage, setCurrentPage] = useState(1);
  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
  const supabaseAnonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+ const lookupRequestIdRef = useRef(0);
 
  const checkPaymentOrderDuplicate = useCallback(async (params: {
  companyBinDigits: string;
@@ -130,9 +131,13 @@ export function usePublicFormController(token: string | undefined) {
 
  const lookupCompanyByBin = useCallback(async (value: string) => {
  const digits = normalizeDigits(value);
+ const requestId = ++lookupRequestIdRef.current;
+
  if (!digits) {
  setDirectoryMatch(null);
  setCompanyCreateMode(false);
+ setLookupTouched(false);
+ setLookupLoading(false);
  return;
  }
 
@@ -146,6 +151,8 @@ export function usePublicFormController(token: string | undefined) {
  .order('updated_at', { ascending: false })
  .limit(1)
  .maybeSingle();
+
+ if (requestId !== lookupRequestIdRef.current) return;
 
  if (data) {
  applyDirectoryMatch(data);
@@ -162,6 +169,8 @@ export function usePublicFormController(token: string | undefined) {
  body: { bin: digits },
  });
 
+ if (requestId !== lookupRequestIdRef.current) return;
+
  if (!lookupError && lookupData?.found && lookupData?.row) {
  applyDirectoryMatch(lookupData.row as RefCompanyDirectory);
  setLookupTouched(true);
@@ -177,7 +186,9 @@ export function usePublicFormController(token: string | undefined) {
  applyDirectoryMatch(null);
  setCompanyCreateMode(false);
  } finally {
+ if (requestId === lookupRequestIdRef.current) {
  setLookupLoading(false);
+ }
  }
  }, [applyDirectoryMatch]);
 

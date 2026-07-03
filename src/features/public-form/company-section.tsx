@@ -107,6 +107,7 @@ export function CompanySection(props: CompanySectionProps) {
             />
             <button
               type="button"
+              onMouseDown={event => event.preventDefault()}
               onClick={onLookupCompany}
               className="px-3 py-2.5 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 text-sm inline-flex items-center gap-1.5"
               disabled={lookupLoading || !companyBin.trim()}
