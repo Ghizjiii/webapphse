@@ -61,7 +61,11 @@ export default function PublicFormPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 px-4 py-10" onClick={() => controller.setOpenCourseSelect(null)}>
+    <div
+      className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 px-4 py-10"
+      translate="no"
+      onClick={() => controller.setOpenCourseSelect(null)}
+    >
       <div className="mx-auto w-full max-w-[1760px]">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600">
