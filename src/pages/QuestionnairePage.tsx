@@ -1209,6 +1209,7 @@ export default function QuestionnairePage() {
               participants={participants}
               bitrixDealId={deal?.bitrix_deal_id || null}
               bitrixCompanyId={company?.bitrix_company_id || null}
+              requestType={questionnaire.request_type === 'internal' ? 'internal' : 'external'}
               certificates={certificates}
               onRefresh={loadData}
             />

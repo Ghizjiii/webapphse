@@ -9,6 +9,7 @@ import PublicFormPage from './pages/PublicFormPage';
 import ReferencePage from './pages/ReferencePage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import ParticipantImportHelpPage from './pages/ParticipantImportHelpPage';
 import ConnectionWarningModal from './components/ConnectionWarningModal';
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/form/:token" element={<PublicFormPage />} />
+            <Route path="/import-help" element={<ParticipantImportHelpPage />} />
             <Route
               path="/dashboard"
               element={

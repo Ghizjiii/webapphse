@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Trash2, Upload, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, HelpCircle, Plus, Trash2, Upload, X } from 'lucide-react';
 import SortableHeader from './SortableHeader';
 import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
 import { uploadPhoto } from '../lib/cloudinary';
+import { getParticipantDisplayName } from '../lib/participantName';
+import { parseParticipantImportFile } from '../lib/participantImport';
+import { PARTICIPANT_IMPORT_HELP_URL, PARTICIPANT_IMPORT_TEMPLATE_URL } from '../lib/participantImportAssets';
 import { useToast } from '../context/ToastContext';
 import type { Participant, ParticipantCourse, SortConfig } from '../types';
+import PhotoCropModal from './PhotoCropModal';
 
 interface Props {
   questionnaireId: string;
@@ -18,8 +22,12 @@ interface Props {
 function sortParticipants(list: Participant[], cfg: SortConfig | null): Participant[] {
   if (!cfg) return list;
   return [...list].sort((a, b) => {
-    const aVal = String((a as unknown as Record<string, unknown>)[cfg.key] ?? '');
-    const bVal = String((b as unknown as Record<string, unknown>)[cfg.key] ?? '');
+    const aVal = cfg.key === 'full_name'
+      ? getParticipantDisplayName(a)
+      : String((a as unknown as Record<string, unknown>)[cfg.key] ?? '');
+    const bVal = cfg.key === 'full_name'
+      ? getParticipantDisplayName(b)
+      : String((b as unknown as Record<string, unknown>)[cfg.key] ?? '');
     const cmp = aVal.localeCompare(bVal, 'ru');
     return cfg.direction === 'asc' ? cmp : -cmp;
   });
@@ -35,6 +43,9 @@ const UI = {
   saveError: '\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f',
   uploadSuccess: '\u0424\u043e\u0442\u043e \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043d\u043e',
   uploadError: '\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438 \u0444\u043e\u0442\u043e',
+  importButton: '\u0418\u043c\u043f\u043e\u0440\u0442',
+  importSuccess: '\u0418\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432',
+  importError: '\u041e\u0448\u0438\u0431\u043a\u0430 \u0438\u043c\u043f\u043e\u0440\u0442\u0430',
   empty: '\u2014',
   employees: '\u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u043e\u0432',
   courses: '\u043a\u0443\u0440\u0441\u043e\u0432',
@@ -44,9 +55,8 @@ const UI = {
   rows: '\u0421\u0442\u0440\u043e\u043a:',
   num: '\u2116',
   photo: '\u0424\u043e\u0442\u043e',
-  lastName: '\u0424\u0430\u043c\u0438\u043b\u0438\u044f',
-  firstName: '\u0418\u043c\u044f',
-  patronymic: '\u041e\u0442\u0447\u0435\u0441\u0442\u0432\u043e',
+  fullName: '\u0424\u0418\u041e',
+  email: 'Email \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u0430',
   position: '\u0414\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u044c',
   category: '\u041a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f',
   courseList: '\u041a\u0443\u0440\u0441\u044b',
@@ -67,7 +77,9 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [editCell, setEditCell] = useState<EditCell | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [photoCropRequest, setPhotoCropRequest] = useState<{ participantId: string; file: File } | null>(null);
   const [courseEditing, setCourseEditing] = useState<string | null>(null);
   const [courseSearch, setCourseSearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
@@ -75,6 +87,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetId = useRef<string | null>(null);
   const lastResumeRefreshAtRef = useRef(0);
 
@@ -114,9 +127,11 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     const { error } = await supabase.from('participants').insert({
       questionnaire_id: questionnaireId,
       company_id: companyId,
+      full_name: '',
       last_name: '',
       first_name: '',
       patronymic: '',
+      email: '',
       position: '',
       category: '',
       photo_url: '',
@@ -146,19 +161,28 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     const currentCell = editCell;
     const currentParticipant = localParticipants.find(participant => participant.id === currentCell.participantId) || null;
     const previousValue = currentParticipant
-      ? String((currentParticipant as unknown as Record<string, unknown>)[currentCell.field] ?? '')
+      ? currentCell.field === 'full_name'
+        ? getParticipantDisplayName(currentParticipant)
+        : String((currentParticipant as unknown as Record<string, unknown>)[currentCell.field] ?? '')
       : '';
-    const optimisticPatch = { [currentCell.field]: editValue } as Partial<Participant>;
+    const optimisticPatch = currentCell.field === 'full_name'
+      ? { full_name: editValue } as Partial<Participant>
+      : { [currentCell.field]: editValue } as Partial<Participant>;
 
     applyParticipantPatch(currentCell.participantId, optimisticPatch);
     setSaving(true);
     const { error } = await supabase
       .from('participants')
-      .update({ [currentCell.field]: editValue, updated_at: new Date().toISOString() })
+      .update({ ...optimisticPatch, updated_at: new Date().toISOString() })
       .eq('id', currentCell.participantId);
     if (error) {
       showToast('error', UI.saveError);
-      applyParticipantPatch(currentCell.participantId, { [currentCell.field]: previousValue } as Partial<Participant>);
+      applyParticipantPatch(
+        currentCell.participantId,
+        currentCell.field === 'full_name'
+          ? { full_name: previousValue } as Partial<Participant>
+          : { [currentCell.field]: previousValue } as Partial<Participant>,
+      );
     }
     setSaving(false);
     setEditCell(null);
@@ -188,22 +212,88 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !uploadTargetId.current) return;
-    setUploadingId(uploadTargetId.current);
+    setPhotoCropRequest({ participantId: uploadTargetId.current, file });
+    uploadTargetId.current = null;
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function uploadCroppedPhoto(participantId: string, file: File) {
+    setUploadingId(participantId);
     try {
       const url = await uploadPhoto(file);
-      applyParticipantPatch(uploadTargetId.current, { photo_url: url });
+      applyParticipantPatch(participantId, { photo_url: url });
       await supabase
         .from('participants')
         .update({ photo_url: url, updated_at: new Date().toISOString() })
-        .eq('id', uploadTargetId.current);
+        .eq('id', participantId);
       showToast('success', UI.uploadSuccess);
       onRefresh();
     } catch {
       showToast('error', UI.uploadError);
     } finally {
       setUploadingId(null);
-      uploadTargetId.current = null;
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleParticipantsImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    setSaving(true);
+    try {
+      const result = await parseParticipantImportFile(file, availableCourses);
+      if (result.rows.length === 0) {
+        showToast('error', result.warnings[0] || UI.importError);
+        return;
+      }
+
+      for (let index = 0; index < result.rows.length; index++) {
+        const row = result.rows[index];
+        const { data: participant, error: participantError } = await supabase
+          .from('participants')
+          .insert({
+            questionnaire_id: questionnaireId,
+            company_id: companyId,
+            full_name: row.full_name,
+            last_name: '',
+            first_name: '',
+            patronymic: '',
+            email: row.email,
+            position: row.position,
+            category: row.category,
+            photo_url: '',
+            sort_order: localParticipants.length + index,
+          })
+          .select()
+          .maybeSingle();
+
+        if (participantError) throw participantError;
+
+        const participantId = String((participant as { id?: string } | null)?.id || '');
+        if (participantId && row.courses.length > 0) {
+          const { error: coursesError } = await supabase.from('participant_courses').insert(
+            row.courses.map(course => ({
+              participant_id: participantId,
+              questionnaire_id: questionnaireId,
+              course_name: course,
+            }))
+          );
+          if (coursesError) throw coursesError;
+        }
+      }
+
+      showToast(
+        'success',
+        `${UI.importSuccess}: ${result.rows.length}${result.warnings.length > 0 ? `. ${result.warnings.slice(0, 2).join(' ')}` : ''}`
+      );
+      onRefresh();
+    } catch {
+      showToast('error', UI.importError);
+    } finally {
+      setSaving(false);
+      setImporting(false);
+      e.currentTarget.value = '';
     }
   }
 
@@ -356,6 +446,24 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   return (
     <div>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+      {photoCropRequest && (
+        <PhotoCropModal
+          file={photoCropRequest.file}
+          onCancel={() => setPhotoCropRequest(null)}
+          onConfirm={async file => {
+            const participantId = photoCropRequest.participantId;
+            setPhotoCropRequest(null);
+            await uploadCroppedPhoto(participantId, file);
+          }}
+        />
+      )}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv,.tsv"
+        className="hidden"
+        onChange={handleParticipantsImport}
+      />
 
       <div className="mb-3 flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500">
@@ -367,6 +475,38 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
           )}
         </div>
         <div className="flex items-center gap-2">
+          <a
+            href={PARTICIPANT_IMPORT_TEMPLATE_URL}
+            download
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition-all hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+            title="Скачать Excel-шаблон"
+          >
+            <Download size={13} />
+            Пример
+          </a>
+          <a
+            href={PARTICIPANT_IMPORT_HELP_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+            title="Инструкция по импорту"
+          >
+            <HelpCircle size={15} />
+          </a>
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing || saving}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Excel/CSV"
+          >
+            {importing ? (
+              <div className="h-3 w-3 animate-spin rounded-full border border-blue-500 border-t-transparent" />
+            ) : (
+              <Upload size={13} />
+            )}
+            {UI.importButton}
+          </button>
           <span className="text-xs text-gray-500">{UI.rows}</span>
           <select
             value={pageSize}
@@ -385,15 +525,18 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
         </div>
       </div>
 
+      <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+        Курсы в Excel можно не заполнять. После импорта списка сотрудников выберите нужные курсы в таблице. Если заполняете курсы в файле, разделяйте несколько названий точкой с запятой: БиОТ; ПТМ.
+      </div>
+
       <ResizableTableContainer>
-        <table className="w-full min-w-[1000px] text-sm">
+        <table className="w-full min-w-[1080px] text-sm">
           <thead>
             <tr className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50/80">
               <th className="w-14 bg-gray-50/80 px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-gray-600">{UI.num}</th>
               <th className="w-20 bg-gray-50/80 px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-gray-600">{UI.photo}</th>
-              <SortableHeader label={UI.lastName} sortKey="last_name" sortConfig={sortConfig} onSort={handleSort} />
-              <SortableHeader label={UI.firstName} sortKey="first_name" sortConfig={sortConfig} onSort={handleSort} />
-              <SortableHeader label={UI.patronymic} sortKey="patronymic" sortConfig={sortConfig} onSort={handleSort} />
+              <SortableHeader label={UI.fullName} sortKey="full_name" sortConfig={sortConfig} onSort={handleSort} />
+              <SortableHeader label={UI.email} sortKey="email" sortConfig={sortConfig} onSort={handleSort} />
               <SortableHeader label={UI.position} sortKey="position" sortConfig={sortConfig} onSort={handleSort} />
               <SortableHeader label={UI.category} sortKey="category" sortConfig={sortConfig} onSort={handleSort} />
               <th className="min-w-[280px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-gray-600">{UI.courseList}</th>
@@ -432,9 +575,8 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
                     </button>
                   </div>
                 </td>
-                <td className="px-4 py-3"><EditableCell p={p} field="last_name" value={p.last_name} /></td>
-                <td className="px-4 py-3"><EditableCell p={p} field="first_name" value={p.first_name} /></td>
-                <td className="px-4 py-3"><EditableCell p={p} field="patronymic" value={p.patronymic} /></td>
+                <td className="px-4 py-3"><EditableCell p={p} field="full_name" value={getParticipantDisplayName(p)} /></td>
+                <td className="px-4 py-3"><EditableCell p={p} field="email" value={p.email || ''} /></td>
                 <td className="px-4 py-3"><EditableCell p={p} field="position" value={p.position} /></td>
                 <td className="px-4 py-3"><CategoryCell participant={p} /></td>
                 <td className="px-4 py-3">

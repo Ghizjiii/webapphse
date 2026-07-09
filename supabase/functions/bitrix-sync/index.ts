@@ -7,6 +7,14 @@ const BITRIX_WEBHOOK_URL = (Deno.env.get("BITRIX_WEBHOOK_URL") || "").replace(/\
 const BITRIX_DEAL_BASE_URL = Deno.env.get("BITRIX_DEAL_BASE_URL") || "https://hsecompany.bitrix24.kz/crm/deal/details";
 const DEFAULT_DEAL_CURRENCY_ID = plainEnv("BITRIX_DEAL_CURRENCY_ID") || "KZT";
 const SMART_PROCESS_ENTITY_TYPE_ID = Number(Deno.env.get("BITRIX_SMART_PROCESS_ENTITY_TYPE_ID") || "1056");
+const DEAL_REQUEST_SUMMARY_FIELD = plainEnv("BITRIX_DEAL_REQUEST_SUMMARY_FIELD") || "UF_CRM_REQUEST_SUMMARY";
+const PARTICIPANT_EMAIL_FIELD_TITLE = "Email \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u0430";
+const PARTICIPANT_EMAIL_FIELD_NAME = "PARTICIPANT_EMAIL";
+const PARTICIPANT_EMAIL_FIELD_ENV = plainEnv("BITRIX_PARTICIPANT_EMAIL_FIELD");
+const PARTICIPANT_FULL_NAME_FIELD_TITLE = "\u0424\u0418\u041e";
+const PARTICIPANT_FULL_NAME_FIELD_NAME = "PARTICIPANT_FULL_NAME";
+const PARTICIPANT_FULL_NAME_FIELD_ENV = plainEnv("BITRIX_PARTICIPANT_FULL_NAME_FIELD");
+const PARTICIPANT_FULL_NAME_FIELD_FALLBACK = "ufCrm12ParticipantFullName";
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
 const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
 
@@ -117,11 +125,18 @@ type DealRow = {
   payment_file_sync_key: string | null;
 };
 
+type QuestionnaireRow = {
+  id: string;
+  request_type: "external" | "internal" | null;
+};
+
 type ParticipantRow = {
   id: string;
+  full_name: string;
   last_name: string;
   first_name: string;
   patronymic: string;
+  email: string | null;
   position: string;
   category: string;
   photo_url: string | null;
@@ -133,6 +148,13 @@ type SyncTask = {
   courseName: string;
   qualification: string;
   electricalSafetyGroup: string;
+};
+
+type DealProductRow = {
+  productName: string;
+  quantity: number;
+  unitPrice: number | null;
+  totalPrice: number;
 };
 
 type ExistingCertificateRow = {
@@ -680,6 +702,158 @@ function findReferenceCoursePrice(
   }
 
   return null;
+}
+
+function buildExistingCertificateByTaskKey(
+  certificates: ExistingCertificateRow[],
+  referenceCoursePrices: RefCoursePriceRow[],
+): Map<string, ExistingCertificateRow> {
+  const out = new Map<string, ExistingCertificateRow>();
+
+  for (const cert of certificates) {
+    const parsedCertificateCourse = parseParticipantCourseSelection(
+      cert.course_name,
+      cert.category,
+      referenceCoursePrices,
+    );
+    const key = taskKey(
+      cert.participant_id,
+      parsedCertificateCourse.courseName || cert.course_name,
+      cert.qualification || parsedCertificateCourse.qualification,
+      cert.electrical_safety_group || parsedCertificateCourse.electricalSafetyGroup,
+    );
+    if (!key.startsWith("::") && !out.has(key)) {
+      out.set(key, cert);
+    }
+  }
+
+  return out;
+}
+
+function resolveSyncTaskUnitPrice(
+  task: SyncTask,
+  existingCertificate: ExistingCertificateRow | null,
+  referenceCoursePrices: RefCoursePriceRow[],
+  requestType: QuestionnaireRow["request_type"],
+): number | null {
+  const existingPrice = normalizeBitrixNumber(existingCertificate?.price);
+  if (existingPrice !== null) return existingPrice;
+  if (requestType !== "internal") return null;
+
+  return findReferenceCoursePrice(referenceCoursePrices, {
+    courseName: task.courseName,
+    category: task.participant.category,
+    qualification: existingCertificate?.qualification || task.qualification,
+    electricalSafetyGroup: existingCertificate?.electrical_safety_group || task.electricalSafetyGroup,
+  });
+}
+
+function buildDealProductRows(
+  syncTasks: SyncTask[],
+  existingCertificateByKey: Map<string, ExistingCertificateRow>,
+  referenceCoursePrices: RefCoursePriceRow[],
+  requestType: QuestionnaireRow["request_type"],
+): DealProductRow[] {
+  const noCategoryLabel = "\u0411\u0435\u0437 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u0438";
+  const groups = new Map<string, DealProductRow>();
+
+  for (const task of syncTasks) {
+    const courseLabel = plain(task.displayCourseName || task.courseName);
+    if (!courseLabel) continue;
+
+    const existingCertificate = existingCertificateByKey.get(
+      taskKey(task.participant.id, task.courseName, task.qualification, task.electricalSafetyGroup),
+    ) || null;
+    const unitPrice = resolveSyncTaskUnitPrice(task, existingCertificate, referenceCoursePrices, requestType);
+    const categoryLabel = plain(task.participant.category) || noCategoryLabel;
+    const productName = `${courseLabel} (${categoryLabel})`;
+    const priceKey = unitPrice === null ? "__missing__" : String(unitPrice);
+    const groupKey = `${normalizeCoursePriceLookup(productName)}::${priceKey}`;
+    const current = groups.get(groupKey) || {
+      productName,
+      quantity: 0,
+      unitPrice,
+      totalPrice: 0,
+    };
+
+    current.quantity += 1;
+    current.totalPrice = (current.unitPrice ?? 0) * current.quantity;
+    groups.set(groupKey, current);
+  }
+
+  return Array.from(groups.values()).sort((left, right) => {
+    const byName = left.productName.localeCompare(right.productName, "ru");
+    if (byName !== 0) return byName;
+    return (left.unitPrice ?? -1) - (right.unitPrice ?? -1);
+  });
+}
+
+function calculateDealAmount(productRows: DealProductRow[]): number {
+  return productRows.reduce((sum, row) => sum + row.totalPrice, 0);
+}
+
+function formatMoneyPlain(value: number): string {
+  return `${Math.round(value).toLocaleString("ru-RU")} KZT`;
+}
+
+function buildExternalDealSummary(params: {
+  company: CompanyRow;
+  participants: ParticipantRow[];
+  syncTasks: SyncTask[];
+  productRows: DealProductRow[];
+  dealAmount: number;
+}): string {
+  const courseNames = Array.from(new Set(
+    params.syncTasks
+      .map(task => plain(task.displayCourseName || task.courseName))
+      .filter(Boolean),
+  ));
+  const lines: string[] = [
+    "Сводка по внешней заявке",
+    "",
+    `Компания: ${plain(params.company.name) || "-"}`,
+    `БИН/ИИН: ${plain(params.company.bin_iin) || "-"}`,
+    `Город: ${plain(params.company.city) || "-"}`,
+    `Телефон: ${plain(params.company.phone) || "-"}`,
+    `Email заказчика: ${plain(params.company.email) || "-"}`,
+    "",
+    `Сотрудников: ${params.participants.length}`,
+    `Курсов: ${courseNames.length}`,
+    `Заявок на курсы: ${params.syncTasks.length}`,
+    `Сумма: ${formatMoneyPlain(params.dealAmount)}`,
+  ];
+
+  if (params.productRows.length > 0) {
+    lines.push("", "Курсы:");
+    for (const row of params.productRows) {
+      lines.push(`- ${row.productName}: ${row.quantity} шт. x ${formatMoneyPlain(row.unitPrice ?? 0)} = ${formatMoneyPlain(row.totalPrice)}`);
+    }
+  }
+
+  if (params.participants.length > 0) {
+    const coursesByParticipantId = new Map<string, string[]>();
+    for (const task of params.syncTasks) {
+      const current = coursesByParticipantId.get(task.participant.id) || [];
+      const label = plain(task.displayCourseName || task.courseName);
+      if (label) current.push(label);
+      coursesByParticipantId.set(task.participant.id, current);
+    }
+
+    lines.push("", "Участники:");
+    for (const participant of params.participants) {
+      const fullName = participantDisplayName(participant);
+      const courses = coursesByParticipantId.get(participant.id) || [];
+      lines.push([
+        `- ${fullName || participant.id}`,
+        plain(participant.position) ? `должность: ${plain(participant.position)}` : "",
+        plain(participant.category) ? `категория: ${plain(participant.category)}` : "",
+        plain(participant.email) ? `email: ${plain(participant.email)}` : "",
+        courses.length > 0 ? `курсы: ${courses.join("; ")}` : "",
+      ].filter(Boolean).join(" | "));
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function normalizeBitrixLinkTokens(value: unknown): string[] {
@@ -1374,8 +1548,169 @@ async function loadEnumMaps(supabase: ReturnType<typeof adminClient>) {
   };
 }
 
+function normalizeSmartFieldTitle(value: unknown): string {
+  return plain(value).toLocaleLowerCase("ru").replace(/\s+/g, " ");
+}
+
+function extractSmartFieldCodes(key: string, field: Record<string, unknown>): string[] {
+  return [
+    key,
+    plain(field.name),
+    plain(field.fieldName),
+    plain(field.FIELD_NAME),
+    plain(field.upperName),
+    plain(field.UPPER_NAME),
+  ].filter(Boolean);
+}
+
+function findSmartFieldCodeByTitle(fields: Record<string, unknown>, title: string): string {
+  const expected = normalizeSmartFieldTitle(title);
+  if (!expected) return "";
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (!value || typeof value !== "object") continue;
+    const field = value as Record<string, unknown>;
+    const labels = [
+      field.title,
+      field.formLabel,
+      field.listLabel,
+      field.LIST_LABEL,
+      field.EDIT_FORM_LABEL,
+      field.EDIT_FORM_LABELS,
+    ].map(normalizeSmartFieldTitle).filter(Boolean);
+    if (!labels.some(label => label === expected)) continue;
+
+    const codes = extractSmartFieldCodes(key, field);
+    const preferred = codes.find(code => /^ufCrm/i.test(code)) || codes.find(code => /^UF_CRM_/i.test(code)) || codes[0] || "";
+    if (preferred) return preferred;
+  }
+
+  return "";
+}
+
+function resolveSmartUserFieldEntityId(fields: Record<string, unknown>): string {
+  for (const [key, value] of Object.entries(fields)) {
+    if (!value || typeof value !== "object") continue;
+    const field = value as Record<string, unknown>;
+    const codes = extractSmartFieldCodes(key, field);
+    for (const code of codes) {
+      const match = code.match(/^UF_CRM_(\d+)_/i);
+      if (match?.[1]) return `CRM_${match[1]}`;
+    }
+  }
+
+  return "CRM_12";
+}
+
+function buildSmartUserFieldName(entityId: string, fieldName: string): string {
+  const crmEntityId = entityId.match(/^CRM_(\d+)$/i)?.[1];
+  return crmEntityId ? `UF_CRM_${crmEntityId}_${fieldName}` : fieldName;
+}
+
+function participantDisplayName(participant: ParticipantRow): string {
+  return plain(participant.full_name) ||
+    [participant.last_name, participant.first_name, participant.patronymic].map(plain).filter(Boolean).join(" ");
+}
+
+async function loadSmartProcessFields(): Promise<Record<string, unknown>> {
+  const raw = await callBitrix("crm.item.fields", { entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID });
+  return (raw?.fields || raw || {}) as Record<string, unknown>;
+}
+
+async function ensureParticipantEmailField(): Promise<string> {
+  if (PARTICIPANT_EMAIL_FIELD_ENV) return PARTICIPANT_EMAIL_FIELD_ENV;
+
+  let fields = await loadSmartProcessFields();
+  const existing = findSmartFieldCodeByTitle(fields, PARTICIPANT_EMAIL_FIELD_TITLE);
+  if (existing) return existing;
+
+  try {
+    const entityId = resolveSmartUserFieldEntityId(fields);
+    await callBitrix("userfieldconfig.add", {
+      moduleId: "crm",
+      field: {
+        entityId,
+        fieldName: buildSmartUserFieldName(entityId, PARTICIPANT_EMAIL_FIELD_NAME),
+        userTypeId: "string",
+        xmlId: PARTICIPANT_EMAIL_FIELD_NAME,
+        sort: 510,
+        multiple: "N",
+        mandatory: "N",
+        showFilter: "Y",
+        showInList: "Y",
+        editInList: "Y",
+        isSearchable: "Y",
+        editFormLabel: {
+          ru: PARTICIPANT_EMAIL_FIELD_TITLE,
+          en: "Participant email",
+        },
+        listColumnLabel: {
+          ru: PARTICIPANT_EMAIL_FIELD_TITLE,
+          en: "Participant email",
+        },
+        listFilterLabel: {
+          ru: PARTICIPANT_EMAIL_FIELD_TITLE,
+          en: "Participant email",
+        },
+      },
+    });
+  } catch (error) {
+    console.warn("Could not create Bitrix participant email field", error);
+  }
+
+  fields = await loadSmartProcessFields();
+  return findSmartFieldCodeByTitle(fields, PARTICIPANT_EMAIL_FIELD_TITLE);
+}
+
+async function ensureParticipantFullNameField(): Promise<string> {
+  if (PARTICIPANT_FULL_NAME_FIELD_ENV) return PARTICIPANT_FULL_NAME_FIELD_ENV;
+
+  let fields = await loadSmartProcessFields();
+  const existing = findSmartFieldCodeByTitle(fields, PARTICIPANT_FULL_NAME_FIELD_TITLE);
+  if (existing) return existing;
+
+  try {
+    const entityId = resolveSmartUserFieldEntityId(fields);
+    await callBitrix("userfieldconfig.add", {
+      moduleId: "crm",
+      field: {
+        entityId,
+        fieldName: buildSmartUserFieldName(entityId, PARTICIPANT_FULL_NAME_FIELD_NAME),
+        userTypeId: "string",
+        xmlId: PARTICIPANT_FULL_NAME_FIELD_NAME,
+        sort: 505,
+        multiple: "N",
+        mandatory: "N",
+        showFilter: "Y",
+        showInList: "Y",
+        editInList: "Y",
+        isSearchable: "Y",
+        editFormLabel: {
+          ru: PARTICIPANT_FULL_NAME_FIELD_TITLE,
+          en: "Full name",
+        },
+        listColumnLabel: {
+          ru: PARTICIPANT_FULL_NAME_FIELD_TITLE,
+          en: "Full name",
+        },
+        listFilterLabel: {
+          ru: PARTICIPANT_FULL_NAME_FIELD_TITLE,
+          en: "Full name",
+        },
+      },
+    });
+  } catch (error) {
+    console.warn("Could not create Bitrix participant full name field", error);
+  }
+
+  fields = await loadSmartProcessFields();
+  return findSmartFieldCodeByTitle(fields, PARTICIPANT_FULL_NAME_FIELD_TITLE) || PARTICIPANT_FULL_NAME_FIELD_FALLBACK;
+}
+
 function buildDesiredSmartProcessFieldEntries(params: {
   participant: ParticipantRow;
+  participantEmailFieldCode: string;
+  participantFullNameFieldCode: string;
   courseName: string;
   expectedTitle: string;
   responsibleBitrixUserId: string;
@@ -1412,6 +1747,22 @@ function buildDesiredSmartProcessFieldEntries(params: {
     { code: BITRIX_FIELDS.MIDDLE_NAME, kind: "text", value: params.participant.patronymic },
     { code: BITRIX_FIELDS.POSITION, kind: "text", value: params.participant.position },
   ];
+
+  if (params.participantEmailFieldCode) {
+    entries.push({
+      code: params.participantEmailFieldCode,
+      kind: "text",
+      value: plain(params.participant.email),
+    });
+  }
+
+  if (params.participantFullNameFieldCode) {
+    entries.push({
+      code: params.participantFullNameFieldCode,
+      kind: "text",
+      value: participantDisplayName(params.participant),
+    });
+  }
 
   const pushIfDefined = (code: string, kind: SmartFieldKind, value: string | number | undefined) => {
     if (value === undefined) return;
@@ -1845,6 +2196,7 @@ async function upsertDeal(params: {
   dealTitle: string;
   dealAmount: number;
   dealCurrencyId: string;
+  dealSummary: string;
   assignedById: string;
   paymentFieldCode: string;
   paymentStatusFieldCode: string;
@@ -1879,6 +2231,9 @@ async function upsertDeal(params: {
     }
     if (plain(getDealFieldValue(currentDeal, "IS_MANUAL_OPPORTUNITY")) !== "Y") {
       fieldsToUpdate.IS_MANUAL_OPPORTUNITY = "Y";
+    }
+    if (params.dealSummary && plain(getDealFieldValue(currentDeal, DEAL_REQUEST_SUMMARY_FIELD)) !== params.dealSummary) {
+      fieldsToUpdate[DEAL_REQUEST_SUMMARY_FIELD] = params.dealSummary;
     }
 
     const currentCity = plain(currentDeal.UF_CRM_1772560175 || currentDeal.UF_CRM_CITY);
@@ -1927,6 +2282,9 @@ async function upsertDeal(params: {
       CURRENCY_ID: params.dealCurrencyId,
       IS_MANUAL_OPPORTUNITY: "Y",
     };
+    if (params.dealSummary) {
+      fields[DEAL_REQUEST_SUMMARY_FIELD] = params.dealSummary;
+    }
     if (params.company.city) {
       fields["UF_CRM_1772560175"] = params.company.city;
       fields["UF_CRM_CITY"] = params.company.city;
@@ -1962,6 +2320,22 @@ async function upsertDeal(params: {
     bitrixDealId,
     paymentFileSyncKey,
   };
+}
+
+async function syncDealProductRows(bitrixDealId: string, productRows: DealProductRow[]): Promise<void> {
+  const rows = productRows.map(row => ({
+    PRODUCT_ID: 0,
+    PRODUCT_NAME: row.productName,
+    PRICE: row.unitPrice ?? 0,
+    QUANTITY: row.quantity,
+    MEASURE_CODE: 796,
+    MEASURE_NAME: "\u0448\u0442.",
+  }));
+
+  await callBitrix("crm.deal.productrows.set", {
+    id: bitrixDealId,
+    rows,
+  });
 }
 
 async function createSmartProcessItem(params: {
@@ -2143,7 +2517,12 @@ Deno.serve(async (req: Request) => {
     }
 
     const supabase = adminClient();
-    const [companyResult, dealResult, participantsResult] = await Promise.all([
+    const [questionnaireResult, companyResult, dealResult, participantsResult] = await Promise.all([
+      supabase
+        .from("questionnaires")
+        .select("id, request_type")
+        .eq("id", questionnaireId)
+        .maybeSingle(),
       supabase
         .from("companies")
         .select("id, name, phone, email, bin_iin, city, bitrix_company_id, payment_order_url, payment_order_name, payment_order_storage_bucket, payment_order_storage_path, payment_is_paid")
@@ -2160,19 +2539,22 @@ Deno.serve(async (req: Request) => {
         .maybeSingle(),
       supabase
         .from("participants")
-        .select("id, last_name, first_name, patronymic, position, category, photo_url")
+        .select("id, full_name, last_name, first_name, patronymic, email, position, category, photo_url")
         .eq("questionnaire_id", questionnaireId)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true }),
     ]);
 
+    if (questionnaireResult.error) throw questionnaireResult.error;
     if (companyResult.error) throw companyResult.error;
     if (dealResult.error) throw dealResult.error;
     if (participantsResult.error) throw participantsResult.error;
 
+    const questionnaire = questionnaireResult.data as QuestionnaireRow | null;
     const company = companyResult.data as CompanyRow | null;
     const deal = dealResult.data as DealRow | null;
     const participants = (participantsResult.data || []) as ParticipantRow[];
+    if (!questionnaire) throw new Error("Questionnaire not found");
 
     if (!company) throw new Error("Компания для анкеты не найдена");
     if (participants.length === 0) throw new Error("В анкете нет сотрудников для синхронизации");
@@ -2202,10 +2584,6 @@ Deno.serve(async (req: Request) => {
 
     const existingCertificates = (existingCertsResult.data || []) as ExistingCertificateRow[];
     const referenceCoursePrices = (coursePricesResult.data || []) as RefCoursePriceRow[];
-    const dealAmount = existingCertificates.reduce((sum, cert) => {
-      const price = typeof cert.price === "number" ? cert.price : Number(cert.price);
-      return Number.isFinite(price) ? sum + price : sum;
-    }, 0);
 
     const participantsById = new Map(participants.map(participant => [participant.id, participant]));
     const coursesByParticipant = new Map<string, Array<{
@@ -2231,6 +2609,24 @@ Deno.serve(async (req: Request) => {
       return courses.map(course => ({ participant, ...course }));
     });
 
+    const existingCertificateByKey = buildExistingCertificateByTaskKey(existingCertificates, referenceCoursePrices);
+    const dealProductRows = buildDealProductRows(
+      syncTasks,
+      existingCertificateByKey,
+      referenceCoursePrices,
+      questionnaire.request_type,
+    );
+    const dealAmount = calculateDealAmount(dealProductRows);
+    const dealSummary = questionnaire.request_type === "external"
+      ? buildExternalDealSummary({
+        company,
+        participants,
+        syncTasks,
+        productRows: dealProductRows,
+        dealAmount,
+      })
+      : "";
+
     const allCourses = Array.from(new Set(syncTasks.map(task => task.displayCourseName || task.courseName).filter(Boolean)));
     const dealTitle = [
       [company.name, company.city].filter(Boolean).join(" - "),
@@ -2247,6 +2643,7 @@ Deno.serve(async (req: Request) => {
       dealTitle,
       dealAmount,
       dealCurrencyId,
+      dealSummary,
       assignedById: responsibleBitrixUserId,
       paymentFieldCode,
       paymentStatusFieldCode,
@@ -2270,25 +2667,13 @@ Deno.serve(async (req: Request) => {
       await supabase.from("deals").insert(dealPayload);
     }
 
-    const existingCertificateByKey = new Map<string, ExistingCertificateRow>();
-    for (const cert of existingCertificates) {
-      const parsedCertificateCourse = parseParticipantCourseSelection(
-        cert.course_name,
-        cert.category,
-        referenceCoursePrices,
-      );
-      const key = taskKey(
-        cert.participant_id,
-        parsedCertificateCourse.courseName || cert.course_name,
-        cert.qualification || parsedCertificateCourse.qualification,
-        cert.electrical_safety_group || parsedCertificateCourse.electricalSafetyGroup,
-      );
-      if (!key.startsWith("::") && !existingCertificateByKey.has(key)) {
-        existingCertificateByKey.set(key, cert);
-      }
-    }
+    await syncDealProductRows(bitrixDealId, dealProductRows);
 
-    const enumMaps = await loadEnumMaps(supabase);
+    const [enumMaps, participantEmailFieldCode, participantFullNameFieldCode] = await Promise.all([
+      loadEnumMaps(supabase),
+      ensureParticipantEmailField(),
+      ensureParticipantFullNameField(),
+    ]);
     const certificateInserts: Array<Record<string, unknown>> = [];
     const certificateUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
     let photoFailures = 0;
@@ -2298,7 +2683,7 @@ Deno.serve(async (req: Request) => {
       const existingCertificate = existingCertificateByKey.get(
         taskKey(task.participant.id, task.courseName, task.qualification, task.electricalSafetyGroup),
       ) || null;
-      const expectedTitle = `${task.participant.last_name} ${task.participant.first_name} - ${task.displayCourseName || task.courseName}`;
+      const expectedTitle = `${participantDisplayName(task.participant)} - ${task.displayCourseName || task.courseName}`;
       const itemIdRaw = plain(existingCertificate?.bitrix_item_id);
       let itemId = itemIdRaw;
       let currentBitrixItem: Record<string, unknown> | null = null;
@@ -2337,14 +2722,18 @@ Deno.serve(async (req: Request) => {
           enumMaps.electricalSafetyGroupByIdMap,
         ),
       );
-      const defaultReferencePrice = findReferenceCoursePrice(referenceCoursePrices, {
-        courseName: task.courseName,
-        category: task.participant.category,
-        qualification: effectiveQualification,
-        electricalSafetyGroup: effectiveElectricalSafetyGroup,
-      });
+      const defaultReferencePrice = questionnaire.request_type === "internal"
+        ? findReferenceCoursePrice(referenceCoursePrices, {
+          courseName: task.courseName,
+          category: task.participant.category,
+          qualification: effectiveQualification,
+          electricalSafetyGroup: effectiveElectricalSafetyGroup,
+        })
+        : null;
       const desiredFieldEntries = buildDesiredSmartProcessFieldEntries({
         participant: task.participant,
+        participantEmailFieldCode,
+        participantFullNameFieldCode,
         courseName: task.courseName,
         expectedTitle,
         responsibleBitrixUserId,
@@ -2388,7 +2777,7 @@ Deno.serve(async (req: Request) => {
       );
 
       if (photoSourceKey && shouldSyncPhoto) {
-        const fullName = [task.participant.last_name, task.participant.first_name, task.participant.patronymic].filter(Boolean).join(" ");
+        const fullName = participantDisplayName(task.participant);
         try {
           await attachPhotoToSmartItem(itemId, task.participant.photo_url, fullName);
           resolvedPhotoSyncKey = photoSourceKey;

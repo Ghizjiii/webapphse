@@ -13,6 +13,11 @@
   created_at: string;
   updated_at: string;
   submitted_at: string | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  deleted_previous_is_active?: boolean | null;
+  bitrix_deal_deleted_at?: string | null;
+  bitrix_deal_delete_error?: string | null;
   status: 'active' | 'submitted' | 'archived' | 'synced' | 'expired';
   workflow_status?: QuestionnaireWorkflowStatus;
   accepted_at?: string | null;
@@ -230,9 +235,11 @@ export interface Participant {
   id: string;
   questionnaire_id: string | null;
   company_id: string | null;
+  full_name: string;
   last_name: string;
   first_name: string;
   patronymic: string;
+  email: string;
   position: string;
   category: string;
   photo_url: string;

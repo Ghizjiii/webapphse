@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Link as LinkIcon, Copy, Power, PowerOff, Clock, CheckCircle2, Archive, RefreshCw, Trash2 } from 'lucide-react';
+import { Plus, Link as LinkIcon, Copy, Power, PowerOff, Clock, CheckCircle2, Archive, RefreshCw, Trash2, RotateCcw } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
-import { supabase } from '../lib/supabase';
+import { getFreshAccessToken, supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import type { QuestionnaireLink, Company, AppRole, QuestionnaireRequestType } from '../types';
@@ -24,6 +24,8 @@ interface QuestionnaireRow {
   requestCount: number;
   totalAmount: number;
   creatorProfile: ProfileDirectoryEntry | null;
+  deletedByProfile: ProfileDirectoryEntry | null;
+  bitrixDealId: string;
 }
 
 type CreatorFilterValue = 'all' | 'mine' | `user:${string}`;
@@ -44,6 +46,7 @@ type ParticipantCourseQuestionnaireRef = {
 type DealQuestionnaireSyncRef = {
   questionnaire_id: string;
   sync_status: 'pending' | 'in_progress' | 'success' | 'error' | null;
+  bitrix_deal_id?: string | null;
 };
 
 type CertificateAmountRef = {
@@ -88,7 +91,6 @@ function hasMeaningfulCompanyData(company: Company): boolean {
     (company.bitrix_company_id || '').trim()
   );
 }
-
 function resolveCompanyRecord(companies: Company[]): Company | null {
   return companies.find(hasMeaningfulCompanyData) || companies[0] || null;
 }
@@ -100,7 +102,10 @@ export default function DashboardPage() {
   const [rows, setRows] = useState<QuestionnaireRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<QuestionnaireRow | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<QuestionnaireRow | null>(null);
+  const [trashMode, setTrashMode] = useState(false);
+  const [trashActionLoading, setTrashActionLoading] = useState(false);
   const [creatorFilter, setCreatorFilter] = useState<CreatorFilterValue>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | QuestionnaireLink['status']>('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | QuestionnaireRequestType>('all');
@@ -122,6 +127,7 @@ export default function DashboardPage() {
       }
     : null;
   const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
+  const isAdmin = profile?.role === 'admin';
   const currentResponsibleName = getProfileDisplayName(
     profile ? {
       user_id: profile.user_id,
@@ -151,7 +157,10 @@ export default function DashboardPage() {
       return;
     }
 
-    const questionnaireList = questionnaires || [];
+    const questionnaireList = (questionnaires || []).filter(q => {
+      const isDeleted = Boolean(q.deleted_at);
+      return trashMode && isAdmin ? isDeleted : !isDeleted;
+    });
     if (questionnaireList.length === 0) {
       setRows([]);
       setLoading(false);
@@ -161,7 +170,7 @@ export default function DashboardPage() {
     const questionnaireIds = questionnaireList.map(q => q.id);
     const creatorIds = Array.from(new Set(
       questionnaireList
-        .map(q => String(q.created_by || '').trim())
+        .flatMap(q => [String(q.created_by || '').trim(), String(q.deleted_by || '').trim()])
         .filter(Boolean)
     ));
 
@@ -186,7 +195,7 @@ export default function DashboardPage() {
         .in('questionnaire_id', questionnaireIds),
       supabase
         .from('deals')
-        .select('questionnaire_id, sync_status')
+        .select('questionnaire_id, sync_status, bitrix_deal_id')
         .in('questionnaire_id', questionnaireIds),
       loadProfileDirectory(creatorIds),
     ]);
@@ -235,9 +244,14 @@ export default function DashboardPage() {
     }
 
     const dealSyncStatusByQuestionnaire = new Map<string, DealQuestionnaireSyncRef['sync_status']>();
+    const bitrixDealIdByQuestionnaire = new Map<string, string>();
     for (const deal of (dealsRes.data || []) as DealQuestionnaireSyncRef[]) {
       if (!deal.questionnaire_id) continue;
       dealSyncStatusByQuestionnaire.set(deal.questionnaire_id, deal.sync_status);
+      const bitrixDealId = String(deal.bitrix_deal_id || '').trim();
+      if (bitrixDealId && !bitrixDealIdByQuestionnaire.has(deal.questionnaire_id)) {
+        bitrixDealIdByQuestionnaire.set(deal.questionnaire_id, bitrixDealId);
+      }
     }
 
     const creatorByUserId = new Map<string, ProfileDirectoryEntry>();
@@ -270,18 +284,26 @@ export default function DashboardPage() {
         requestCount: requestCountByQuestionnaire.get(q.id) || 0,
         totalAmount: totalAmountByQuestionnaire.get(q.id) || 0,
         creatorProfile: q.created_by ? creatorByUserId.get(q.created_by) || null : null,
+        deletedByProfile: q.deleted_by ? creatorByUserId.get(q.deleted_by) || null : null,
+        bitrixDealId: bitrixDealIdByQuestionnaire.get(q.id) || '',
       };
     });
 
     setRows(result);
     setLoading(false);
-  }, [canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, showToast]);
+  }, [canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, isAdmin, showToast, trashMode]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [companySearch, creatorFilter, pageSize, regionFilter, requestTypeFilter, statusFilter]);
+  }, [companySearch, creatorFilter, pageSize, regionFilter, requestTypeFilter, statusFilter, trashMode]);
+
+  useEffect(() => {
+    if (!isAdmin && trashMode) {
+      setTrashMode(false);
+    }
+  }, [isAdmin, trashMode]);
 
   const creatorFilterOptions = useMemo<CreatorFilterOption[]>(() => {
     const creators = new Map<string, { label: string; role: AppRole | null; sortName: string }>();
@@ -399,13 +421,56 @@ export default function DashboardPage() {
     loadData();
   }
 
-  async function deleteQuestionnaire(id: string) {
-    await supabase.from('questionnaires').delete().eq('id', id);
-    showToast('success', 'Анкета удалена');
-    setDeleteTarget(null);
-    loadData();
+  async function callQuestionnaireTrash(action: 'delete' | 'restore', questionnaireId: string) {
+    const accessToken = await getFreshAccessToken();
+    const { data, error } = await supabase.functions.invoke('questionnaire-trash', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: { action, questionnaireId },
+    });
+
+    if (error) {
+      const message = String((data as { error?: string } | null)?.error || error.message || 'Ошибка операции с корзиной');
+      throw new Error(message);
+    }
+
+    return data as { bitrixDealId?: string | null; restored?: boolean };
   }
 
+  async function deleteQuestionnaire(row: QuestionnaireRow) {
+    setTrashActionLoading(true);
+    try {
+      const data = await callQuestionnaireTrash('delete', row.questionnaire.id);
+      const bitrixDealId = String(data?.bitrixDealId || row.bitrixDealId || '').trim();
+      showToast(
+        'success',
+        bitrixDealId
+          ? `Заявка перенесена в корзину, сделка Bitrix24 #${bitrixDealId} удалена`
+          : 'Заявка перенесена в корзину'
+      );
+      setDeleteTarget(null);
+      await loadData();
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Не удалось удалить заявку');
+    } finally {
+      setTrashActionLoading(false);
+    }
+  }
+
+  async function restoreQuestionnaire(row: QuestionnaireRow) {
+    setTrashActionLoading(true);
+    try {
+      await callQuestionnaireTrash('restore', row.questionnaire.id);
+      showToast('success', 'Заявка восстановлена из корзины');
+      setRestoreTarget(null);
+      await loadData();
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Не удалось восстановить заявку');
+    } finally {
+      setTrashActionLoading(false);
+    }
+  }
   function formatDate(str: string | null) {
     if (!str) return '—';
     return new Date(str).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -525,16 +590,38 @@ export default function DashboardPage() {
     <DashboardLayout breadcrumbs={[{ label: 'Анкеты' }]}>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Анкеты клиентов</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Управление ссылками для сбора данных</p>
+          <h1 className="text-2xl font-bold text-gray-900">{trashMode ? 'Корзина заявок' : 'Анкеты клиентов'}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {trashMode
+              ? 'Удаленные заявки доступны администратору для проверки и восстановления'
+              : 'Управление ссылками для сбора данных'}
+          </p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all shadow-sm"
-        >
-          <Plus size={16} />
-          Создать анкету
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setTrashMode(value => !value)}
+              className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all ${
+                trashMode
+                  ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700'
+              }`}
+            >
+              {trashMode ? <RotateCcw size={16} /> : <Trash2 size={16} />}
+              {trashMode ? 'К списку заявок' : 'Корзина'}
+            </button>
+          )}
+          {!trashMode && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all shadow-sm"
+            >
+              <Plus size={16} />
+              Создать анкету
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -544,9 +631,15 @@ export default function DashboardPage() {
           </div>
         ) : rows.length === 0 ? (
           <div className="p-16 text-center">
-            <LinkIcon size={40} className="text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 font-medium">Нет анкет</p>
-            <p className="text-gray-400 text-sm mt-1">Создайте первую анкету для клиента</p>
+            {trashMode ? (
+              <Trash2 size={40} className="text-gray-300 mx-auto mb-4" />
+            ) : (
+              <LinkIcon size={40} className="text-gray-300 mx-auto mb-4" />
+            )}
+            <p className="text-gray-500 font-medium">{trashMode ? 'Корзина пустая' : 'Нет анкет'}</p>
+            <p className="text-gray-400 text-sm mt-1">
+              {trashMode ? 'Удаленные заявки будут отображаться здесь в течение 30 дней' : 'Создайте первую анкету для клиента'}
+            </p>
           </div>
         ) : (
           <>
@@ -645,13 +738,13 @@ export default function DashboardPage() {
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявка / Название компании</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Регион / отдел</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Тип</th>
-                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Статус</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">{trashMode ? 'Корзина' : 'Статус'}</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявок</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Общая сумма</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Создана</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Срок</th>
-                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Ответственный</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">{trashMode ? 'Удалил' : 'Ответственный'}</th>
                 <th className="px-4 py-3.5" />
               </tr>
             </thead>
@@ -662,7 +755,7 @@ export default function DashboardPage() {
                     По выбранным фильтрам анкеты не найдены.
                   </td>
                 </tr>
-              ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile }, index) => {
+              ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId }, index) => {
                 const cfg = STATUS_CONFIG[q.status] || STATUS_CONFIG.active;
                 const slaDueAtMs = q.sla_due_at ? new Date(q.sla_due_at).getTime() : NaN;
                 const isWorkflowOverdue = Boolean(
@@ -676,6 +769,8 @@ export default function DashboardPage() {
                   creatorProfile,
                   q.created_by === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
                 );
+                const deletedByRole = deletedByProfile?.role || null;
+                const deletedByName = getProfileDisplayName(deletedByProfile, '');
                 const requestLabel = getQuestionnaireRequestLabel(q);
                 const regionLabel = getQuestionnaireRegionLabel(q);
                 const requestType = getQuestionnaireRequestType(q);
@@ -719,11 +814,27 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="px-4 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cfg.className}`}>
-                        {cfg.icon}{cfg.label}
-                      </span>
-                      {isWorkflowOverdue && (
-                        <div className="mt-1 text-xs font-medium text-red-600">Просрочена</div>
+                      {trashMode ? (
+                        <>
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-red-200 bg-red-50 text-red-700">
+                            <Trash2 size={12} /> В корзине
+                          </span>
+                          <div className="mt-1 text-xs text-gray-500">
+                            {formatDate(q.deleted_at || null)} {formatTime(q.deleted_at || null)}
+                          </div>
+                          {bitrixDealId && (
+                            <div className="mt-1 text-xs text-gray-400">Bitrix #{bitrixDealId}</div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cfg.className}`}>
+                            {cfg.icon}{cfg.label}
+                          </span>
+                          {isWorkflowOverdue && (
+                            <div className="mt-1 text-xs font-medium text-red-600">Просрочена</div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-4 py-4 text-gray-600">{participantCount}</td>
@@ -747,34 +858,48 @@ export default function DashboardPage() {
                       ) : <span className="text-gray-400">Бессрочно</span>}
                     </td>
                     <td className="px-4 py-4">
-                      <div className="font-medium text-gray-900">{responsibleName}</div>
+                      <div className="font-medium text-gray-900">{trashMode ? deletedByName : responsibleName}</div>
                       <div className="text-xs text-gray-500 mt-0.5">
-                        {responsibleRole ? APP_ROLE_LABELS[responsibleRole] : 'Не указан'}
+                        {trashMode
+                          ? (deletedByRole ? APP_ROLE_LABELS[deletedByRole] : 'Не указан')
+                          : (responsibleRole ? APP_ROLE_LABELS[responsibleRole] : 'Не указан')}
                       </div>
                     </td>
                     <td className="px-4 py-4" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1 justify-end">
-                        <button
-                          onClick={() => copyLink(q.secret_token)}
-                          title="Копировать ссылку"
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                        >
-                          <Copy size={15} />
-                        </button>
-                        <button
-                          onClick={() => toggleActive(q)}
-                          title={q.is_active ? 'Деактивировать' : 'Активировать'}
-                          className={`p-1.5 rounded-lg transition-all ${q.is_active ? 'text-gray-400 hover:text-amber-600 hover:bg-amber-50' : 'text-gray-400 hover:text-green-600 hover:bg-green-50'}`}
-                        >
-                          {q.is_active ? <PowerOff size={15} /> : <Power size={15} />}
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(q.id)}
-                          title="Удалить"
-                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        {trashMode ? (
+                          <button
+                            onClick={() => setRestoreTarget({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId })}
+                            title="Восстановить"
+                            className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-all"
+                          >
+                            <RotateCcw size={15} />
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => copyLink(q.secret_token)}
+                              title="Копировать ссылку"
+                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                            >
+                              <Copy size={15} />
+                            </button>
+                            <button
+                              onClick={() => toggleActive(q)}
+                              title={q.is_active ? 'Деактивировать' : 'Активировать'}
+                              className={`p-1.5 rounded-lg transition-all ${q.is_active ? 'text-gray-400 hover:text-amber-600 hover:bg-amber-50' : 'text-gray-400 hover:text-green-600 hover:bg-green-50'}`}
+                            >
+                              {q.is_active ? <PowerOff size={15} /> : <Power size={15} />}
+                            </button>
+                            <button
+                              onClick={() => setDeleteTarget({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId })}
+                              title="Удалить"
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -798,12 +923,29 @@ export default function DashboardPage() {
 
       {deleteTarget && (
         <ConfirmModal
-          title="Удалить анкету?"
-          message="Все данные компании, сотрудников и документы будут удалены. Это действие необратимо."
-          confirmLabel="Удалить"
+          title="Перенести заявку в корзину?"
+          message={
+            deleteTarget.bitrixDealId
+              ? `Заявка будет скрыта из общего списка и перемещена в корзину на 30 дней. Связанная сделка Bitrix24 #${deleteTarget.bitrixDealId} будет удалена. Восстановление заявки не восстановит сделку Bitrix24 автоматически.`
+              : 'Заявка будет скрыта из общего списка и перемещена в корзину на 30 дней. Связанная сделка Bitrix24 не найдена.'
+          }
+          confirmLabel="В корзину"
           danger
+          confirmDisabled={trashActionLoading}
+          cancelDisabled={trashActionLoading}
           onConfirm={() => deleteQuestionnaire(deleteTarget)}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+      {restoreTarget && (
+        <ConfirmModal
+          title="Восстановить заявку?"
+          message="Заявка вернется в общий список. Если связанная сделка Bitrix24 была удалена при переносе в корзину, она не восстановится автоматически."
+          confirmLabel="Восстановить"
+          confirmDisabled={trashActionLoading}
+          cancelDisabled={trashActionLoading}
+          onConfirm={() => restoreQuestionnaire(restoreTarget)}
+          onCancel={() => setRestoreTarget(null)}
         />
       )}
     </DashboardLayout>

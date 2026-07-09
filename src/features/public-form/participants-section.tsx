@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, MutableRefObject } from 'react';
-import { ChevronDown, Plus, Trash2, Upload, Users, X } from 'lucide-react';
+import { ChevronDown, Download, HelpCircle, Plus, Trash2, Upload, Users, X } from 'lucide-react';
 import { getParticipantMissingFields, isParticipantRowStarted, type LocalParticipant, type ValidationErrors } from './model';
+import { PARTICIPANT_IMPORT_HELP_URL, PARTICIPANT_IMPORT_TEMPLATE_URL } from '../../lib/participantImportAssets';
+import PhotoCropModal from '../../components/PhotoCropModal';
 
 type ParticipantColumnKey =
   | 'photo'
-  | 'last_name'
-  | 'first_name'
-  | 'patronymic'
+  | 'full_name'
+  | 'email'
   | 'position'
   | 'category'
   | 'courses'
@@ -15,9 +16,8 @@ type ParticipantColumnKey =
 
 const DEFAULT_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
   photo: 96,
-  last_name: 180,
-  first_name: 170,
-  patronymic: 190,
+  full_name: 320,
+  email: 240,
   position: 220,
   category: 180,
   courses: 460,
@@ -26,9 +26,8 @@ const DEFAULT_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
 
 const MIN_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
   photo: 96,
-  last_name: 140,
-  first_name: 140,
-  patronymic: 150,
+  full_name: 220,
+  email: 180,
   position: 170,
   category: 150,
   courses: 320,
@@ -37,9 +36,8 @@ const MIN_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
 
 const HEADER_DEFS: Array<{ key: ParticipantColumnKey; label: string; resizable: boolean }> = [
   { key: 'photo', label: 'Фото', resizable: false },
-  { key: 'last_name', label: 'Фамилия', resizable: true },
-  { key: 'first_name', label: 'Имя', resizable: true },
-  { key: 'patronymic', label: 'Отчество', resizable: true },
+  { key: 'full_name', label: 'ФИО', resizable: true },
+  { key: 'email', label: 'Email участника', resizable: true },
   { key: 'position', label: 'Должность', resizable: true },
   { key: 'category', label: 'Категория', resizable: true },
   { key: 'courses', label: 'Курсы', resizable: true },
@@ -53,6 +51,8 @@ interface ParticipantsSectionProps {
   openCourseSelect: string | null;
   courseSearch: string;
   errors: ValidationErrors;
+  participantImportMessage?: string;
+  photoRequired: boolean;
   canFillParticipants: boolean;
   canEditParticipants: boolean;
   totalCourses: number;
@@ -71,6 +71,7 @@ interface ParticipantsSectionProps {
   onCourseSearchChange: (value: string) => void;
   onRemoveParticipant: (participantIndex: number) => void;
   onAddParticipant: () => void;
+  onParticipantsFileImport: (file: File) => void;
 }
 
 export function ParticipantsSection(props: ParticipantsSectionProps) {
@@ -81,6 +82,8 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     openCourseSelect,
     courseSearch,
     errors,
+    participantImportMessage,
+    photoRequired,
     canFillParticipants,
     canEditParticipants,
     totalCourses,
@@ -99,10 +102,13 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     onCourseSearchChange,
     onRemoveParticipant,
     onAddParticipant,
+    onParticipantsFileImport,
   } = props;
 
   const [columnWidths, setColumnWidths] = useState<Record<ParticipantColumnKey, number>>(DEFAULT_COLUMN_WIDTHS);
+  const [photoCropRequest, setPhotoCropRequest] = useState<{ participantId: string; file: File } | null>(null);
   const resizeStateRef = useRef<{ key: ParticipantColumnKey; startX: number; startWidth: number } | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     function handleMouseMove(event: MouseEvent) {
@@ -170,6 +176,46 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
           <span className="flex items-center gap-1.5 bg-amber-50 text-amber-700 px-3 py-1 rounded-full font-medium">
             {totalCourseRequests} заявок на курсы
           </span>
+          <a
+            href={PARTICIPANT_IMPORT_TEMPLATE_URL}
+            download
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition-all hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+            title="Скачать Excel-шаблон"
+          >
+            <Download size={13} />
+            Пример
+          </a>
+          <a
+            href={PARTICIPANT_IMPORT_HELP_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+            title="Инструкция по импорту"
+          >
+            <HelpCircle size={15} />
+          </a>
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            disabled={!canEditParticipants}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title={'\u0418\u043c\u043f\u043e\u0440\u0442 Excel/CSV'}
+          >
+            <Upload size={13} />
+            {'\u0418\u043c\u043f\u043e\u0440\u0442'}
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv,.tsv"
+            className="hidden"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              if (file) onParticipantsFileImport(file);
+              event.currentTarget.value = '';
+            }}
+            disabled={!canEditParticipants}
+          />
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-500">Строк:</span>
             <select
@@ -188,6 +234,14 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
           {errors.participants}
         </div>
       )}
+      {participantImportMessage && !errors.participants && (
+        <div className="mb-4 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+          {participantImportMessage}
+        </div>
+      )}
+      <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+        Курсы в Excel можно не заполнять. После импорта списка сотрудников выберите нужные курсы в таблице. Если заполняете курсы в файле, разделяйте несколько названий точкой с запятой: БиОТ; ПТМ.
+      </div>
       {!canEditParticipants && (
         <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
           {canFillParticipants
@@ -231,7 +285,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
             {pagedParticipants.map(participant => {
               const index = participants.findIndex(item => item.id === participant.id);
               const missingFields = errors.participants && isParticipantRowStarted(participant)
-                ? getParticipantMissingFields(participant)
+                ? getParticipantMissingFields(participant, { photoRequired })
                 : [];
               const hasMissing = missingFields.length > 0;
               const filteredCourses = getFilteredCourses(participant);
@@ -257,7 +311,8 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                         }}
                         onChange={event => {
                           const file = event.target.files?.[0];
-                          if (file) onParticipantPhotoPick(participant.id, file);
+                          if (file) setPhotoCropRequest({ participantId: participant.id, file });
+                          event.currentTarget.value = '';
                         }}
                         disabled={!canEditParticipants}
                       />
@@ -277,13 +332,14 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                     </div>
                   </td>
 
-                  {(['last_name', 'first_name', 'patronymic', 'position'] as const).map(field => (
+                  {(['full_name', 'email', 'position'] as const).map(field => (
                     <td key={field} className="px-4 py-3 align-top" style={{ width: columnWidths[field], minWidth: columnWidths[field] }}>
                       <input
+                        type={field === 'email' ? 'email' : 'text'}
                         value={participant[field]}
                         onChange={event => onParticipantFieldChange(participant.id, field, event.target.value)}
                         className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all hover:border-gray-300 ${
-                          missingFields.includes(field) ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                          field !== 'email' && missingFields.includes(field) ? 'border-red-400 bg-red-50' : 'border-gray-200'
                         }`}
                         placeholder="—"
                         disabled={!canEditParticipants}
@@ -445,6 +501,16 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
           <Plus size={16} /> Добавить ещё сотрудника
         </button>
       </div>
+      {photoCropRequest && (
+        <PhotoCropModal
+          file={photoCropRequest.file}
+          onCancel={() => setPhotoCropRequest(null)}
+          onConfirm={file => {
+            onParticipantPhotoPick(photoCropRequest.participantId, file);
+            setPhotoCropRequest(null);
+          }}
+        />
+      )}
     </div>
   );
 }

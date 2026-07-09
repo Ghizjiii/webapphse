@@ -17,7 +17,7 @@ import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFro
 import { reconcileProtocolsFromCertificates } from '../../lib/protocolGeneration';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
-import type { Certificate, Participant, RefBitrixListItem, RefCoursePrice, RefDocumentValidityRule, SortConfig } from '../../types';
+import type { Certificate, Participant, QuestionnaireRequestType, RefBitrixListItem, RefCoursePrice, RefDocumentValidityRule, SortConfig } from '../../types';
 import {
  ALL_COLUMN_KEYS,
  AUX_COLUMN_LABELS,
@@ -39,6 +39,7 @@ export interface CertificatesTableProps {
  participants?: Participant[];
  bitrixDealId?: string | null;
  bitrixCompanyId?: string | null;
+ requestType?: QuestionnaireRequestType;
  certificates: Certificate[];
  onRefresh: () => void;
 }
@@ -51,11 +52,13 @@ export function useCertificatesTableController({
  participants = [],
  bitrixDealId = null,
  bitrixCompanyId = null,
+ requestType = 'external',
  certificates,
  onRefresh,
 }: CertificatesTableProps) {
-  const { profile } = useAuth();
-  const { showToast } = useToast();
+ const { profile } = useAuth();
+ const { showToast } = useToast();
+ const isInternalRequest = requestType === 'internal';
   const fallbackCategoryOptions = ['ИТР', 'Обычный'];
   const fallbackTypeLearnOptions = ['первичная', 'повторная', 'периодическая'];
   const canonicalMarkerPassOptions = [
@@ -862,6 +865,10 @@ export function useCertificatesTableController({
   }
 
   function autoPricePatchForCertificate(cert: Certificate, patch: Partial<Certificate>): Partial<Certificate> {
+  if (!isInternalRequest) {
+  return patch;
+  }
+
   if (Object.prototype.hasOwnProperty.call(patch, 'price')) {
   return patch;
   }
@@ -1076,6 +1083,7 @@ export function useCertificatesTableController({
   }, [coursePriceRules, localCertificates, onRefresh]);
 
   useEffect(() => {
+  if (!isInternalRequest) return;
   if (autoPriceBackfillAttemptedRef.current) return;
   if (coursePriceRules.length === 0 || localCertificates.length === 0) return;
 
@@ -1122,7 +1130,7 @@ export function useCertificatesTableController({
   }));
   onRefresh();
   });
-  }, [coursePriceRules, localCertificates, onRefresh, questionnaireId]);
+  }, [coursePriceRules, isInternalRequest, localCertificates, onRefresh, questionnaireId]);
 
   const myCompanyReferenceItems = useMemo(
   () => referenceBitrixListItems.filter(item => item.list_key === 'MY_COMPANIES'),
