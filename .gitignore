@@ -8,6 +8,8 @@ lerna-debug.log*
 
 node_modules
 supabase-backup
+.deploy-tmp
+google-apps-script-*-Code.gs
 dist
 dist-ssr
 *.local
