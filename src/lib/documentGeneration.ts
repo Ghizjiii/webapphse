@@ -92,18 +92,18 @@ const MONTHS_KAZ = [
 ];
 
 const MONTHS_KAZ_RUS_GENITIVE = [
-  '\u049b\u0430\u04a3\u0442\u0430\u0440/\u044f\u043d\u0432\u0430\u0440\u044f',
-  '\u0430\u049b\u043f\u0430\u043d/\u0444\u0435\u0432\u0440\u0430\u043b\u044f',
-  '\u043d\u0430\u0443\u0440\u044b\u0437/\u043c\u0430\u0440\u0442\u0430',
-  '\u0441\u04d9\u0443\u0456\u0440/\u0430\u043f\u0440\u0435\u043b\u044f',
-  '\u043c\u0430\u043c\u044b\u0440/\u043c\u0430\u044f',
-  '\u043c\u0430\u0443\u0441\u044b\u043c/\u0438\u044e\u043d\u044f',
-  '\u0448\u0456\u043b\u0434\u0435/\u0438\u044e\u043b\u044f',
-  '\u0442\u0430\u043c\u044b\u0437/\u0430\u0432\u0433\u0443\u0441\u0442\u0430',
-  '\u049b\u044b\u0440\u049b\u04af\u0439\u0435\u043a/\u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f',
-  '\u049b\u0430\u0437\u0430\u043d/\u043e\u043a\u0442\u044f\u0431\u0440\u044f',
-  '\u049b\u0430\u0440\u0430\u0448\u0430/\u043d\u043e\u044f\u0431\u0440\u044f',
-  '\u0436\u0435\u043b\u0442\u043e\u049b\u0441\u0430\u043d/\u0434\u0435\u043a\u0430\u0431\u0440\u044f',
+  '\u049b\u0430\u04a3\u0442\u0430\u0440 / \u044f\u043d\u0432\u0430\u0440\u044f',
+  '\u0430\u049b\u043f\u0430\u043d / \u0444\u0435\u0432\u0440\u0430\u043b\u044f',
+  '\u043d\u0430\u0443\u0440\u044b\u0437 / \u043c\u0430\u0440\u0442\u0430',
+  '\u0441\u04d9\u0443\u0456\u0440 / \u0430\u043f\u0440\u0435\u043b\u044f',
+  '\u043c\u0430\u043c\u044b\u0440 / \u043c\u0430\u044f',
+  '\u043c\u0430\u0443\u0441\u044b\u043c / \u0438\u044e\u043d\u044f',
+  '\u0448\u0456\u043b\u0434\u0435 / \u0438\u044e\u043b\u044f',
+  '\u0442\u0430\u043c\u044b\u0437 / \u0430\u0432\u0433\u0443\u0441\u0442\u0430',
+  '\u049b\u044b\u0440\u049b\u04af\u0439\u0435\u043a / \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f',
+  '\u049b\u0430\u0437\u0430\u043d / \u043e\u043a\u0442\u044f\u0431\u0440\u044f',
+  '\u049b\u0430\u0440\u0430\u0448\u0430 / \u043d\u043e\u044f\u0431\u0440\u044f',
+  '\u0436\u0435\u043b\u0442\u043e\u049b\u0441\u0430\u043d / \u0434\u0435\u043a\u0430\u0431\u0440\u044f',
 ];
 
 const INDUSTRIAL_SAFETY_TEMPLATE_KEYS = new Set([
@@ -142,6 +142,12 @@ function formatDateRuWords(value: string | null | undefined, includeYearSuffix =
   const parts = parseDateParts(value);
   if (!parts) return '';
   return `${parts.day} ${MONTHS_RUS_GENITIVE[parts.monthIndex]} ${parts.year}${includeYearSuffix ? ' года' : ''}`;
+}
+
+function formatDateKazRusWords(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `${parts.day} ${MONTHS_KAZ_RUS_GENITIVE[parts.monthIndex]} ${parts.year}`;
 }
 
 function formatIndustrialSafetyDay(value: string | null | undefined): string {
@@ -239,8 +245,8 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const courseName = String(cert.course_name || '').trim();
   const usesLongRussianDates = template?.key === 'tpl_03_fire_tech_minimum';
   const usesIndustrialSafetyBilingualDates = INDUSTRIAL_SAFETY_TEMPLATE_KEYS.has(String(template?.key || ''));
-  const startDate = usesLongRussianDates ? formatDateRuWords(cert.start_date) : normalizeDate(cert.start_date);
-  const expiryDate = usesLongRussianDates ? formatDateRuWords(cert.expiry_date) : normalizeDate(cert.expiry_date);
+  const startDate = usesLongRussianDates ? formatDateKazRusWords(cert.start_date) : normalizeDate(cert.start_date);
+  const expiryDate = usesLongRussianDates ? formatDateKazRusWords(cert.expiry_date) : normalizeDate(cert.expiry_date);
   const frontSideStartDate = usesIndustrialSafetyBilingualDates
     ? formatIndustrialSafetyIssueDateFront(cert.start_date)
     : startDate;

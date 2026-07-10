@@ -46,6 +46,21 @@ const MONTHS_GENITIVE = [
   'декабря',
 ];
 
+const MONTHS_KAZ_RUS_GENITIVE = [
+  '\u049b\u0430\u04a3\u0442\u0430\u0440 / \u044f\u043d\u0432\u0430\u0440\u044f',
+  '\u0430\u049b\u043f\u0430\u043d / \u0444\u0435\u0432\u0440\u0430\u043b\u044f',
+  '\u043d\u0430\u0443\u0440\u044b\u0437 / \u043c\u0430\u0440\u0442\u0430',
+  '\u0441\u04d9\u0443\u0456\u0440 / \u0430\u043f\u0440\u0435\u043b\u044f',
+  '\u043c\u0430\u043c\u044b\u0440 / \u043c\u0430\u044f',
+  '\u043c\u0430\u0443\u0441\u044b\u043c / \u0438\u044e\u043d\u044f',
+  '\u0448\u0456\u043b\u0434\u0435 / \u0438\u044e\u043b\u044f',
+  '\u0442\u0430\u043c\u044b\u0437 / \u0430\u0432\u0433\u0443\u0441\u0442\u0430',
+  '\u049b\u044b\u0440\u049b\u04af\u0439\u0435\u043a / \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f',
+  '\u049b\u0430\u0437\u0430\u043d / \u043e\u043a\u0442\u044f\u0431\u0440\u044f',
+  '\u049b\u0430\u0440\u0430\u0448\u0430 / \u043d\u043e\u044f\u0431\u0440\u044f',
+  '\u0436\u0435\u043b\u0442\u043e\u049b\u0441\u0430\u043d / \u0434\u0435\u043a\u0430\u0431\u0440\u044f',
+];
+
 const TEMPLATE_BOT_ITR: ProtocolTemplateConfig = {
   key: 'tpl_protocol_01_bot_itr',
   name: '01. Безопасность и охрана труда - Протокол ИТР состава',
@@ -129,12 +144,14 @@ function normalizeProtocolSequenceCourseName(value: string | null | undefined): 
   return normalizeText(value).replace(/\s+/g, ' ');
 }
 
-function normalizeDate(value: string | null | undefined): string {
+function formatDateKazRusWords(value: string | null | undefined): string {
   if (!value) return '';
   const source = String(value).split('T')[0];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(source)) return '';
   const [year, month, day] = source.split('-');
-  return `${day}.${month}.${year}`;
+  const monthIndex = Number(month) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return '';
+  return `${Number(day)} ${MONTHS_KAZ_RUS_GENITIVE[monthIndex]} ${year}`;
 }
 
 function normalizeDay(value: string | null | undefined): string {
@@ -747,8 +764,8 @@ export function buildProtocolDocumentPayload(params: {
       '{{PROTOCOL_NUM}}': String(params.protocol.protocol_number || '').trim(),
       '{{PROTOCOL_DATE}}': formatProtocolDateRu(params.protocol.protocol_date),
       '{{PROTOCOL_DATE_SHORT}}': formatProtocolDateShortRu(params.protocol.protocol_date),
-      '{{COURSE_START}}': normalizeDate(cert.start_date),
-      '{{DOC_VALID}}': normalizeDate(cert.expiry_date),
+      '{{COURSE_START}}': formatDateKazRusWords(cert.start_date),
+      '{{DOC_VALID}}': formatDateKazRusWords(cert.expiry_date),
       '{{MARKER_PASS}}': String(cert.marker_pass || '').trim(),
       '{{TYPE_LEARN}}': String(cert.type_learn || '').trim(),
       '{{COMMIS_CONCL}}': String(cert.commis_concl || '').trim(),
