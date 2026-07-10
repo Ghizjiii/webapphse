@@ -14,9 +14,97 @@ export interface UploadedPaymentOrder {
   storage_path?: string;
 }
 
+const PARTICIPANT_PHOTO_WIDTH = 600;
+const PARTICIPANT_PHOTO_HEIGHT = 800;
+const PARTICIPANT_PHOTO_TYPE = 'image/jpeg';
+const PARTICIPANT_PHOTO_QUALITY = 0.9;
+
+function isImageFile(file: File): boolean {
+  return String(file.type || '').toLowerCase().startsWith('image/');
+}
+
+function participantPhotoFileName(file: File): string {
+  const base = String(file.name || 'participant-photo')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[^\p{L}\p{N}._-]+/gu, '_')
+    .replace(/^_+|_+$/g, '') || 'participant-photo';
+  return `${base}.jpg`;
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) {
+        resolve(blob);
+        return;
+      }
+      reject(new Error('Не удалось подготовить фото'));
+    }, type, quality);
+  });
+}
+
+async function loadImageElement(file: File): Promise<HTMLImageElement> {
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = imageUrl;
+    await image.decode();
+    return image;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+export async function prepareParticipantPhotoFile(file: File): Promise<File> {
+  if (!isImageFile(file) || typeof document === 'undefined') return file;
+
+  const image = await loadImageElement(file);
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (!sourceWidth || !sourceHeight) return file;
+
+  const targetRatio = PARTICIPANT_PHOTO_WIDTH / PARTICIPANT_PHOTO_HEIGHT;
+  const sourceRatio = sourceWidth / sourceHeight;
+  const cropWidth = sourceRatio > targetRatio ? sourceHeight * targetRatio : sourceWidth;
+  const cropHeight = sourceRatio > targetRatio ? sourceHeight : sourceWidth / targetRatio;
+  const cropX = Math.max(0, (sourceWidth - cropWidth) / 2);
+  const cropY = Math.max(0, (sourceHeight - cropHeight) / 2);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = PARTICIPANT_PHOTO_WIDTH;
+  canvas.height = PARTICIPANT_PHOTO_HEIGHT;
+
+  const context = canvas.getContext('2d');
+  if (!context) return file;
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
+    image,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    PARTICIPANT_PHOTO_WIDTH,
+    PARTICIPANT_PHOTO_HEIGHT,
+  );
+
+  const blob = await canvasToBlob(canvas, PARTICIPANT_PHOTO_TYPE, PARTICIPANT_PHOTO_QUALITY);
+  return new File([blob], participantPhotoFileName(file), {
+    type: PARTICIPANT_PHOTO_TYPE,
+    lastModified: Date.now(),
+  });
+}
+
 export async function uploadPhoto(file: File, folder = 'hse-participants'): Promise<string> {
+  const uploadFile = await prepareParticipantPhotoFile(file);
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('file', uploadFile);
   formData.append('folder', folder);
 
   const response = await fetch(`${SUPABASE_URL}/functions/v1/upload-photo`, {

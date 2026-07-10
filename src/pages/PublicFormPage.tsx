@@ -125,6 +125,8 @@ export default function PublicFormPage() {
             openCourseSelect={controller.openCourseSelect}
             courseSearch={controller.courseSearch}
             errors={controller.errors}
+            participantImportMessage={controller.participantImportMessage}
+            photoRequired={controller.photoRequired}
             canFillParticipants={controller.canFillParticipants}
             canEditParticipants={controller.canEditParticipants}
             totalCourses={controller.totalCourses}
@@ -145,6 +147,9 @@ export default function PublicFormPage() {
             onCourseSearchChange={controller.setCourseSearch}
             onRemoveParticipant={controller.removeParticipant}
             onAddParticipant={controller.addParticipant}
+            onParticipantsFileImport={file => {
+              void controller.importParticipantsFromFile(file);
+            }}
           />
 
           <div className="pb-6">

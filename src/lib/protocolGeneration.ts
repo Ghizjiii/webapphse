@@ -199,24 +199,39 @@ async function loadProtocolNumeratorSettings(): Promise<Map<string, number>> {
 }
 
 async function assignAutomaticProtocolNumbers<T extends {
+  id?: string;
   course_name: string;
   category_scope: ProtocolCategoryScope;
   protocol_number: string;
-}>(rows: T[]): Promise<T[]> {
-  const rowsToAssign = rows.filter(row => !String(row.protocol_number || '').trim());
+}>(
+  rows: T[],
+  options: { replaceExisting?: boolean } = {},
+): Promise<T[]> {
+  const rowsToAssign = rows.filter(row => (
+    options.replaceExisting || !String(row.protocol_number || '').trim()
+  ));
   if (rowsToAssign.length === 0) return rows;
+
+  const excludedIds = new Set(
+    options.replaceExisting
+      ? rowsToAssign
+          .map(row => String(row.id || '').trim())
+          .filter(id => id && !id.startsWith('draft:'))
+      : [],
+  );
 
   const [settingsMap, existingProtocolsResponse] = await Promise.all([
     loadProtocolNumeratorSettings(),
     supabase
       .from('protocols')
-      .select('course_name, category_scope, protocol_number'),
+      .select('id, course_name, category_scope, protocol_number'),
   ]);
 
   if (existingProtocolsResponse.error) throw existingProtocolsResponse.error;
 
   const maxNumberByKey = new Map<string, number>();
   for (const row of existingProtocolsResponse.data || []) {
+    if (excludedIds.has(String(row.id || '').trim())) continue;
     const currentNumber = parseProtocolSequenceNumber(row.protocol_number);
     if (currentNumber == null) continue;
 
@@ -231,7 +246,7 @@ async function assignAutomaticProtocolNumbers<T extends {
   }
 
   return rows.map(row => {
-    if (String(row.protocol_number || '').trim()) return row;
+    if (!options.replaceExisting && String(row.protocol_number || '').trim()) return row;
 
     const key = protocolNumberSequenceKey({
       courseName: row.course_name,
@@ -247,6 +262,18 @@ async function assignAutomaticProtocolNumbers<T extends {
       protocol_number: String(nextNumber),
     };
   });
+}
+
+export async function assignProtocolNumbersToRows<T extends {
+  id?: string;
+  course_name: string;
+  category_scope: ProtocolCategoryScope;
+  protocol_number: string;
+}>(
+  rows: T[],
+  options: { replaceExisting?: boolean } = {},
+): Promise<T[]> {
+  return assignAutomaticProtocolNumbers(rows, options);
 }
 
 function buildCertificateProtocolNumberUpdates(

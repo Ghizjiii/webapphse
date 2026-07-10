@@ -41,7 +41,14 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
 
     setRequestType('internal');
     setSelectedRegionId(defaultRegionId);
+    setPaymentOrderOptional(true);
   }, [defaultRegionId, hasDefaultRegion]);
+
+  useEffect(() => {
+    if (requestType === 'internal') {
+      setPaymentOrderOptional(true);
+    }
+  }, [requestType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +127,7 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
       region_bitrix_item_id: selectedRegion?.bitrix_item_id || '',
       region_name: selectedRegion?.name || '',
       expires_at,
-      payment_order_optional: paymentOrderOptional,
+      payment_order_optional: requestType === 'internal' || paymentOrderOptional,
     });
   }
 
@@ -162,7 +169,10 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setRequestType(option.value)}
+                  onClick={() => {
+                    setRequestType(option.value);
+                    setPaymentOrderOptional(option.value === 'internal');
+                  }}
                   className={`rounded-lg px-3 py-2 text-sm font-medium transition-all ${
                     requestType === option.value
                       ? 'bg-white text-blue-700 shadow-sm'
@@ -227,8 +237,11 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
           <div>
             <label className="flex cursor-pointer items-center gap-2.5">
               <div
-                onClick={() => setPaymentOrderOptional((prev) => !prev)}
-                className={`flex h-5.5 w-10 rounded-full px-0.5 transition-colors ${paymentOrderOptional ? 'bg-blue-600' : 'bg-gray-300'}`}
+                onClick={() => {
+                  if (requestType === 'internal') return;
+                  setPaymentOrderOptional((prev) => !prev);
+                }}
+                className={`flex h-5.5 w-10 rounded-full px-0.5 transition-colors ${paymentOrderOptional ? 'bg-blue-600' : 'bg-gray-300'} ${requestType === 'internal' ? 'cursor-not-allowed opacity-70' : ''}`}
                 style={{ height: '22px', width: '40px' }}
               >
                 <div className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${paymentOrderOptional ? 'translate-x-[18px]' : 'translate-x-0'}`} />

@@ -1,10 +1,11 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
  BITRIX_CERTIFICATE_REFERENCE_FIELDS,
  BITRIX_FIELDS,
  BITRIX_FIELDS_RAW,
+ callBitrix,
  createSmartProcessItem,
  fetchSmartProcessItem,
  findSmartProcessEntityTypeId,
@@ -17,12 +18,13 @@ import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFro
 import { reconcileProtocolsFromCertificates } from '../../lib/protocolGeneration';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
-import type { Certificate, Participant, RefBitrixListItem, RefCoursePrice, RefDocumentValidityRule, SortConfig } from '../../types';
+import type { Certificate, Participant, QuestionnaireRequestType, RefBitrixListItem, RefCoursePrice, RefDocumentValidityRule, SortConfig } from '../../types';
 import {
  ALL_COLUMN_KEYS,
  AUX_COLUMN_LABELS,
  BULK_TEXT_FILL_FIELDS,
  DEFAULT_COLUMN_WIDTHS,
+ getCertificateDisplayName,
  makeGeneratedFileName,
  sortCerts,
  TEXT_FIELDS,
@@ -39,6 +41,7 @@ export interface CertificatesTableProps {
  participants?: Participant[];
  bitrixDealId?: string | null;
  bitrixCompanyId?: string | null;
+ requestType?: QuestionnaireRequestType;
  certificates: Certificate[];
  onRefresh: () => void;
 }
@@ -51,11 +54,13 @@ export function useCertificatesTableController({
  participants = [],
  bitrixDealId = null,
  bitrixCompanyId = null,
+ requestType = 'external',
  certificates,
  onRefresh,
 }: CertificatesTableProps) {
-  const { profile } = useAuth();
-  const { showToast } = useToast();
+ const { profile } = useAuth();
+ const { showToast } = useToast();
+ const isInternalRequest = requestType === 'internal';
   const fallbackCategoryOptions = ['ИТР', 'Обычный'];
   const fallbackTypeLearnOptions = ['первичная', 'повторная', 'периодическая'];
   const canonicalMarkerPassOptions = [
@@ -733,6 +738,88 @@ export function useCertificatesTableController({
   return parts.join('::');
   }
 
+  type DealProductRow = {
+  productName: string;
+  quantity: number;
+  unitPrice: number | null;
+  totalPrice: number;
+  };
+
+  function normalizeCertificatePrice(value: Certificate['price']): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function formatMoneyPlain(value: number): string {
+  return `${Math.round(value).toLocaleString('ru-RU')} \u20b8`;
+  }
+
+  function buildDealProductRowsFromCertificates(sourceCertificates: Certificate[]): DealProductRow[] {
+  const groups = new Map<string, DealProductRow>();
+
+  for (const cert of sourceCertificates) {
+  const courseName = String(cert.course_name || '').trim();
+  if (!courseName) continue;
+
+  const categoryLabel = String(cert.category || '').trim() || '\u0411\u0435\u0437 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u0438';
+  const unitPrice = normalizeCertificatePrice(cert.price);
+  const productName = `${courseName} (${categoryLabel})`;
+  const priceKey = unitPrice === null ? '__missing__' : String(unitPrice);
+  const groupKey = `${normalizeCoursePriceLookup(productName)}::${priceKey}`;
+  const current = groups.get(groupKey) || {
+  productName,
+  quantity: 0,
+  unitPrice,
+  totalPrice: 0,
+  };
+
+  current.quantity += 1;
+  current.totalPrice = (current.unitPrice ?? 0) * current.quantity;
+  groups.set(groupKey, current);
+  }
+
+  return Array.from(groups.values()).sort((left, right) => {
+  const byName = left.productName.localeCompare(right.productName, 'ru');
+  if (byName !== 0) return byName;
+  return (left.unitPrice ?? -1) - (right.unitPrice ?? -1);
+  });
+  }
+
+  async function syncDealProductsAndAmountToBitrix(sourceCertificates: Certificate[]) {
+  const dealIdValue = String(bitrixDealId || '').trim();
+  if (!dealIdValue) return null;
+
+  const productRows = buildDealProductRowsFromCertificates(sourceCertificates);
+  const dealAmount = productRows.reduce((sum, row) => sum + row.totalPrice, 0);
+  const bitrixRows = productRows.map(row => ({
+  PRODUCT_ID: 0,
+  PRODUCT_NAME: row.productName,
+  PRICE: row.unitPrice ?? 0,
+  QUANTITY: row.quantity,
+  MEASURE_CODE: 796,
+  MEASURE_NAME: '\u0448\u0442.',
+  }));
+
+  await callBitrix('crm.deal.productrows.set', {
+  id: dealIdValue,
+  rows: bitrixRows,
+  });
+
+  await callBitrix('crm.deal.update', {
+  id: dealIdValue,
+  fields: {
+  OPPORTUNITY: dealAmount,
+  IS_MANUAL_OPPORTUNITY: 'Y',
+  },
+  });
+
+  return {
+  rowsCount: productRows.length,
+  dealAmount,
+  };
+  }
+
   function isElectricalSafetyCourse(courseName: string): boolean {
   return normalizeCoursePriceLookup(courseName).includes('электробезопас');
   }
@@ -862,6 +949,10 @@ export function useCertificatesTableController({
   }
 
   function autoPricePatchForCertificate(cert: Certificate, patch: Partial<Certificate>): Partial<Certificate> {
+  if (!isInternalRequest) {
+  return patch;
+  }
+
   if (Object.prototype.hasOwnProperty.call(patch, 'price')) {
   return patch;
   }
@@ -1076,6 +1167,7 @@ export function useCertificatesTableController({
   }, [coursePriceRules, localCertificates, onRefresh]);
 
   useEffect(() => {
+  if (!isInternalRequest) return;
   if (autoPriceBackfillAttemptedRef.current) return;
   if (coursePriceRules.length === 0 || localCertificates.length === 0) return;
 
@@ -1122,7 +1214,7 @@ export function useCertificatesTableController({
   }));
   onRefresh();
   });
-  }, [coursePriceRules, localCertificates, onRefresh, questionnaireId]);
+  }, [coursePriceRules, isInternalRequest, localCertificates, onRefresh, questionnaireId]);
 
   const myCompanyReferenceItems = useMemo(
   () => referenceBitrixListItems.filter(item => item.list_key === 'MY_COMPANIES'),
@@ -1336,10 +1428,10 @@ export function useCertificatesTableController({
  () => columnOrder.filter(key => visibleColumns[String(key)] !== false),
  [columnOrder, visibleColumns]
  );
- const activeColumnCount = orderedVisibleColumnKeys.length + 1;
+ const activeColumnCount = orderedVisibleColumnKeys.length + 2;
  const tableMinWidth = useMemo(() => {
  const mainWidth = orderedVisibleColumnKeys.reduce((sum, key) => sum + (columnWidths[String(key)] || 100), 0);
- const full = mainWidth + (columnWidths.actions || 56);
+ const full = mainWidth + 80 + (columnWidths.actions || 56);
  return Math.max(1600, full);
  }, [columnWidths, orderedVisibleColumnKeys]);
 
@@ -1533,6 +1625,7 @@ export function useCertificatesTableController({
  deal_id: dealId,
  company_id: companyId,
  is_printed: false,
+ full_name: '',
  sync_status: 'pending',
  });
  if (error) {
@@ -2399,8 +2492,10 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   const effectiveManager = String(cert.manager || '').trim()
   ? String(cert.manager || '').trim()
   : resolveManagerByIssuerCompany(bitrixListItemsForSync, cert.issuer_company || '');
-  const fieldEntries: SmartFieldEntry[] = [
- { code: 'TITLE', kind: 'text', value: [cert.last_name, cert.first_name, cert.middle_name, cert.course_name].filter(Boolean).join(' - ') },
+  const certificateDisplayName = getCertificateDisplayName(cert);
+ const fieldEntries: SmartFieldEntry[] = [
+ { code: 'TITLE', kind: 'text', value: [certificateDisplayName, cert.course_name].filter(Boolean).join(' - ') },
+ { code: BITRIX_FIELDS.PARTICIPANT_FULL_NAME, kind: 'text', value: certificateDisplayName },
  { code: BITRIX_FIELDS.LAST_NAME, kind: 'text', value: cert.last_name || '' },
  { code: BITRIX_FIELDS.FIRST_NAME, kind: 'text', value: cert.first_name || '' },
  { code: BITRIX_FIELDS.MIDDLE_NAME, kind: 'text', value: cert.middle_name || '' },
@@ -2497,10 +2592,22 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  }
  }
 
+ if (success > 0) {
+ try {
+ const dealSyncResult = await syncDealProductsAndAmountToBitrix(localCertificates);
+ if (dealSyncResult) {
+ showToast('success', `\u0421\u0434\u0435\u043b\u043a\u0430 Bitrix \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0430: ${dealSyncResult.rowsCount} \u0442\u043e\u0432\u0430\u0440\u043d\u044b\u0445 \u0441\u0442\u0440\u043e\u043a, \u0441\u0443\u043c\u043c\u0430 ${formatMoneyPlain(dealSyncResult.dealAmount)}`);
+ }
+ } catch (dealSyncError) {
+ const message = dealSyncError instanceof Error ? dealSyncError.message : '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0441\u0443\u043c\u043c\u0443 \u0438 \u0442\u043e\u0432\u0430\u0440\u044b \u0441\u0434\u0435\u043b\u043a\u0438 Bitrix';
+ showToast('warning', `\u0421\u0442\u0440\u043e\u043a\u0438 \u0443\u0434\u043e\u0441\u0442\u043e\u0432\u0435\u0440\u0435\u043d\u0438\u0439 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u044b, \u043d\u043e \u0441\u0443\u043c\u043c\u0430 \u0441\u0434\u0435\u043b\u043a\u0438 \u043d\u0435 \u043f\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u043b\u0430\u0441\u044c: ${message}`);
+ }
+ }
+
  if (failed > 0) {
- showToast('warning', `Синхронизация сертификатов: ${success} успешно, ${failed} с ошибкой`);
+ showToast('warning', `\u0421\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u044f \u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0432: ${success} \u0443\u0441\u043f\u0435\u0448\u043d\u043e, ${failed} \u0441 \u043e\u0448\u0438\u0431\u043a\u043e\u0439`);
  } else {
- showToast('success', `Данные отправлены в Bitrix: ${success} строк`);
+ showToast('success', `\u0414\u0430\u043d\u043d\u044b\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u044b \u0432 Bitrix: ${success} \u0441\u0442\u0440\u043e\u043a`);
  }
  onRefresh();
  } catch (error) {
@@ -2570,6 +2677,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  visibleRows,
  targetRowsInfo,
  hasBitrixRows,
+ participantPhotoById,
  setEditCell,
  setEditValue,
  setCourseFilter,

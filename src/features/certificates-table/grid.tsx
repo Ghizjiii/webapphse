@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { CheckCircle, ChevronDown, ChevronUp, ChevronsUpDown, Trash2, XCircle } from 'lucide-react';
 import type { Certificate, SortConfig } from '../../types';
@@ -5,6 +6,7 @@ import {
   AUX_COLUMN_LABELS,
   BULK_TEXT_FILL_FIELDS,
   TEXT_FIELDS,
+  getCertificateDisplayName,
   type EditCell,
 } from './config';
 
@@ -17,6 +19,7 @@ interface CertificatesGridProps {
   sortConfig: SortConfig | null;
   activeColumnCount: number;
   tableMinWidth: number;
+  participantPhotoById: Map<string, string>;
   bulkSaving: boolean;
   bulkStartDate: string;
   bulkExpiryDate: string;
@@ -132,6 +135,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     sortConfig,
     activeColumnCount,
     tableMinWidth,
+    participantPhotoById,
     bulkSaving,
     bulkStartDate,
     bulkExpiryDate,
@@ -216,6 +220,13 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     getElectricalSafetyAdmissionProtocolOptions,
     onDeleteCertificate,
   } = props;
+
+  const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
+
+  function getCertificatePhotoUrl(cert: Certificate): string {
+    const participantId = String(cert.participant_id || '').trim();
+    return participantId ? String(participantPhotoById.get(participantId) || '').trim() : '';
+  }
 
   function SortIcon({ keyName }: { keyName: string }) {
     const isActive = sortConfig?.key === keyName;
@@ -763,12 +774,39 @@ export function CertificatesGrid(props: CertificatesGridProps) {
 
   return (
     <div>
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewPhoto(null)}
+        >
+          <div
+            className="relative max-h-[90vh] w-full max-w-2xl rounded-2xl bg-white p-4 shadow-2xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-gray-500 shadow-sm transition-colors hover:bg-gray-100 hover:text-gray-800"
+              title="\u0417\u0430\u043a\u0440\u044b\u0442\u044c"
+            >
+              <XCircle size={20} />
+            </button>
+            <div className="mb-3 pr-10 text-sm font-semibold text-gray-900">{repairDisplayText(previewPhoto.title)}</div>
+            <div className="flex max-h-[78vh] items-center justify-center overflow-hidden rounded-xl bg-gray-50">
+              <img src={previewPhoto.url} alt="" className="max-h-[78vh] w-auto max-w-full object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full bg-white text-sm" style={{ minWidth: `${tableMinWidth}px` }}>
           <thead className="sticky top-0 z-20 bg-white shadow-[0_1px_0_rgba(229,231,235,1)]">
             <tr className="border-b border-gray-200 bg-gray-50/95">
               <th className="w-14 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">
                 №
+              </th>
+              <th className="w-20 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">
+                {'\u0424\u043e\u0442\u043e'}
               </th>
               {orderedVisibleColumnKeys.map(columnKey => {
                 const key = String(columnKey);
@@ -814,6 +852,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
             </tr>
             <tr className="border-b border-gray-100 bg-white/95">
               <th />
+              <th />
               {orderedVisibleColumnKeys.map(columnKey => {
                 const key = String(columnKey);
                 return (
@@ -835,6 +874,26 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                 <td className="px-4 py-2 text-xs font-medium text-gray-500">
                   {rowStartIndex + index + 1}
                 </td>
+                <td className="px-4 py-2">
+                  {(() => {
+                    const photoUrl = getCertificatePhotoUrl(cert);
+                    const title = getCertificateDisplayName(cert) || cert.id;
+                    return photoUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPhoto({ url: photoUrl, title })}
+                        className="block h-10 w-10 overflow-hidden rounded-xl border border-gray-200 bg-gray-50 transition-all hover:border-blue-300 hover:ring-2 hover:ring-blue-100"
+                        title="\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0444\u043e\u0442\u043e"
+                      >
+                        <img src={photoUrl} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-[10px] text-gray-300">
+                        -
+                      </div>
+                    );
+                  })()}
+                </td>
                 {orderedVisibleColumnKeys.map(columnKey => {
                   const key = String(columnKey);
                   const textField = TEXT_FIELDS.find(field => field.key === columnKey);
@@ -842,7 +901,9 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                   if (textField) {
                     return (
                       <td key={key} className="px-4 py-2" style={{ width: columnWidths[key], minWidth: columnWidths[key] }}>
-                        {textField.key === 'marker_pass' ? (
+                        {textField.key === 'full_name' ? (
+                          <EditableCell certId={cert.id} field="full_name" value={getCertificateDisplayName(cert)} />
+                        ) : textField.key === 'marker_pass' ? (
                           <SelectCell
                             certId={cert.id}
                             field={textField.key}

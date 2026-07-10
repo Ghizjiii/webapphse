@@ -13,6 +13,7 @@ import {
   updateSmartProcessItem,
 } from '../lib/bitrix';
 import {
+  assignProtocolNumbersToRows,
   buildProtocolDocumentPayload,
   callGenerateProtocolDocumentFunction,
   certificatesForProtocolRow,
@@ -363,6 +364,63 @@ export default function ProtocolsTable({
     onRefresh();
   }
 
+  async function assignProtocolNumbers(replaceExisting: boolean) {
+    if (bulkSaving) return;
+    if (visibleRows.length === 0) {
+      showToast('warning', 'Нет строк протоколов для нумерации');
+      return;
+    }
+    if (
+      replaceExisting &&
+      !window.confirm('Перенумеровать видимые протоколы? Уже заполненные номера будут заменены.')
+    ) {
+      return;
+    }
+
+    setBulkSaving(true);
+    let success = 0;
+    let failed = 0;
+
+    try {
+      const numberedRows = await assignProtocolNumbersToRows(visibleRows, { replaceExisting });
+      const byKey = new Map(numberedRows.map(row => [rowKey(row), row]));
+      const changedRows = visibleRows
+        .map(row => {
+          const nextRow = byKey.get(rowKey(row));
+          const nextNumber = String(nextRow?.protocol_number || '').trim();
+          return nextNumber !== String(row.protocol_number || '').trim()
+            ? { row, protocol_number: nextNumber }
+            : null;
+        })
+        .filter((item): item is { row: Protocol; protocol_number: string } => Boolean(item));
+
+      if (changedRows.length === 0) {
+        showToast('warning', replaceExisting ? 'Номера уже актуальны' : 'Нет пустых номеров для заполнения');
+        return;
+      }
+
+      for (const item of changedRows) {
+        try {
+          await persistProtocolRow(item.row, { protocol_number: item.protocol_number });
+          success += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      if (failed > 0) {
+        showToast('warning', `Нумератор: успешно ${success}, с ошибкой ${failed}`);
+      } else {
+        showToast('success', `Нумератор обновил ${success} строк`);
+      }
+      onRefresh();
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Не удалось назначить номера протоколов');
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
   async function generateProtocols() {
     if (generating) return;
     if (visibleRows.length === 0) {
@@ -671,9 +729,23 @@ export default function ProtocolsTable({
           >
             {bulkSaving ? 'Сохраняем...' : 'Применить к отфильтрованным'}
           </button>
+          <button
+            onClick={() => void assignProtocolNumbers(false)}
+            disabled={bulkSaving || visibleRows.length === 0}
+            className="px-4 py-2 rounded-lg border border-blue-300 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+          >
+            Заполнить пустые номера
+          </button>
+          <button
+            onClick={() => void assignProtocolNumbers(true)}
+            disabled={bulkSaving || visibleRows.length === 0}
+            className="px-4 py-2 rounded-lg border border-amber-300 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60"
+          >
+            Перенумеровать видимые
+          </button>
         </div>
         <div className="mt-2 text-xs text-gray-500">
-          Массовое заполнение применяется к {visibleRows.length} строкам по текущим фильтрам.
+          Массовое заполнение и нумератор применяются к {visibleRows.length} строкам по текущим фильтрам.
         </div>
       </div>
 

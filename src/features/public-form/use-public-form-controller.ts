@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import { uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
+import { prepareParticipantPhotoFile, uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
 import { extractPaymentOrderFields } from '../../lib/paymentOcr';
 import { fetchCoursesList } from '../../lib/bitrix';
 import { buildCourseOptions, normalizeCourseOptionValue } from '../../lib/courseOptions';
 import { logger } from '../../lib/logger';
-import type { Company, Participant, RefCompanyDirectory, RefCoursePrice } from '../../types';
+import { getParticipantDisplayName } from '../../lib/participantName';
+import { parseParticipantImportFile } from '../../lib/participantImport';
+import type { Company, Participant, QuestionnaireRequestType, RefCompanyDirectory, RefCoursePrice } from '../../types';
 import {
  applyDirectoryMatchToCompany,
  createLocalParticipant,
@@ -30,6 +32,7 @@ export function usePublicFormController(token: string | undefined) {
  const [questionnaireId, setQuestionnaireId] = useState<string | null>(null);
  const [existingCompany, setExistingCompany] = useState<Company | null>(null);
  const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
+ const [requestType, setRequestType] = useState<QuestionnaireRequestType>('external');
 
  const [companyName, setCompanyName] = useState('');
  const [companyPhone, setCompanyPhone] = useState('');
@@ -63,6 +66,7 @@ export function usePublicFormController(token: string | undefined) {
  const [submitting, setSubmitting] = useState(false);
  const [submitted, setSubmitted] = useState(false);
  const [errors, setErrors] = useState<ValidationErrors>({});
+ const [participantImportMessage, setParticipantImportMessage] = useState('');
  const [pageSize, setPageSize] = useState(20);
  const [currentPage, setCurrentPage] = useState(1);
  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -190,7 +194,7 @@ export function usePublicFormController(token: string | undefined) {
  setLookupLoading(false);
  }
  }
- }, [applyDirectoryMatch]);
+ }, [applyDirectoryMatch, supabaseAnonKey]);
 
  const contractActiveByDates = isContractActiveByDates(directoryMatch?.contract_start, directoryMatch?.contract_end);
  const hasActiveContract = Boolean(
@@ -209,7 +213,9 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderAmountParsed !== null
  );
  const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && !paymentOrderDuplicate;
- const canEditParticipants = canFillParticipants && (paymentOrderOptional || paymentOrderReady);
+ const isInternalRequest = requestType === 'internal';
+ const photoRequired = isInternalRequest;
+ const canEditParticipants = canFillParticipants && (isInternalRequest || paymentOrderOptional || paymentOrderReady);
  const paymentStagePercent = paymentOrderStage === 'uploading'
  ? 35
  : paymentOrderStage === 'recognizing'
@@ -246,7 +252,7 @@ export function usePublicFormController(token: string | undefined) {
 
  const { data, error } = await supabase
  .from('questionnaires')
- .select('id, is_active, expires_at, status, payment_order_optional')
+ .select('id, is_active, expires_at, status, payment_order_optional, request_type')
  .eq('secret_token', token)
  .maybeSingle();
 
@@ -268,7 +274,9 @@ export function usePublicFormController(token: string | undefined) {
  }
 
  setQuestionnaireId(data.id);
- setPaymentOrderOptional(Boolean(data.payment_order_optional));
+ const nextRequestType = data.request_type === 'internal' ? 'internal' : 'external';
+ setRequestType(nextRequestType);
+ setPaymentOrderOptional(Boolean(data.payment_order_optional) || nextRequestType === 'internal');
 
  const { data: company } = await supabase
  .from('companies')
@@ -322,9 +330,11 @@ export function usePublicFormController(token: string | undefined) {
         setParticipants(loadedParticipants.map((participant: Participant) => ({
           id: participant.id,
           isPersisted: true,
+          full_name: getParticipantDisplayName(participant),
           last_name: participant.last_name || '',
           first_name: participant.first_name || '',
           patronymic: participant.patronymic || '',
+          email: participant.email || '',
  position: participant.position || '',
  category: participant.category || '',
  courses: (participantCourses || [])
@@ -397,7 +407,7 @@ export function usePublicFormController(token: string | undefined) {
  .map(participant => ({
  participant,
  index: participants.findIndex(item => item.id === participant.id),
- missing: getParticipantMissingFields(participant),
+ missing: getParticipantMissingFields(participant, { photoRequired }),
  }))
  .filter(item => item.missing.length > 0);
 
@@ -432,12 +442,14 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderOptional,
  paymentOrderNumber,
  paymentOrderUrl,
+ photoRequired,
  ]);
 
  const handlePhotoSelect = useCallback(async (participantId: string, file: File) => {
- const preview = URL.createObjectURL(file);
+ const preparedFile = await prepareParticipantPhotoFile(file);
+ const preview = URL.createObjectURL(preparedFile);
  setParticipants(current => current.map(participant => (
- participant.id === participantId ? { ...participant, photoFile: file, photoPreview: preview } : participant
+ participant.id === participantId ? { ...participant, photoFile: preparedFile, photoPreview: preview } : participant
  )));
  }, []);
 
@@ -678,6 +690,7 @@ export function usePublicFormController(token: string | undefined) {
 
  for (let index = 0; index < participantsToSubmit.length; index++) {
  const participant = participantsToSubmit[index];
+ const fullName = getParticipantDisplayName(participant);
 
  let photoUrl = participant.photo_url;
  if (participant.photoFile) {
@@ -697,9 +710,11 @@ export function usePublicFormController(token: string | undefined) {
  const existingParticipant = Boolean(participant.isPersisted);
  if (existingParticipant) {
  await supabase.from('participants').update({
- last_name: participant.last_name,
- first_name: participant.first_name,
- patronymic: participant.patronymic,
+ full_name: fullName,
+ last_name: participant.last_name || '',
+ first_name: participant.first_name || '',
+ patronymic: participant.patronymic || '',
+ email: participant.email.trim(),
  position: participant.position,
  category: participant.category,
  photo_url: photoUrl,
@@ -720,9 +735,11 @@ export function usePublicFormController(token: string | undefined) {
  const { data: newParticipant } = await supabase.from('participants').insert({
  questionnaire_id: questionnaireId,
  company_id: companyId,
- last_name: participant.last_name,
- first_name: participant.first_name,
- patronymic: participant.patronymic,
+ full_name: fullName,
+ last_name: participant.last_name || '',
+ first_name: participant.first_name || '',
+ patronymic: participant.patronymic || '',
+ email: participant.email.trim(),
  position: participant.position,
  category: participant.category,
  photo_url: photoUrl,
@@ -868,6 +885,50 @@ export function usePublicFormController(token: string | undefined) {
  setCurrentPage(Math.ceil((participants.length + 1) / pageSize));
  }, [canEditParticipants, pageSize, participants.length]);
 
+ const importParticipantsFromFile = useCallback(async (file: File) => {
+ if (!canEditParticipants) return;
+
+ try {
+ const result = await parseParticipantImportFile(file, availableCourses);
+ if (result.rows.length === 0) {
+ setParticipantImportMessage('');
+ setErrors(prev => ({
+ ...prev,
+ participants: result.warnings[0] || 'Не удалось найти сотрудников в файле.',
+ }));
+ return;
+ }
+
+ const nextLength = participants.filter(isParticipantRowStarted).length + result.rows.length;
+ setParticipants(current => {
+ const filled = current.filter(isParticipantRowStarted);
+ const imported = result.rows.map(row => ({
+ ...createLocalParticipant(),
+ full_name: row.full_name,
+ last_name: row.last_name,
+ first_name: row.first_name,
+ patronymic: row.patronymic,
+ email: row.email,
+ position: row.position,
+ category: row.category,
+ courses: row.courses,
+ }));
+ return [...filled, ...imported];
+ });
+ setCurrentPage(Math.max(1, Math.ceil(nextLength / pageSize)));
+ setErrors(prev => ({ ...prev, participants: undefined }));
+ setParticipantImportMessage(
+ result.warnings.length > 0
+ ? `Импортировано сотрудников: ${result.rows.length}. ${result.warnings.slice(0, 2).join(' ')}`
+ : `Импортировано сотрудников: ${result.rows.length}.`
+ );
+ } catch (error) {
+ logger.error('PublicFormPage', 'Participant import failed', error);
+ setParticipantImportMessage('');
+ setErrors(prev => ({ ...prev, participants: 'Не удалось прочитать файл сотрудников.' }));
+ }
+ }, [availableCourses, canEditParticipants, pageSize, participants]);
+
  useEffect(() => {
  const companyBinDigits = normalizeDigits(companyBin);
  const paymentOrderNumberValue = normalizePaymentOrderNumber(paymentOrderNumber);
@@ -949,9 +1010,12 @@ export function usePublicFormController(token: string | undefined) {
  return {
  linkStatus,
  paymentOrderOptional,
+ requestType,
+ photoRequired,
  submitted,
  submitting,
  errors,
+ participantImportMessage,
  companyName,
  companyPhone,
  companyEmail,
@@ -1014,6 +1078,7 @@ export function usePublicFormController(token: string | undefined) {
  toggleCourse,
  removeParticipant,
  addParticipant,
+ importParticipantsFromFile,
  handlePageSizeChange,
  };
 }

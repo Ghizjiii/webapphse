@@ -3,9 +3,11 @@ import type { RefCompanyDirectory } from '../../types';
 export interface LocalParticipant {
   id: string;
   isPersisted?: boolean;
+  full_name: string;
   last_name: string;
   first_name: string;
   patronymic: string;
+  email: string;
   position: string;
   category: string;
   courses: string[];
@@ -29,13 +31,15 @@ export interface ValidationErrors {
 
 export const PARTICIPANT_REQUIRED_FIELD_LABELS = {
   photo: 'фото',
-  last_name: 'фамилия',
-  first_name: 'имя',
-  patronymic: 'отчество',
+  full_name: 'ФИО',
   position: 'должность',
   category: 'категория',
   courses: 'курсы',
 } as const;
+
+export interface ParticipantValidationOptions {
+  photoRequired: boolean;
+}
 
 export type LinkStatus = 'loading' | 'valid' | 'invalid' | 'expired' | 'inactive' | 'submitted';
 export type PaymentOrderStage = 'idle' | 'uploading' | 'recognizing' | 'checking' | 'done' | 'error';
@@ -49,9 +53,11 @@ export function createLocalParticipant(): LocalParticipant {
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2),
     isPersisted: false,
+    full_name: '',
     last_name: '',
     first_name: '',
     patronymic: '',
+    email: '',
     position: '',
     category: '',
     courses: [],
@@ -66,9 +72,11 @@ export function hasParticipantPhoto(participant: LocalParticipant): boolean {
 export function isParticipantRowStarted(participant: LocalParticipant): boolean {
   return Boolean(
     participant.isPersisted ||
+    participant.full_name.trim() ||
     participant.last_name.trim() ||
     participant.first_name.trim() ||
     participant.patronymic.trim() ||
+    participant.email.trim() ||
     participant.position.trim() ||
     participant.category.trim() ||
     participant.courses.length > 0 ||
@@ -76,12 +84,14 @@ export function isParticipantRowStarted(participant: LocalParticipant): boolean 
   );
 }
 
-export function getParticipantMissingFields(participant: LocalParticipant): Array<keyof typeof PARTICIPANT_REQUIRED_FIELD_LABELS> {
+export function getParticipantMissingFields(
+  participant: LocalParticipant,
+  options: ParticipantValidationOptions = { photoRequired: true },
+): Array<keyof typeof PARTICIPANT_REQUIRED_FIELD_LABELS> {
   const missing: Array<keyof typeof PARTICIPANT_REQUIRED_FIELD_LABELS> = [];
-  if (!hasParticipantPhoto(participant)) missing.push('photo');
-  if (!participant.last_name.trim()) missing.push('last_name');
-  if (!participant.first_name.trim()) missing.push('first_name');
-  if (!participant.patronymic.trim()) missing.push('patronymic');
+  if (options.photoRequired && !hasParticipantPhoto(participant)) missing.push('photo');
+  const fullName = participant.full_name.trim() || [participant.last_name, participant.first_name, participant.patronymic].filter(Boolean).join(' ').trim();
+  if (!fullName) missing.push('full_name');
   if (!participant.position.trim()) missing.push('position');
   if (!participant.category.trim()) missing.push('category');
   if (participant.courses.length === 0) missing.push('courses');

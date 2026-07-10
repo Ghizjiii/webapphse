@@ -1,10 +1,17 @@
 import type { Certificate, SortConfig } from '../../types';
 
+export function getCertificateDisplayName(cert: Certificate): string {
+  const fullName = String(cert.full_name || '').trim();
+  if (fullName) return fullName;
+  return [cert.last_name, cert.first_name, cert.middle_name]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
 export const TEXT_FIELDS: { key: keyof Certificate; label: string }[] = [
-  { key: 'last_name', label: 'Фамилия' },
-  { key: 'first_name', label: 'Имя' },
-  { key: 'middle_name', label: 'Отчество' },
-  { key: 'position', label: 'Должность' },
+  { key: 'full_name', label: '\u0424\u0418\u041e' },
+  { key: 'position', label: '\u0414\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u044c' },
   { key: 'category', label: 'Категория' },
   { key: 'course_name', label: 'Наим. курса' },
   { key: 'qualification', label: 'Квалификация' },
@@ -52,9 +59,7 @@ export const AUX_COLUMN_LABELS: Record<string, string> = {
 };
 
 export const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  last_name: 130,
-  first_name: 120,
-  middle_name: 130,
+  full_name: 260,
   position: 130,
   category: 120,
   course_name: 240,
@@ -102,8 +107,12 @@ export function sortCerts(list: Certificate[], config: SortConfig | null): Certi
   if (!config) return list;
 
   return [...list].sort((left, right) => {
-    const leftValue = String((left as unknown as Record<string, unknown>)[config.key] ?? '');
-    const rightValue = String((right as unknown as Record<string, unknown>)[config.key] ?? '');
+    const leftValue = config.key === 'full_name'
+      ? getCertificateDisplayName(left)
+      : String((left as unknown as Record<string, unknown>)[config.key] ?? '');
+    const rightValue = config.key === 'full_name'
+      ? getCertificateDisplayName(right)
+      : String((right as unknown as Record<string, unknown>)[config.key] ?? '');
     const result = leftValue.localeCompare(rightValue, 'ru');
     return config.direction === 'asc' ? result : -result;
   });
