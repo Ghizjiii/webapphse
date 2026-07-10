@@ -319,6 +319,36 @@ export async function callGenerateDocumentFunction(input: {
   photoIssueCount: number;
   photoIssues: string[];
 }> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await callGenerateDocumentFunctionOnce(input);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 3) break;
+      await new Promise(resolve => setTimeout(resolve, 1200 * attempt));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Failed to invoke generate-document');
+}
+
+async function callGenerateDocumentFunctionOnce(input: {
+  template: TemplateConfig;
+  fileName: string;
+  placeholders?: Record<string, string>;
+  photoUrl?: string;
+  items?: GenerateDocumentItem[];
+}): Promise<{
+  fileUrl: string;
+  fileName: string;
+  fileId: string;
+  unresolvedCount: number;
+  unresolvedTokens: string[];
+  photoIssueCount: number;
+  photoIssues: string[];
+}> {
   const { data, error } = await supabase.functions.invoke('generate-document', {
     headers: {
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
