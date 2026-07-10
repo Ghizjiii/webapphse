@@ -38,6 +38,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
   const participantsCount = participants.length;
   const uniqueCoursesCount = allCourses.length;
   const totalCourseRequests = participants.reduce((sum, p) => sum + (p.courses?.length || 0), 0);
+  const showDealAmount = isUpdate || dealAmount > 0;
   const dealCurrencyId = String(import.meta.env.VITE_BITRIX_DEAL_CURRENCY_ID || 'KZT').trim() || 'KZT';
 
   const titlePrefix = [company.name, company.city].filter(Boolean).join(' - ');
@@ -138,7 +139,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div className="flex items-center justify-between p-6 border-b border-gray-100">
           <h2 className="text-lg font-semibold text-gray-900">
-            {isUpdate ? 'Обновить данные в Битрикс24' : 'Отправить в Битрикс24'}
+            {isUpdate ? 'Обновить данные в Битрикс24' : 'Первая отправка данных в Битрикс24'}
           </h2>
           {progress.status !== 'running' && (
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -178,10 +179,12 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
                   <span className="text-gray-500 w-28 flex-shrink-0">Заявок:</span>
                   <span className="font-medium text-gray-900">{totalCourseRequests}</span>
                 </div>
-                <div className="flex gap-2">
-                  <span className="text-gray-500 w-28 flex-shrink-0">Сумма сделки:</span>
-                  <span className="font-medium text-gray-900">{formatMoney(dealAmount)}</span>
-                </div>
+                {showDealAmount && (
+                  <div className="flex gap-2">
+                    <span className="text-gray-500 w-28 flex-shrink-0">Сумма сделки:</span>
+                    <span className="font-medium text-gray-900">{formatMoney(dealAmount)}</span>
+                  </div>
+                )}
                 {isUpdate && existingDeal?.bitrix_deal_id && (
                   <div className="flex gap-2">
                     <span className="text-gray-500 w-28 flex-shrink-0">ID сделки:</span>
@@ -204,7 +207,7 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
                   onClick={runSync}
                   className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2"
                 >
-                  {isUpdate ? <><RefreshCw size={15} /> Обновить</> : <><Send size={15} /> Отправить</>}
+                  {isUpdate ? <><RefreshCw size={15} /> Обновить</> : <><Send size={15} /> Отправить впервые</>}
                 </button>
               </div>
             </>

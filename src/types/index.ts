@@ -1,4 +1,4 @@
-﻿export interface QuestionnaireLink {
+export interface QuestionnaireLink {
   id: string;
   secret_token: string;
   title: string;
@@ -142,6 +142,7 @@ export interface RefDocumentValidityRule {
 export interface RefCoursePrice {
   id: string;
   bitrix_item_id: string;
+  full_name: string;
   name: string;
   course_name: string;
   qualification: string;
@@ -265,6 +266,7 @@ export interface Certificate {
   participant_id: string | null;
   course_id: string | null;
   bitrix_item_id: string;
+  full_name: string;
   last_name: string;
   first_name: string;
   middle_name: string;

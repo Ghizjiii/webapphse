@@ -162,6 +162,7 @@ type ExistingCertificateRow = {
   participant_id: string | null;
   bitrix_item_id: string | null;
   photo_sync_key: string | null;
+  full_name: string;
   last_name: string;
   first_name: string;
   middle_name: string;
@@ -2568,7 +2569,7 @@ Deno.serve(async (req: Request) => {
     const [existingCertsResult, coursePricesResult] = await Promise.all([
       supabase
         .from("certificates")
-        .select("id, participant_id, bitrix_item_id, photo_sync_key, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, electrical_safety_group, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
+        .select("id, participant_id, bitrix_item_id, photo_sync_key, full_name, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, electrical_safety_group, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
         .eq("questionnaire_id", questionnaireId),
       supabase
         .from("ref_course_prices")
@@ -2797,6 +2798,7 @@ Deno.serve(async (req: Request) => {
         company_id: company.id,
         participant_id: task.participant.id,
         bitrix_item_id: itemId,
+        full_name: participantDisplayName(task.participant),
         last_name: task.participant.last_name,
         first_name: task.participant.first_name,
         middle_name: task.participant.patronymic,

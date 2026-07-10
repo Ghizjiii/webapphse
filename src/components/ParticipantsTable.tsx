@@ -80,6 +80,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [importing, setImporting] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [photoCropRequest, setPhotoCropRequest] = useState<{ participantId: string; file: File } | null>(null);
+  const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
   const [courseEditing, setCourseEditing] = useState<string | null>(null);
   const [courseSearch, setCourseSearch] = useState('');
   const [pageSize, setPageSize] = useState(20);
@@ -446,6 +447,30 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   return (
     <div>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewPhoto(null)}
+        >
+          <div
+            className="relative max-h-[90vh] w-full max-w-2xl rounded-2xl bg-white p-4 shadow-2xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-gray-500 shadow-sm transition-colors hover:bg-gray-100 hover:text-gray-800"
+              title={UI.close}
+            >
+              <X size={20} />
+            </button>
+            <div className="mb-3 pr-10 text-sm font-semibold text-gray-900">{previewPhoto.title}</div>
+            <div className="flex max-h-[78vh] items-center justify-center overflow-hidden rounded-xl bg-gray-50">
+              <img src={previewPhoto.url} alt="" className="max-h-[78vh] w-auto max-w-full object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
       {photoCropRequest && (
         <PhotoCropModal
           file={photoCropRequest.file}
@@ -552,7 +577,14 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
                 <td className="px-4 py-3">
                   <div className="relative h-12 w-12 flex-shrink-0">
                     {p.photo_url ? (
-                      <img src={p.photo_url} alt="" className="h-12 w-12 rounded-xl border border-gray-200 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPhoto({ url: p.photo_url, title: getParticipantDisplayName(p) || UI.photo })}
+                        className="block h-12 w-12 overflow-hidden rounded-xl border border-gray-200 transition-all hover:border-blue-300 hover:ring-2 hover:ring-blue-100"
+                        title="\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0444\u043e\u0442\u043e"
+                      >
+                        <img src={p.photo_url} alt="" className="h-full w-full object-cover" />
+                      </button>
                     ) : (
                       <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-gray-200 bg-gray-100">
                         <span className="text-xs text-gray-400">{UI.photo}</span>

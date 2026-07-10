@@ -41,10 +41,10 @@ npm run build
 
 ## Security notes
 
-- Cloudinary credentials must be set as Supabase Edge Function secrets:
-  - `CLOUDINARY_CLOUD_NAME`
-  - `CLOUDINARY_API_KEY`
-  - `CLOUDINARY_API_SECRET`
+- Participant photos are stored in self-hosted Supabase Storage:
+  - `SUPABASE_PUBLIC_URL` should point to the public Supabase origin.
+  - `PARTICIPANT_PHOTOS_BUCKET` defaults to `participant-photos`.
+  - `PAYMENT_ORDERS_BUCKET` defaults to `payment-orders`.
 - `update-user-password` edge function now requires:
   - `ADMIN_API_TOKEN` secret
   - `Authorization: Bearer <ADMIN_API_TOKEN>` header

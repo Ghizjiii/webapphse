@@ -5,17 +5,7 @@ import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const paymentOrdersBucket = Deno.env.get("PAYMENT_ORDERS_BUCKET") || "payment-orders";
-
-const CLOUD_NAME = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
-const API_KEY = Deno.env.get("CLOUDINARY_API_KEY") || "";
-const API_SECRET = Deno.env.get("CLOUDINARY_API_SECRET") || "";
-
-async function sha1Hex(message: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest("SHA-1", msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-}
+const participantPhotosBucket = Deno.env.get("PARTICIPANT_PHOTOS_BUCKET") || "participant-photos";
 
 function isBucketNotFoundError(message: string): boolean {
   const m = String(message || "").toLowerCase();
@@ -38,6 +28,18 @@ function isSupportedPaymentOrderFile(contentType: string, fileName: string): boo
   return isPdf || isImage;
 }
 
+function isSupportedParticipantPhoto(contentType: string, fileName: string): boolean {
+  const ct = String(contentType || "").toLowerCase();
+  const name = String(fileName || "").toLowerCase();
+  return (
+    ct.startsWith("image/") ||
+    name.endsWith(".jpg") ||
+    name.endsWith(".jpeg") ||
+    name.endsWith(".png") ||
+    name.endsWith(".webp")
+  );
+}
+
 function resolvePaymentOrderContentType(contentType: string, fileName: string): string {
   const ct = String(contentType || "").toLowerCase();
   const name = String(fileName || "").toLowerCase();
@@ -49,6 +51,49 @@ function resolvePaymentOrderContentType(contentType: string, fileName: string): 
   if (name.endsWith(".bmp")) return "image/bmp";
   if (name.endsWith(".tif") || name.endsWith(".tiff")) return "image/tiff";
   return "application/octet-stream";
+}
+
+function resolveParticipantPhotoContentType(contentType: string, fileName: string): string {
+  const ct = String(contentType || "").toLowerCase();
+  const name = String(fileName || "").toLowerCase();
+  if (ct.startsWith("image/")) return ct;
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
+function safePathPart(value: string, fallback: string): string {
+  const safe = String(value || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/[^a-zA-Z0-9._/-]+/g, "_")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  return safe || fallback;
+}
+
+function safeFileName(fileName: string, fallback: string): string {
+  const safe = String(fileName || "")
+    .toLowerCase()
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return safe || fallback;
+}
+
+function publicStorageUrl(req: Request, bucket: string, objectPath: string): string {
+  const configuredOrigin =
+    Deno.env.get("PUBLIC_SUPABASE_URL") ||
+    Deno.env.get("SUPABASE_PUBLIC_URL") ||
+    Deno.env.get("EXTERNAL_SUPABASE_URL") ||
+    "";
+  const forwardedProto = req.headers.get("x-forwarded-proto") || "https";
+  const forwardedHost = req.headers.get("x-forwarded-host") || "";
+  const forwardedOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : "";
+  const origin = (configuredOrigin || forwardedOrigin || new URL(req.url).origin).replace(/\/+$/, "");
+  return `${origin}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/")}`;
 }
 
 Deno.serve(async (req: Request) => {
@@ -144,39 +189,63 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (!CLOUD_NAME || !API_KEY || !API_SECRET) {
-      return jsonResponse(req, 500, { error: "Cloudinary env vars are not configured" });
-    }
-
     if (isPdf) {
       return jsonResponse(req, 400, {
-        error: "PDF не загружается в Cloudinary. Используйте mode=payment_order (Supabase Storage).",
+        error: "PDF не загружается как фото участника. Используйте mode=payment_order для платежного поручения.",
       });
     }
 
-    const timestamp = Math.round(Date.now() / 1000).toString();
-    const paramsToSign = `folder=${folder}&timestamp=${timestamp}${API_SECRET}`;
-    const signature = await sha1Hex(paramsToSign);
-
-    const uploadForm = new FormData();
-    uploadForm.append("file", file);
-    uploadForm.append("folder", folder);
-    uploadForm.append("timestamp", timestamp);
-    uploadForm.append("api_key", API_KEY);
-    uploadForm.append("signature", signature);
-
-    const resourceType = contentType.startsWith("image/") ? "image" : "raw";
-    const response = await fetch(
-      `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`,
-      { method: "POST", body: uploadForm },
-    );
-
-    const data = await response.json();
-    if (!response.ok || data.error) {
-      return jsonResponse(req, 500, { error: data.error?.message || "Upload failed" });
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      return jsonResponse(req, 500, { error: "Supabase env vars are not configured for participant photos" });
     }
 
-    return jsonResponse(req, 200, { secure_url: data.secure_url });
+    if (!isSupportedParticipantPhoto(contentType, fileName)) {
+      return jsonResponse(req, 400, { error: "Фото участника принимается только в форматах JPG/PNG/WebP" });
+    }
+
+    const uploadContentType = resolveParticipantPhotoContentType(contentType, fileName);
+    const objectFolder = safePathPart(folder, "hse-participants");
+    const objectName = safeFileName(fileName, `participant-photo-${Date.now()}.jpg`);
+    const objectPath = `${objectFolder}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}_${objectName}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+
+    const sb = createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    let { error: uploadError } = await sb.storage.from(participantPhotosBucket).upload(objectPath, bytes, {
+      contentType: uploadContentType,
+      upsert: false,
+    });
+
+    if (uploadError && isBucketNotFoundError(uploadError.message || "")) {
+      const { error: createBucketError } = await sb.storage.createBucket(participantPhotosBucket, {
+        public: true,
+        fileSizeLimit: "10MB",
+        allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+      });
+
+      if (!createBucketError) {
+        const retry = await sb.storage.from(participantPhotosBucket).upload(objectPath, bytes, {
+          contentType: uploadContentType,
+          upsert: false,
+        });
+        uploadError = retry.error;
+      }
+    }
+
+    if (uploadError) {
+      return jsonResponse(req, 500, {
+        error: uploadError.message || "Storage upload failed",
+        bucket: participantPhotosBucket,
+      });
+    }
+
+    return jsonResponse(req, 200, {
+      secure_url: publicStorageUrl(req, participantPhotosBucket, objectPath),
+      storage_bucket: participantPhotosBucket,
+      storage_path: objectPath,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return jsonResponse(req, 500, { error: msg });

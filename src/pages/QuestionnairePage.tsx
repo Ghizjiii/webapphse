@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { uploadPaymentOrder } from '../lib/cloudinary';
 import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock, Pencil, Check, X, Link2 } from 'lucide-react';
@@ -849,7 +849,7 @@ export default function QuestionnairePage() {
                       disabled={savingWorkflow}
                       className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                     >
-                      {deal?.bitrix_deal_id ? <><RefreshCw size={14} /> Обновить в Битрикс24</> : <><RefreshCw size={14} /> Отправить в Битрикс24</>}
+                      {deal?.bitrix_deal_id ? <><RefreshCw size={14} /> Обновить в Битрикс24</> : <><RefreshCw size={14} /> Первая отправка данных в Битрикс24</>}
                     </button>
                   )}
                 </div>
@@ -1260,5 +1260,3 @@ export default function QuestionnairePage() {
     </DashboardLayout>
   );
 }
-
-

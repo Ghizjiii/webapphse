@@ -187,6 +187,7 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         sortConfig={controller.sortConfig}
         activeColumnCount={controller.activeColumnCount}
         tableMinWidth={controller.tableMinWidth}
+        participantPhotoById={controller.participantPhotoById}
         bulkSaving={controller.bulkSaving}
         bulkStartDate={controller.bulkStartDate}
         bulkExpiryDate={controller.bulkExpiryDate}
