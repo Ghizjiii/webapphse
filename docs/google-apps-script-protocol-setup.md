@@ -72,6 +72,9 @@ const TEMPLATES = {
 {{LAST_NAME}}
 {{NAME}}
 {{SEC_NAME}}
+{{FULLNAME}}
+{{FULL_NAME}}
+{{FIO}}
 {{POS}}
 {{CATEGORY}}
 {{DOC_NUM}}

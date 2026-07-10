@@ -1,4 +1,4 @@
-﻿import { supabase } from './supabase';
+import { supabase } from './supabase';
 import type {
   Certificate,
   Protocol,
@@ -114,6 +114,15 @@ const PROTOCOL_RULES: Array<{
 
 function normalizeText(value: string | null | undefined): string {
   return String(value || '').trim().toLowerCase();
+}
+
+function certificateFullName(cert: Certificate): string {
+  const separateFullName = [
+    String(cert.last_name || '').trim(),
+    String(cert.first_name || '').trim(),
+    String(cert.middle_name || '').trim(),
+  ].filter(Boolean).join(' ');
+  return String(cert.full_name || '').trim() || separateFullName;
 }
 
 function normalizeProtocolSequenceCourseName(value: string | null | undefined): string {
@@ -720,12 +729,16 @@ export function buildProtocolDocumentPayload(params: {
 }): { placeholders: Record<string, string>; items: GenerateProtocolItem[] } {
   const placeholders = protocolGlobalPlaceholders(params);
   const items = params.certificates.map((cert, index) => {
+    const fullName = certificateFullName(cert);
     const rowValues: Record<string, string> = {
       '{{AUTO_N}}': String(index + 1),
       '{{WORK_PLACE}}': String(params.companyName || '').trim(),
       '{{LAST_NAME}}': String(cert.last_name || '').trim(),
       '{{NAME}}': String(cert.first_name || '').trim(),
       '{{SEC_NAME}}': String(cert.middle_name || '').trim(),
+      '{{FULLNAME}}': fullName,
+      '{{FIO}}': fullName,
+      '{{FULL_NAME}}': fullName,
       '{{POS}}': String(cert.position || '').trim(),
       '{{POSITION}}': String(cert.position || '').trim(),
       '{{CATEGORY}}': String(cert.category || '').trim(),

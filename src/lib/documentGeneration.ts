@@ -141,7 +141,7 @@ function normalizeDate(value: string | null | undefined): string {
 function formatDateRuWords(value: string | null | undefined, includeYearSuffix = false): string {
   const parts = parseDateParts(value);
   if (!parts) return '';
-  return `${parts.day} ${MONTHS_RUS_GENITIVE[parts.monthIndex]} ${parts.year}${includeYearSuffix ? ' \\u0433\\u043e\\u0434\\u0430' : ''}`;
+  return `${parts.day} ${MONTHS_RUS_GENITIVE[parts.monthIndex]} ${parts.year}${includeYearSuffix ? ' года' : ''}`;
 }
 
 function formatIndustrialSafetyDay(value: string | null | undefined): string {
@@ -186,6 +186,15 @@ function firstNotEmpty(...values: Array<string | null | undefined>): string {
   return '';
 }
 
+function certificateFullName(cert: Certificate): string {
+  const separateFullName = [
+    String(cert.last_name || '').trim(),
+    String(cert.first_name || '').trim(),
+    String(cert.middle_name || '').trim(),
+  ].filter(Boolean).join(' ');
+  return firstNotEmpty(cert.full_name, separateFullName);
+}
+
 export function resolveTemplateForCertificate(cert: Certificate): TemplateConfig | null {
   const course = normalizeText(cert.course_name);
   const category = normalizeText(cert.category);
@@ -225,7 +234,7 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const lastName = String(cert.last_name || '').trim();
   const firstName = String(cert.first_name || '').trim();
   const middleName = String(cert.middle_name || '').trim();
-  const fullName = [lastName, firstName, middleName].filter(Boolean).join(' ');
+  const fullName = certificateFullName(cert);
   const chairman = String(cert.commission_chair || '').trim();
   const courseName = String(cert.course_name || '').trim();
   const usesLongRussianDates = template?.key === 'tpl_03_fire_tech_minimum';
@@ -248,7 +257,9 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
     LAST_NAME: lastName,
     NAME: firstName,
     SEC_NAME: middleName,
-    FIO: firstNotEmpty(fullName, `${firstName} ${middleName}`.trim()),
+    FIO: fullName,
+    FULLNAME: fullName,
+    FULL_NAME: fullName,
     POSITION: String(cert.position || '').trim(),
     POS: String(cert.position || '').trim(),
     CATEGORY: String(cert.category || '').trim(),

@@ -143,6 +143,9 @@ function fillIdCardBatch(body, batch, report) {
     replaceToken(body, `LAST_NAME_${slot}`, values.LAST_NAME);
     replaceToken(body, `NAME_${slot}`, values.NAME);
     replaceToken(body, `SEC_NAME_${slot}`, values.SEC_NAME);
+    replaceToken(body, `FULLNAME_${slot}`, values.FULLNAME);
+    replaceToken(body, `FULL_NAME_${slot}`, values.FULLNAME);
+    replaceToken(body, `FIO_${slot}`, values.FULLNAME);
     replaceToken(body, `POS_${slot}`, values.POS);
     replaceToken(body, `WORK_PLACE_${slot}`, values.WORK_PLACE);
     replaceToken(body, `CATEGORY_${slot}`, values.CATEGORY);
@@ -178,7 +181,9 @@ function fillCertificatePage(body, item) {
   replaceToken(body, 'LAST_NAME', values.LAST_NAME);
   replaceToken(body, 'NAME', values.NAME);
   replaceToken(body, 'SEC_NAME', values.SEC_NAME);
-  replaceToken(body, 'FIO', values.FIO || [values.LAST_NAME, values.NAME, values.SEC_NAME].filter(Boolean).join(' '));
+  replaceToken(body, 'FULLNAME', values.FULLNAME);
+  replaceToken(body, 'FULL_NAME', values.FULLNAME);
+  replaceToken(body, 'FIO', values.FULLNAME);
   replaceToken(body, 'DOC_NUM', values.DOC_NUM);
   replaceToken(body, 'CERT_NUM', values.DOC_NUM);
   replaceToken(body, 'PROTOCOL_NUM', values.PROTOCOL_NUM);
@@ -196,6 +201,9 @@ function clearIdCardSlot(body, slot) {
     `{{LAST_NAME_${slot}}}`,
     `{{NAME_${slot}}}`,
     `{{SEC_NAME_${slot}}}`,
+    `{{FULLNAME_${slot}}}`,
+    `{{FULL_NAME_${slot}}}`,
+    `{{FIO_${slot}}}`,
     `{{POS_${slot}}}`,
     `{{WORK_PLACE_${slot}}}`,
     `{{CATEGORY_${slot}}}`,
@@ -267,7 +275,7 @@ function buildCommonValues(p) {
     LAST_NAME: pick(p, ['LAST_NAME']),
     NAME: pick(p, ['NAME']),
     SEC_NAME: pick(p, ['SEC_NAME']),
-    FIO: pick(p, ['FIO']),
+    FULLNAME: pick(p, ['FULLNAME', 'FULL_NAME', 'FIO']) || [pick(p, ['LAST_NAME']), pick(p, ['NAME']), pick(p, ['SEC_NAME'])].filter(Boolean).join(' '),
     POS: pick(p, ['POS', 'POSITION']),
     WORK_PLACE: pick(p, ['WORK_PLACE', 'WORKPLACE']),
     CATEGORY: pick(p, ['CATEGORY']),
