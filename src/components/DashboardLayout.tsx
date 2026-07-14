@@ -24,7 +24,7 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
       <aside className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-slate-900 text-gray-300">
         <div className="border-b border-slate-700/60 p-5">
           <div className="flex items-center gap-2.5">
-            <BrandLogo variant="light" className="h-10 w-11 flex-shrink-0 object-contain" />
+            <BrandLogo variant="light" className="h-8 w-14 flex-shrink-0 object-contain" />
             <div>
               <div className="text-sm font-semibold leading-tight text-white">HSE Platform</div>
               <div className="text-xs leading-tight text-slate-400">Управление обучением</div>
