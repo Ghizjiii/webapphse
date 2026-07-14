@@ -10,6 +10,16 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+type BizprocTask = {
+  ID?: unknown;
+  USER_ID?: unknown;
+  STATUS?: unknown;
+  WORKFLOW_ID?: unknown;
+  WORKFLOW_TEMPLATE_ID?: unknown;
+  DOCUMENT_ID?: unknown;
+  NAME?: unknown;
+};
+
 async function bitrixCall(method: string, params: Record<string, unknown>) {
   const url = `${BITRIX_WEBHOOK_URL.replace(/\/$/, "")}/${method}.json`;
 
@@ -103,7 +113,7 @@ async function addObserverToSmartProcess(itemId: number, userId: number) {
 }
 
 async function getActiveBizprocTasks() {
-  const tasks: any[] = [];
+  const tasks: BizprocTask[] = [];
   let start: number | undefined = 0;
 
   while (start !== undefined) {
@@ -126,7 +136,7 @@ async function getActiveBizprocTasks() {
       start,
     });
 
-    const portion = Array.isArray(result.tasks)
+    const portion: BizprocTask[] = Array.isArray(result.tasks)
       ? result.tasks
       : Array.isArray(result)
         ? result
