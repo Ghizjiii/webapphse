@@ -24,4 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+.codex-vps-key
+.codex-vps-key.pub
+.supabase-home
 
