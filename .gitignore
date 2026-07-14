@@ -27,4 +27,5 @@ dist-ssr
 .codex-vps-key
 .codex-vps-key.pub
 .supabase-home
+.cloud-functions-backup
 
