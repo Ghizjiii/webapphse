@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { CheckCircle2, Shield } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
+import BrandLogo from '../components/BrandLogo';
 import ConfirmModal from '../components/ConfirmModal';
 import { CompanySection } from '../features/public-form/company-section';
 import { ParticipantsSection } from '../features/public-form/participants-section';
@@ -68,9 +69,7 @@ export default function PublicFormPage() {
     >
       <div className="mx-auto w-full max-w-[1760px]">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600">
-            <Shield size={28} className="text-white" />
-          </div>
+          <BrandLogo variant="light" className="mx-auto mb-5 h-24 w-36 object-contain" />
           <h1 className="text-3xl font-bold text-white">Регистрация на обучение</h1>
           <p className="mt-2 text-slate-300">Заполните форму для записи сотрудников на курсы</p>
         </div>
