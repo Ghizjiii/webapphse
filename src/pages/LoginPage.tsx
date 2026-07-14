@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Shield, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
+import BrandLogo from '../components/BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -32,9 +33,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
           <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-8 text-center">
-            <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Shield size={32} className="text-white" />
-            </div>
+            <BrandLogo variant="light" className="mx-auto mb-5 h-28 w-40 object-contain opacity-95" />
             <h1 className="text-2xl font-bold text-white tracking-tight">HSE Платформа</h1>
             <p className="text-blue-100 mt-1 text-sm">Управление обучением сотрудников</p>
           </div>

@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
-import { BarChart3, BookOpen, ChevronRight, LayoutDashboard, LogOut, Shield, Users } from 'lucide-react';
+import { BarChart3, BookOpen, ChevronRight, LayoutDashboard, LogOut, Users } from 'lucide-react';
+import BrandLogo from './BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import { APP_ROLE_LABELS } from '../lib/profileDirectory';
 
@@ -23,9 +24,7 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
       <aside className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-slate-900 text-gray-300">
         <div className="border-b border-slate-700/60 p-5">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-blue-600">
-              <Shield size={16} className="text-white" />
-            </div>
+            <BrandLogo variant="light" className="h-10 w-11 flex-shrink-0 object-contain" />
             <div>
               <div className="text-sm font-semibold leading-tight text-white">HSE Platform</div>
               <div className="text-xs leading-tight text-slate-400">Управление обучением</div>
