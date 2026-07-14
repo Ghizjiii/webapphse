@@ -215,7 +215,7 @@ export function usePublicFormController(token: string | undefined) {
  const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && !paymentOrderDuplicate;
  const isInternalRequest = requestType === 'internal';
  const photoRequired = isInternalRequest;
- const canEditParticipants = canFillParticipants && (isInternalRequest || paymentOrderOptional || paymentOrderReady);
+ const canEditParticipants = canFillParticipants && (paymentOrderOptional || paymentOrderReady);
  const paymentStagePercent = paymentOrderStage === 'uploading'
  ? 35
  : paymentOrderStage === 'recognizing'
@@ -276,7 +276,7 @@ export function usePublicFormController(token: string | undefined) {
  setQuestionnaireId(data.id);
  const nextRequestType = data.request_type === 'internal' ? 'internal' : 'external';
  setRequestType(nextRequestType);
- setPaymentOrderOptional(Boolean(data.payment_order_optional) || nextRequestType === 'internal');
+ setPaymentOrderOptional(Boolean(data.payment_order_optional));
 
  const { data: company } = await supabase
  .from('companies')
