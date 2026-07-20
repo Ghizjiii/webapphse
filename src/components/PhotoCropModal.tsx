@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { ImagePlus, Minus, Plus, Save, X } from 'lucide-react';
+import { isPdfFile, renderPdfFirstPageToJpeg } from '../lib/pdfToImage';
 
 interface Props {
   file: File;
@@ -22,6 +23,10 @@ const OUTPUT_WIDTH = 600;
 const OUTPUT_HEIGHT = 800;
 const OUTPUT_TYPE = 'image/jpeg';
 const OUTPUT_QUALITY = 0.9;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 12;
+const ZOOM_BUTTON_STEP = 0.5;
+const ZOOM_WHEEL_STEP = 0.25;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -61,14 +66,44 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState<Offset>({ x: 0, y: 0 });
   const [saving, setSaving] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState('');
 
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    setImageUrl(url);
-    setImageSize(null);
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
-    return () => URL.revokeObjectURL(url);
+    let cancelled = false;
+    let url = '';
+
+    async function prepareImage() {
+      setImageUrl('');
+      setPrepareError('');
+      setPreparing(isPdfFile(file));
+      setImageSize(null);
+      setZoom(1);
+      setOffset({ x: 0, y: 0 });
+
+      try {
+        const imageFile = isPdfFile(file) ? await renderPdfFirstPageToJpeg(file) : file;
+        url = URL.createObjectURL(imageFile);
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setImageUrl(url);
+      } catch {
+        if (!cancelled) {
+          setPrepareError('Не удалось открыть PDF. Попробуйте другой файл или загрузите фото в JPG/PNG.');
+        }
+      } finally {
+        if (!cancelled) setPreparing(false);
+      }
+    }
+
+    void prepareImage();
+
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
   }, [file]);
 
   useEffect(() => {
@@ -117,7 +152,7 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
   }
 
   function updateZoom(value: number) {
-    const nextZoom = clamp(value, 1, 3);
+    const nextZoom = clamp(value, MIN_ZOOM, MAX_ZOOM);
     setZoom(nextZoom);
     setOffset(current => clampOffset(current, nextZoom));
   }
@@ -147,7 +182,7 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
 
   function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
     event.preventDefault();
-    updateZoom(zoom + (event.deltaY > 0 ? -0.08 : 0.08));
+    updateZoom(zoom + (event.deltaY > 0 ? -ZOOM_WHEEL_STEP : ZOOM_WHEEL_STEP));
   }
 
   async function handleSave() {
@@ -216,23 +251,23 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
             <div className="mb-3 flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => updateZoom(zoom - 0.1)}
+                onClick={() => updateZoom(zoom - ZOOM_BUTTON_STEP)}
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
               >
                 <Minus size={15} />
               </button>
               <input
                 type="range"
-                min={1}
-                max={3}
-                step={0.01}
+                min={MIN_ZOOM}
+                max={MAX_ZOOM}
+                step={0.05}
                 value={zoom}
                 onChange={event => updateZoom(Number(event.target.value))}
                 className="h-2 flex-1 cursor-pointer accent-blue-600"
               />
               <button
                 type="button"
-                onClick={() => updateZoom(zoom + 0.1)}
+                onClick={() => updateZoom(zoom + ZOOM_BUTTON_STEP)}
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
               >
                 <Plus size={15} />
@@ -270,6 +305,17 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
                     }}
                   />
                 ) : null}
+                {preparing && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/80 text-sm font-medium text-gray-600">
+                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                    Конвертируем PDF в JPG...
+                  </div>
+                )}
+                {prepareError && !preparing && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white px-5 text-center text-sm text-red-600">
+                    {prepareError}
+                  </div>
+                )}
                 <div className="pointer-events-none absolute inset-0 rounded-xl ring-2 ring-white/90 ring-offset-0" />
                 <div className="pointer-events-none absolute inset-x-0 top-1/3 border-t border-white/50" />
                 <div className="pointer-events-none absolute inset-x-0 top-2/3 border-t border-white/50" />
@@ -300,7 +346,7 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
               ) : null}
             </div>
             <p className="mt-4 text-center text-xs leading-5 text-gray-500">
-              Итоговый файл сохранится в формате 3:4 для удостоверений.
+              PDF сначала конвертируется в JPG. Итоговый файл сохранится в формате 3:4 для удостоверений.
             </p>
           </div>
         </div>
@@ -319,7 +365,7 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
             onClick={() => {
               void handleSave();
             }}
-            disabled={saving || !imageSize}
+            disabled={saving || preparing || !imageSize}
             className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
           >
             {saving ? (

@@ -10,6 +10,7 @@ export async function createDeal(dealData: {
   paymentIsPaid?: boolean;
   amount?: number;
   currencyId?: string;
+  comments?: string;
 }): Promise<string> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
@@ -24,6 +25,9 @@ export async function createDeal(dealData: {
   if (dealData.city) {
     fields['UF_CRM_1772560175'] = dealData.city;
     fields['UF_CRM_CITY'] = dealData.city;
+  }
+  if (dealData.comments?.trim()) {
+    fields.COMMENTS = dealData.comments.trim();
   }
   const paymentFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FIELD || '').trim();
   if (paymentFieldCode && dealData.paymentOrderUrl) {
@@ -59,6 +63,7 @@ export async function updateDeal(bitrixDealId: string, dealData: {
   paymentIsPaid?: boolean;
   amount?: number;
   currencyId?: string;
+  comments?: string;
 }): Promise<void> {
   const fields: Record<string, unknown> = {
     TITLE: dealData.title,
@@ -73,6 +78,7 @@ export async function updateDeal(bitrixDealId: string, dealData: {
     fields['UF_CRM_1772560175'] = dealData.city;
     fields['UF_CRM_CITY'] = dealData.city;
   }
+  fields.COMMENTS = dealData.comments?.trim() || '';
   const paymentFieldCode = String(import.meta.env.VITE_BITRIX_DEAL_PAYMENT_FIELD || '').trim();
   if (paymentFieldCode && dealData.paymentOrderUrl) {
     fields[paymentFieldCode] = dealData.paymentOrderUrl;

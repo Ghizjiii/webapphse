@@ -304,7 +304,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                       )}
                       <input
                         type="file"
-                        accept="image/*"
+                        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
                         className="hidden"
                         ref={element => {
                           fileInputRefs.current[participant.id] = element;

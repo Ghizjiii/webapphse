@@ -27,6 +27,18 @@ import {
  type ValidationErrors,
 } from './model';
 
+function isMissingCompanyCommentsColumnError(error: unknown): boolean {
+ const err = error as { code?: string; message?: string };
+ return String(err?.code || '') === 'PGRST204' &&
+ String(err?.message || '').toLowerCase().includes("'comments' column");
+}
+
+function omitCompanyComments<T extends Record<string, unknown>>(payload: T): Omit<T, 'comments'> {
+ const next = { ...payload };
+ delete next.comments;
+ return next;
+}
+
 export function usePublicFormController(token: string | undefined) {
  const [linkStatus, setLinkStatus] = useState<LinkStatus>('loading');
  const [questionnaireId, setQuestionnaireId] = useState<string | null>(null);
@@ -39,6 +51,7 @@ export function usePublicFormController(token: string | undefined) {
  const [companyEmail, setCompanyEmail] = useState('');
  const [companyBin, setCompanyBin] = useState('');
  const [companyCity, setCompanyCity] = useState('');
+ const [companyComments, setCompanyComments] = useState('');
  const [directoryMatch, setDirectoryMatch] = useState<RefCompanyDirectory | null>(null);
  const [lookupLoading, setLookupLoading] = useState(false);
  const [lookupTouched, setLookupTouched] = useState(false);
@@ -291,6 +304,7 @@ export function usePublicFormController(token: string | undefined) {
  setCompanyEmail(company.email || '');
  setCompanyBin(company.bin_iin || '');
  setCompanyCity(company.city || '');
+ setCompanyComments(String(company.comments || ''));
  setNoContractConfirmed(Boolean(company.no_contract_confirmed));
  setPaymentOrderUrl(company.payment_order_url || '');
  setPaymentOrderName(company.payment_order_name || '');
@@ -585,6 +599,7 @@ export function usePublicFormController(token: string | undefined) {
  email: companyEmail,
  bin_iin: companyBin,
  city: companyCity,
+ comments: companyComments.trim(),
  source_ref_company_id: directoryMatch?.id || null,
  has_contract: Boolean(directoryMatch?.has_contract),
  contract_bitrix_id: directoryMatch?.contract_bitrix_id || '',
@@ -607,15 +622,48 @@ export function usePublicFormController(token: string | undefined) {
  updated_at: new Date().toISOString(),
  };
 
+ async function updateCompanyWithCommentsFallback(companyId: string) {
+ const { data, error } = await supabase
+ .from('companies')
+ .update(companyPayload)
+ .eq('id', companyId)
+ .select()
+ .maybeSingle();
+
+ if (!error || !isMissingCompanyCommentsColumnError(error)) return { data, error };
+
+ return await supabase
+ .from('companies')
+ .update(omitCompanyComments(companyPayload))
+ .eq('id', companyId)
+ .select()
+ .maybeSingle();
+ }
+
+ async function insertCompanyWithCommentsFallback() {
+ const payload = {
+ questionnaire_id: questionnaireId,
+ ...companyPayload,
+ };
+ const { data, error } = await supabase
+ .from('companies')
+ .insert(payload)
+ .select()
+ .maybeSingle();
+
+ if (!error || !isMissingCompanyCommentsColumnError(error)) return { data, error };
+
+ return await supabase
+ .from('companies')
+ .insert(omitCompanyComments(payload))
+ .select()
+ .maybeSingle();
+ }
+
  let companyId = existingCompany?.id;
 
  if (existingCompany?.id) {
- const { data: updatedCompany, error: updateCompanyError } = await supabase
- .from('companies')
- .update(companyPayload)
- .eq('id', existingCompany.id)
- .select()
- .maybeSingle();
+ const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithCommentsFallback(existingCompany.id);
 
  if (updateCompanyError) throw updateCompanyError;
  if (updatedCompany) {
@@ -632,12 +680,7 @@ export function usePublicFormController(token: string | undefined) {
  if (currentCompanyError) throw currentCompanyError;
 
  if (currentCompany?.id) {
- const { data: updatedCompany, error: updateCompanyError } = await supabase
- .from('companies')
- .update(companyPayload)
- .eq('id', currentCompany.id)
- .select()
- .maybeSingle();
+ const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithCommentsFallback(currentCompany.id);
 
  if (updateCompanyError) throw updateCompanyError;
  if (updatedCompany) {
@@ -647,14 +690,7 @@ export function usePublicFormController(token: string | undefined) {
  companyId = currentCompany.id;
  }
  } else {
- const { data: newCompany, error } = await supabase
- .from('companies')
- .insert({
- questionnaire_id: questionnaireId,
- ...companyPayload,
- })
- .select()
- .maybeSingle();
+ const { data: newCompany, error } = await insertCompanyWithCommentsFallback();
 
  if (error) {
  if (String((error as { code?: string }).code || '') !== '23505') throw error;
@@ -667,12 +703,7 @@ export function usePublicFormController(token: string | undefined) {
 
  if (fallbackCompanyError || !fallbackCompany?.id) throw fallbackCompanyError || error;
 
- const { data: updatedCompany, error: updateCompanyError } = await supabase
- .from('companies')
- .update(companyPayload)
- .eq('id', fallbackCompany.id)
- .select()
- .maybeSingle();
+ const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithCommentsFallback(fallbackCompany.id);
 
  if (updateCompanyError) throw updateCompanyError;
  if (updatedCompany) {
@@ -816,6 +847,7 @@ export function usePublicFormController(token: string | undefined) {
  checkPaymentOrderDuplicate,
  companyBin,
  companyCity,
+ companyComments,
  companyEmail,
  companyName,
  companyPhone,
@@ -1021,6 +1053,7 @@ export function usePublicFormController(token: string | undefined) {
  companyEmail,
  companyBin,
  companyCity,
+ companyComments,
  directoryMatch,
  lookupLoading,
  lookupTouched,
@@ -1059,6 +1092,7 @@ export function usePublicFormController(token: string | undefined) {
  setCompanyPhone,
  setCompanyEmail,
  setCompanyCity,
+ setCompanyComments,
  setNoContractConfirmed,
  setPaymentOrderNumber,
  setPaymentOrderDate,

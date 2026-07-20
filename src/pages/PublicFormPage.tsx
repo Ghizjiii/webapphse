@@ -82,6 +82,7 @@ export default function PublicFormPage() {
             companyEmail={controller.companyEmail}
             companyBin={controller.companyBin}
             companyCity={controller.companyCity}
+            companyComments={controller.companyComments}
             directoryMatch={controller.directoryMatch}
             lookupLoading={controller.lookupLoading}
             lookupTouched={controller.lookupTouched}
@@ -106,6 +107,7 @@ export default function PublicFormPage() {
             onCompanyEmailChange={controller.setCompanyEmail}
             onCompanyBinChange={controller.handleCompanyBinChange}
             onCompanyCityChange={controller.setCompanyCity}
+            onCompanyCommentsChange={controller.setCompanyComments}
             onLookupCompany={controller.handleLookupCompany}
             onEnableCompanyCreateMode={controller.enableCompanyCreateMode}
             onNoContractConfirmedChange={controller.setNoContractConfirmed}

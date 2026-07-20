@@ -110,6 +110,7 @@ type CompanyRow = {
   email: string;
   bin_iin: string;
   city: string;
+  comments: string | null;
   bitrix_company_id: string | null;
   payment_order_url: string | null;
   payment_order_name: string | null;
@@ -2206,6 +2207,7 @@ async function upsertDeal(params: {
   let bitrixDealId = plain(params.deal?.bitrix_deal_id || "");
   const paymentStatusValue = params.company.payment_is_paid ? "Y" : "N";
   const paymentOrderUrl = plain(params.company.payment_order_url);
+  const dealComments = plain(params.company.comments);
   const localPaymentFileSyncKey = getPaymentFileSourceKey(params.company);
   let paymentFileSyncKey = plain(params.deal?.payment_file_sync_key);
   let paymentUrlChanged = false;
@@ -2235,6 +2237,9 @@ async function upsertDeal(params: {
     }
     if (params.dealSummary && plain(getDealFieldValue(currentDeal, DEAL_REQUEST_SUMMARY_FIELD)) !== params.dealSummary) {
       fieldsToUpdate[DEAL_REQUEST_SUMMARY_FIELD] = params.dealSummary;
+    }
+    if (plain(getDealFieldValue(currentDeal, "COMMENTS")) !== dealComments) {
+      fieldsToUpdate.COMMENTS = dealComments;
     }
 
     const currentCity = plain(currentDeal.UF_CRM_1772560175 || currentDeal.UF_CRM_CITY);
@@ -2285,6 +2290,9 @@ async function upsertDeal(params: {
     };
     if (params.dealSummary) {
       fields[DEAL_REQUEST_SUMMARY_FIELD] = params.dealSummary;
+    }
+    if (dealComments) {
+      fields.COMMENTS = dealComments;
     }
     if (params.company.city) {
       fields["UF_CRM_1772560175"] = params.company.city;
@@ -2526,7 +2534,7 @@ Deno.serve(async (req: Request) => {
         .maybeSingle(),
       supabase
         .from("companies")
-        .select("id, name, phone, email, bin_iin, city, bitrix_company_id, payment_order_url, payment_order_name, payment_order_storage_bucket, payment_order_storage_path, payment_is_paid")
+        .select("id, name, phone, email, bin_iin, city, comments, bitrix_company_id, payment_order_url, payment_order_name, payment_order_storage_bucket, payment_order_storage_path, payment_is_paid")
         .eq("questionnaire_id", questionnaireId)
         .order("created_at", { ascending: false })
         .limit(1)

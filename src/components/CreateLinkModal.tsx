@@ -30,7 +30,7 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
   const [hasExpiry, setHasExpiry] = useState(false);
   const [expiryDate, setExpiryDate] = useState('');
   const [requestType, setRequestType] = useState<QuestionnaireRequestType>(hasDefaultRegion ? 'internal' : 'external');
-  const [paymentOrderOptional, setPaymentOrderOptional] = useState(hasDefaultRegion);
+  const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
   const [regions, setRegions] = useState<RegionOption[]>([]);
   const [selectedRegionId, setSelectedRegionId] = useState(defaultRegionId);
   const [loadingRegions, setLoadingRegions] = useState(true);
@@ -133,6 +133,7 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
       ] as const);
   const showsRegionSelect = requestType === 'internal';
   const canSubmit = !showsRegionSelect || (!loadingRegions && regions.length > 0 && Boolean(selectedRegionId));
+  const paymentOrderRequired = !paymentOrderOptional;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -164,7 +165,6 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
                   type="button"
                   onClick={() => {
                     setRequestType(option.value);
-                    setPaymentOrderOptional(option.value === 'internal');
                   }}
                   className={`rounded-lg px-3 py-2 text-sm font-medium transition-all ${
                     requestType === option.value
@@ -233,15 +233,15 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
                 onClick={() => {
                   setPaymentOrderOptional((prev) => !prev);
                 }}
-                className={`flex h-5.5 w-10 rounded-full px-0.5 transition-colors ${paymentOrderOptional ? 'bg-blue-600' : 'bg-gray-300'}`}
+                className={`flex h-5.5 w-10 rounded-full px-0.5 transition-colors ${paymentOrderRequired ? 'bg-blue-600' : 'bg-gray-300'}`}
                 style={{ height: '22px', width: '40px' }}
               >
-                <div className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${paymentOrderOptional ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+                <div className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${paymentOrderRequired ? 'translate-x-[18px]' : 'translate-x-0'}`} />
               </div>
               <div>
-                <span className="text-sm font-medium text-gray-700">Платежка не обязательна</span>
+                <span className="text-sm font-medium text-gray-700">Платежка обязательна</span>
                 <p className="mt-0.5 text-xs text-gray-500">
-                  Если включено, блок платежного поручения будет скрыт в форме и в анкете.
+                  Если включено, форма потребует платежное поручение перед заполнением сотрудников.
                 </p>
               </div>
             </label>

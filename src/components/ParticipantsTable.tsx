@@ -446,7 +446,13 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
 
   return (
     <div>
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+        className="hidden"
+        onChange={handlePhotoUpload}
+      />
       {previewPhoto && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"

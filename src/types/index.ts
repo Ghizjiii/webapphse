@@ -49,6 +49,7 @@ export type QuestionnaireWorkflowEventType =
   | 'submitted'
   | 'accepted'
   | 'processing_started'
+  | 'processing_owner_changed'
   | 'completed'
   | 'overdue'
   | 'archived';
@@ -77,6 +78,7 @@ export interface Company {
   tax_id: string;
   address: string;
   city: string;
+  comments?: string;
   bitrix_company_id: string;
   source_ref_company_id?: string | null;
   has_contract?: boolean;

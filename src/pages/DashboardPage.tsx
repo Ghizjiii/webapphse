@@ -14,6 +14,7 @@ import {
   getQuestionnaireRequestType,
   getQuestionnaireRequestTypeLabel,
 } from '../lib/questionnaires';
+import { resolveWorkflowStatus } from '../lib/questionnaireWorkflow';
 import CreateLinkModal from '../components/CreateLinkModal';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -62,6 +63,16 @@ const STATUS_CONFIG = {
   expired: { label: 'Истекла', icon: <Clock size={12} />, className: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
 
+const WORKFLOW_STATUS_CONFIG = {
+  awaiting_submission: { label: 'Ожидает заполнения', icon: <Clock size={12} />, className: 'bg-amber-50 text-amber-700 border-amber-200' },
+  submitted: { label: 'Новая заявка в обработке', icon: <Clock size={12} />, className: 'bg-blue-50 text-blue-700 border-blue-200' },
+  accepted: { label: 'Ожидает координатора', icon: <Clock size={12} />, className: 'bg-blue-50 text-blue-700 border-blue-200' },
+  in_progress: { label: 'В работе', icon: <RefreshCw size={12} />, className: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  completed: { label: 'Завершена', icon: <CheckCircle2 size={12} />, className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  overdue: { label: 'Просрочена', icon: <Clock size={12} />, className: 'bg-red-50 text-red-700 border-red-200' },
+  archived: { label: 'Архив', icon: <Archive size={12} />, className: 'bg-gray-50 text-gray-600 border-gray-200' },
+};
+
 const APP_ROLE_SORT_ORDER: Record<AppRole, number> = {
   admin: 0,
   coordinator: 1,
@@ -93,6 +104,14 @@ function hasMeaningfulCompanyData(company: Company): boolean {
 }
 function resolveCompanyRecord(companies: Company[]): Company | null {
   return companies.find(hasMeaningfulCompanyData) || companies[0] || null;
+}
+
+function getDashboardStatusConfig(questionnaire: QuestionnaireLink) {
+  const workflowStatus = resolveWorkflowStatus(questionnaire);
+  if (workflowStatus === 'awaiting_submission') {
+    return STATUS_CONFIG[questionnaire.status] || STATUS_CONFIG.active;
+  }
+  return WORKFLOW_STATUS_CONFIG[workflowStatus] || STATUS_CONFIG[questionnaire.status] || STATUS_CONFIG.active;
 }
 
 export default function DashboardPage() {
@@ -756,7 +775,7 @@ export default function DashboardPage() {
                   </td>
                 </tr>
               ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId }, index) => {
-                const cfg = STATUS_CONFIG[q.status] || STATUS_CONFIG.active;
+                const cfg = getDashboardStatusConfig(q);
                 const slaDueAtMs = q.sla_due_at ? new Date(q.sla_due_at).getTime() : NaN;
                 const isWorkflowOverdue = Boolean(
                   q.processing_started_at &&

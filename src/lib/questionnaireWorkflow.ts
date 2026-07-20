@@ -5,9 +5,9 @@ export type WorkflowTransition = 'accepted' | 'in_progress' | 'completed' | 'arc
 
 export const WORKFLOW_STATUS_LABELS: Record<QuestionnaireWorkflowStatus, string> = {
   awaiting_submission: 'Ожидает заполнения',
-  submitted: 'Поступила',
-  accepted: 'Принята в работу',
-  in_progress: 'В обработке',
+  submitted: 'Новая заявка в обработке',
+  accepted: 'Ожидает работы координатора',
+  in_progress: 'В работе',
   completed: 'Завершена',
   overdue: 'Просрочена',
   archived: 'Архив',
@@ -15,8 +15,9 @@ export const WORKFLOW_STATUS_LABELS: Record<QuestionnaireWorkflowStatus, string>
 
 export const WORKFLOW_EVENT_LABELS: Record<string, string> = {
   submitted: 'Заявка поступила',
-  accepted: 'Принята в работу',
-  processing_started: 'Начата обработка',
+  accepted: 'Принята',
+  processing_started: 'Взята в работу',
+  processing_owner_changed: 'Изменен ответственный за работу',
   completed: 'Завершена',
   overdue: 'Просрочена',
   archived: 'Перенесена в архив',
@@ -69,6 +70,19 @@ export async function transitionQuestionnaireWorkflow(
   const { data, error } = await supabase.rpc('transition_questionnaire_workflow', {
     p_questionnaire_id: questionnaireId,
     p_next_status: nextStatus,
+  });
+
+  if (error) throw error;
+  return data as QuestionnaireLink;
+}
+
+export async function reassignQuestionnaireProcessingOwner(
+  questionnaireId: string,
+  processingStartedBy: string,
+): Promise<QuestionnaireLink> {
+  const { data, error } = await supabase.rpc('reassign_questionnaire_processing_owner', {
+    p_questionnaire_id: questionnaireId,
+    p_processing_started_by: processingStartedBy,
   });
 
   if (error) throw error;

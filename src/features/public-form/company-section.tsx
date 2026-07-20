@@ -10,6 +10,7 @@ interface CompanySectionProps {
   companyEmail: string;
   companyBin: string;
   companyCity: string;
+  companyComments: string;
   directoryMatch: RefCompanyDirectory | null;
   lookupLoading: boolean;
   lookupTouched: boolean;
@@ -34,6 +35,7 @@ interface CompanySectionProps {
   onCompanyEmailChange: (value: string) => void;
   onCompanyBinChange: (value: string) => void;
   onCompanyCityChange: (value: string) => void;
+  onCompanyCommentsChange: (value: string) => void;
   onLookupCompany: () => void;
   onEnableCompanyCreateMode: () => void;
   onNoContractConfirmedChange: (value: boolean) => void;
@@ -51,6 +53,7 @@ export function CompanySection(props: CompanySectionProps) {
     companyEmail,
     companyBin,
     companyCity,
+    companyComments,
     directoryMatch,
     lookupLoading,
     lookupTouched,
@@ -75,6 +78,7 @@ export function CompanySection(props: CompanySectionProps) {
     onCompanyEmailChange,
     onCompanyBinChange,
     onCompanyCityChange,
+    onCompanyCommentsChange,
     onLookupCompany,
     onEnableCompanyCreateMode,
     onNoContractConfirmedChange,
@@ -305,6 +309,17 @@ export function CompanySection(props: CompanySectionProps) {
             </div>
           </div>
         )}
+
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Комментарии</label>
+          <textarea
+            value={companyComments}
+            onChange={event => onCompanyCommentsChange(event.target.value)}
+            rows={3}
+            placeholder="Дополнительная информация для координатора"
+            className="w-full resize-y rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          />
+        </div>
       </div>
     </div>
   );

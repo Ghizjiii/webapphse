@@ -25,6 +25,7 @@ import {
   formatDuration,
   getSlaSecondsLeft,
   loadQuestionnaireEvents,
+  reassignQuestionnaireProcessingOwner,
   resolveWorkflowStatus,
   transitionQuestionnaireWorkflow,
   type WorkflowTransition,
@@ -59,6 +60,20 @@ function formatDateTime(value: string | null | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function getWorkflowEventDescription(event: QuestionnaireEvent): string {
+  if (event.event_type === 'processing_owner_changed') {
+    const previousName = String(event.metadata?.previous_processing_started_by_name || '').trim() || 'Не указан';
+    const nextName = String(event.metadata?.next_processing_started_by_name || '').trim() || 'Не указан';
+    return `${previousName} → ${nextName}`;
+  }
+
+  if (event.from_status && event.to_status) {
+    return `${WORKFLOW_STATUS_LABELS[event.from_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.from_status} → ${WORKFLOW_STATUS_LABELS[event.to_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.to_status}`;
+  }
+
+  return 'Событие заявки';
 }
 
 function normalizeAmountInput(value: string): number | null {
@@ -151,13 +166,16 @@ export default function QuestionnairePage() {
   const currentProfileFullName = profile?.full_name || '';
   const currentProfileRole = profile?.role || null;
   const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
-  const canManageWorkflow =
-    profile?.role === 'admin' ||
-    profile?.role === 'coordinator' ||
-    profile?.role === 'department_head';
+  const isAdmin = profile?.role === 'admin';
+  const isCoordinator = profile?.role === 'coordinator';
+  const canStartProcessing = isAdmin || isCoordinator;
 
   const [questionnaire, setQuestionnaire] = useState<QuestionnaireLink | null>(null);
   const [creatorProfile, setCreatorProfile] = useState<ProfileDirectoryEntry | null>(null);
+  const [processingProfile, setProcessingProfile] = useState<ProfileDirectoryEntry | null>(null);
+  const [processingOwnerOptions, setProcessingOwnerOptions] = useState<ProfileDirectoryEntry[]>([]);
+  const [processingOwnerDraft, setProcessingOwnerDraft] = useState('');
+  const [savingProcessingOwner, setSavingProcessingOwner] = useState(false);
   const [company, setCompany] = useState<Company | null>(null);
   const [deal, setDeal] = useState<Deal | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -191,40 +209,42 @@ export default function QuestionnairePage() {
 
     if (qRes.error || !qRes.data) {
       setCreatorProfile(null);
+      setProcessingProfile(null);
       navigate('/dashboard');
       return;
     }
 
-    let questionnaireRow = qRes.data as QuestionnaireLink;
+    const questionnaireRow = qRes.data as QuestionnaireLink;
 
     if (!canSeeAllQuestionnaires && questionnaireRow.created_by !== currentUserId) {
       setCreatorProfile(null);
+      setProcessingProfile(null);
       navigate('/dashboard');
       return;
     }
 
-    if (
-      canManageWorkflow &&
-      questionnaireRow.submitted_at &&
-      !questionnaireRow.accepted_at &&
-      questionnaireRow.workflow_status !== 'completed'
-    ) {
-      try {
-        questionnaireRow = await transitionQuestionnaireWorkflow(questionnaireRow.id, 'accepted');
-      } catch (error) {
-        console.warn('Auto-accept questionnaire fallback', error);
-      }
-    }
-
     let nextCreatorProfile: ProfileDirectoryEntry | null = null;
+    let nextProcessingProfile: ProfileDirectoryEntry | null = null;
     const creatorId = String(questionnaireRow.created_by || '').trim();
-    if (creatorId) {
-      const creatorProfiles = await loadProfileDirectory([creatorId]);
-      nextCreatorProfile = creatorProfiles[0] || null;
+    const processingStartedBy = String(questionnaireRow.processing_started_by || '').trim();
+    const profileIds = Array.from(new Set([creatorId, processingStartedBy].filter(Boolean)));
+    if (profileIds.length > 0) {
+      const profileDirectory = await loadProfileDirectory(profileIds);
+      const profileByUserId = new Map(profileDirectory.map(entry => [entry.user_id, entry]));
+      nextCreatorProfile = creatorId ? profileByUserId.get(creatorId) || null : null;
+      nextProcessingProfile = processingStartedBy ? profileByUserId.get(processingStartedBy) || null : null;
     }
 
     if (!nextCreatorProfile && creatorId && creatorId === currentUserId && currentProfileRole) {
       nextCreatorProfile = {
+        user_id: currentUserId,
+        email: currentProfileEmail || currentUserEmail,
+        full_name: currentProfileFullName,
+        role: currentProfileRole,
+      };
+    }
+    if (!nextProcessingProfile && processingStartedBy && processingStartedBy === currentUserId && currentProfileRole) {
+      nextProcessingProfile = {
         user_id: currentUserId,
         email: currentProfileEmail || currentUserEmail,
         full_name: currentProfileFullName,
@@ -257,6 +277,7 @@ export default function QuestionnairePage() {
 
     setQuestionnaire(questionnaireRow);
     setCreatorProfile(nextCreatorProfile);
+    setProcessingProfile(nextProcessingProfile);
     setCompany(resolvedCompany);
     setDeal(resolvedDealWithUrl);
 
@@ -329,7 +350,7 @@ export default function QuestionnairePage() {
     }
 
     setLoading(false);
-  }, [canManageWorkflow, canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
+  }, [canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
 
   useEffect(() => {
     loadData();
@@ -341,6 +362,38 @@ export default function QuestionnairePage() {
       }
     });
   }, [loadData]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setProcessingOwnerOptions([]);
+      return;
+    }
+
+    let cancelled = false;
+    supabase
+      .from('app_profiles')
+      .select('user_id, email, full_name, role')
+      .eq('is_active', true)
+      .in('role', ['admin', 'coordinator'])
+      .order('full_name', { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('Processing owner options fallback', error);
+          setProcessingOwnerOptions([]);
+          return;
+        }
+        setProcessingOwnerOptions((data || []) as ProfileDirectoryEntry[]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    setProcessingOwnerDraft(String(questionnaire?.processing_started_by || ''));
+  }, [questionnaire?.processing_started_by]);
 
   async function saveCompany() {
     if (!company) return;
@@ -365,6 +418,7 @@ export default function QuestionnairePage() {
       email: '',
       bin_iin: '',
       city: '',
+      comments: '',
     });
     if (error) {
       showToast('error', 'Ошибка создания');
@@ -463,12 +517,30 @@ export default function QuestionnairePage() {
       const updated = await transitionQuestionnaireWorkflow(questionnaire.id, nextStatus);
       setQuestionnaire(updated);
       setWorkflowEvents(await loadQuestionnaireEvents(questionnaire.id));
+      await loadData();
       showToast('success', successMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось обновить этап заявки';
       showToast('error', message);
     } finally {
       setSavingWorkflow(false);
+    }
+  }
+
+  async function saveProcessingOwner() {
+    if (!questionnaire || !processingOwnerDraft || processingOwnerDraft === questionnaire.processing_started_by) return;
+    setSavingProcessingOwner(true);
+    try {
+      const updated = await reassignQuestionnaireProcessingOwner(questionnaire.id, processingOwnerDraft);
+      setQuestionnaire(updated);
+      setWorkflowEvents(await loadQuestionnaireEvents(questionnaire.id));
+      await loadData();
+      showToast('success', 'Ответственный за работу обновлен');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось изменить ответственного за работу';
+      showToast('error', message);
+    } finally {
+      setSavingProcessingOwner(false);
     }
   }
 
@@ -573,6 +645,14 @@ export default function QuestionnairePage() {
     creatorProfile,
     questionnaire.created_by === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
   );
+  const processingStartedBy = String(questionnaire.processing_started_by || '').trim();
+  const processingCoordinatorRole = processingProfile?.role || (processingStartedBy === currentUserId ? currentProfileRole : null);
+  const processingCoordinatorName = questionnaire.processing_started_at
+    ? getProfileDisplayName(
+        processingProfile,
+        processingStartedBy === currentUserId ? (currentProfileEmail || currentUserEmail) : ''
+      )
+    : 'Еще не взято в работу';
   const requestLabel = getQuestionnaireRequestLabel(questionnaire);
   const regionLabel = getQuestionnaireRegionLabel(questionnaire);
   const requestTypeLabel = getQuestionnaireRequestTypeLabel(questionnaire);
@@ -621,9 +701,10 @@ export default function QuestionnairePage() {
       : workflowStatus === 'awaiting_submission'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
         : 'border-blue-200 bg-blue-50 text-blue-700';
-  const canAcceptWorkflow = Boolean(questionnaire.submitted_at) && !questionnaire.accepted_at && workflowStatus !== 'completed';
-  const canShowCompleteWorkflow = Boolean(questionnaire.submitted_at && questionnaire.processing_started_at) && workflowStatus !== 'completed';
+  const canStartWorkflow = canStartProcessing && Boolean(questionnaire.submitted_at) && !questionnaire.processing_started_at && workflowStatus !== 'completed';
+  const canShowCompleteWorkflow = isCoordinator && Boolean(questionnaire.submitted_at && questionnaire.processing_started_at) && workflowStatus !== 'completed';
   const canCompleteWorkflow = canShowCompleteWorkflow && hasGeneratedProtocols && hasPrintedDocuments;
+  const canReassignProcessingOwner = isAdmin && Boolean(questionnaire.processing_started_at);
   const linkManagementCard = (
     <TopSectionCard
       icon={<Link2 size={18} />}
@@ -744,6 +825,18 @@ export default function QuestionnairePage() {
               )}
             </CompactField>
           ))}
+          <CompactField label="Комментарии" className="sm:col-span-2" valueClassName="whitespace-pre-wrap break-words">
+            {companyEditing ? (
+              <textarea
+                value={getRecordValue(companyDraft, 'comments')}
+                onChange={e => setCompanyDraft(prev => ({ ...prev, comments: e.target.value }))}
+                rows={3}
+                className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            ) : (
+              getRecordValue(company, 'comments') || '—'
+            )}
+          </CompactField>
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">
@@ -860,6 +953,45 @@ export default function QuestionnairePage() {
                   <div className="mt-1 text-xs text-gray-500">
                     {responsibleRole ? APP_ROLE_LABELS[responsibleRole] : 'Не указан'}
                   </div>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 px-4 py-3 text-center shadow-sm">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Взято в работу</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-900">{processingCoordinatorName}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    {questionnaire.processing_started_at
+                      ? `${processingCoordinatorRole ? APP_ROLE_LABELS[processingCoordinatorRole] : 'Координатор'} · ${formatDateTime(questionnaire.processing_started_at)}`
+                      : 'Координатор еще не нажал кнопку'}
+                  </div>
+                  {canReassignProcessingOwner && (
+                    <div className="mt-3 grid gap-2 text-left">
+                      <select
+                        value={processingOwnerDraft}
+                        onChange={event => setProcessingOwnerDraft(event.target.value)}
+                        disabled={savingProcessingOwner || processingOwnerOptions.length === 0}
+                        className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:opacity-60"
+                      >
+                        <option value="">Выберите ответственного</option>
+                        {processingOwnerOptions.map(option => (
+                          <option key={option.user_id} value={option.user_id}>
+                            {getProfileDisplayName(option, '')} · {APP_ROLE_LABELS[option.role] || option.role}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void saveProcessingOwner()}
+                        disabled={
+                          savingProcessingOwner ||
+                          !processingOwnerDraft ||
+                          processingOwnerDraft === questionnaire.processing_started_by
+                        }
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+                      >
+                        <Check size={14} />
+                        Изменить ответственного
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1075,10 +1207,10 @@ export default function QuestionnairePage() {
             className={isSlaOverdue ? 'border-red-200 bg-red-50/70' : ''}
             actions={questionnaire.submitted_at ? (
               <>
-                {canAcceptWorkflow && (
+                {canStartWorkflow && (
                   <button
                     type="button"
-                    onClick={() => void changeWorkflow('accepted', 'Заявка принята в работу')}
+                    onClick={() => void changeWorkflow('in_progress', 'Заявка взята в работу')}
                     disabled={savingWorkflow}
                     className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-all hover:bg-blue-100 disabled:opacity-60"
                   >
@@ -1120,8 +1252,8 @@ export default function QuestionnairePage() {
               <CompactField label="Срок обработки">
                 <span className={isSlaOverdue ? 'text-red-600' : 'text-gray-900'}>{slaText}</span>
               </CompactField>
-              <CompactField label="Принята в работу">
-                {questionnaire.accepted_at ? formatDateTime(questionnaire.accepted_at) : '—'}
+              <CompactField label="Взято координатором">
+                {questionnaire.processing_started_at ? processingCoordinatorName : '—'}
               </CompactField>
               <CompactField label="Начало обработки">
                 {questionnaire.processing_started_at ? formatDateTime(questionnaire.processing_started_at) : '—'}
@@ -1149,9 +1281,7 @@ export default function QuestionnairePage() {
                           {WORKFLOW_EVENT_LABELS[event.event_type] || event.event_type}
                         </div>
                         <div className="text-xs text-gray-500">
-                          {event.from_status && event.to_status
-                            ? `${WORKFLOW_STATUS_LABELS[event.from_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.from_status} → ${WORKFLOW_STATUS_LABELS[event.to_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.to_status}`
-                            : 'Событие заявки'}
+                          {getWorkflowEventDescription(event)}
                         </div>
                       </div>
                       <div className="whitespace-nowrap text-xs text-gray-500">{formatDateTime(event.occurred_at)}</div>
