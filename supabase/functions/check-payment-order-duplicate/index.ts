@@ -5,10 +5,6 @@ import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-function normalizeDigits(value: string): string {
-  return String(value || "").replace(/\D/g, "");
-}
-
 function normalizeNumber(value: string): string {
   const cleaned = String(value || "")
     .toLowerCase()
@@ -16,6 +12,46 @@ function normalizeNumber(value: string): string {
   if (!cleaned) return "";
   if (/^\d+$/.test(cleaned)) return String(Number(cleaned));
   return cleaned;
+}
+
+function normalizeDate(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const iso = raw.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$/);
+  const dmy = raw.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/);
+  const match = iso || dmy;
+  if (!match) return raw;
+
+  const year = Number(iso ? match[1] : match[3]);
+  const month = Number(iso ? match[2] : match[2]);
+  const day = Number(iso ? match[3] : match[1]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return raw;
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeAmount(value: number | string | undefined): number {
+  let raw = typeof value === "number" ? String(value) : String(value || "");
+  raw = raw.replace(/\s+/g, "").replace(/[^\d.,]/g, "");
+  if (!raw) return NaN;
+
+  const lastComma = raw.lastIndexOf(",");
+  const lastDot = raw.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    raw = raw.replace(new RegExp(`\\${thousandsSeparator}`, "g"), "").replace(decimalSeparator, ".");
+  } else if (lastComma >= 0) {
+    raw = raw.replace(",", ".");
+  } else if ((raw.match(/\./g) || []).length > 1) {
+    const lastSeparator = raw.lastIndexOf(".");
+    raw = `${raw.slice(0, lastSeparator).replace(/\./g, "")}.${raw.slice(lastSeparator + 1)}`;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : NaN;
 }
 
 Deno.serve(async (req: Request) => {
@@ -38,25 +74,20 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json() as {
-      company_bin?: string;
       payment_order_number?: string;
       payment_order_date?: string;
       payment_order_amount?: number | string;
       questionnaire_id?: string;
     };
 
-    const companyBinDigits = normalizeDigits(body.company_bin || "");
     const paymentOrderNumberNorm = normalizeNumber(body.payment_order_number || "");
-    const paymentOrderDate = String(body.payment_order_date || "").trim();
-    const amountRaw = typeof body.payment_order_amount === "number"
-      ? body.payment_order_amount
-      : Number(String(body.payment_order_amount || "").replace(",", "."));
-    const paymentOrderAmount = Number.isFinite(amountRaw) ? Math.round(amountRaw * 100) / 100 : NaN;
+    const paymentOrderDate = normalizeDate(body.payment_order_date || "");
+    const paymentOrderAmount = normalizeAmount(body.payment_order_amount);
     const questionnaireId = String(body.questionnaire_id || "").trim();
 
-    if (!companyBinDigits || !paymentOrderNumberNorm || !paymentOrderDate || !Number.isFinite(paymentOrderAmount)) {
+    if (!paymentOrderNumberNorm || !paymentOrderDate || !Number.isFinite(paymentOrderAmount)) {
       return jsonResponse(req, 400, {
-        error: "company_bin, payment_order_number, payment_order_date, payment_order_amount are required",
+        error: "payment_order_number, payment_order_date, payment_order_amount are required",
       });
     }
 
@@ -67,7 +98,6 @@ Deno.serve(async (req: Request) => {
     let query = sb
       .from("payment_order_registry")
       .select("questionnaire_id")
-      .eq("company_bin_digits", companyBinDigits)
       .eq("payment_order_number_norm", paymentOrderNumberNorm)
       .eq("payment_order_date", paymentOrderDate)
       .eq("payment_order_amount", paymentOrderAmount)

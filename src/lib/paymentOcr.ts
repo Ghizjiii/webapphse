@@ -40,8 +40,16 @@ export async function extractPaymentOrderFields(file: File): Promise<PaymentOrde
   const extracted = (data?.extracted || {}) as Record<string, unknown>;
   return {
     payment_order_bin_iin: String(extracted.payment_order_bin_iin || '').trim() || undefined,
+    payment_order_payer_name: String(extracted.payment_order_payer_name || '').trim() || undefined,
     payment_order_number: String(extracted.payment_order_number || '').trim() || undefined,
     payment_order_date: String(extracted.payment_order_date || '').trim() || undefined,
     payment_order_amount: String(extracted.payment_order_amount || '').trim() || undefined,
+    payment_order_beneficiary_valid:
+      typeof extracted.payment_order_beneficiary_valid === 'boolean'
+        ? extracted.payment_order_beneficiary_valid
+        : undefined,
+    payment_order_beneficiary_bin: String(extracted.payment_order_beneficiary_bin || '').trim() || undefined,
+    payment_order_beneficiary_account: String(extracted.payment_order_beneficiary_account || '').trim() || undefined,
+    payment_order_beneficiary_name: String(extracted.payment_order_beneficiary_name || '').trim() || undefined,
   };
 }

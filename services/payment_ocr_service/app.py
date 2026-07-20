@@ -28,6 +28,27 @@ app.add_middleware(
 
 _ocr: PaddleOCR | None = None
 
+TRUSTED_BENEFICIARIES = [
+    {
+        "name": 'ТОО "HSE Company"',
+        "alias": "Учебный центр БиОТ",
+        "bin": "211040027532",
+        "account": "KZ73601A871003898131",
+    },
+    {
+        "name": 'ТОО "Safety construction"',
+        "alias": "Учебный центр",
+        "bin": "201140011964",
+        "account": "KZ18601A871019926431",
+    },
+    {
+        "name": 'ТОО "Safety Education Group"',
+        "alias": "",
+        "bin": "251240022279",
+        "account": "KZ97722S000050501340",
+    },
+]
+
 RU_MONTHS = {
     "января": 1,
     "февраля": 2,
@@ -70,9 +91,28 @@ def normalize_spaces(value: str) -> str:
 
 
 def normalize_amount(raw: str) -> str:
-    cleaned = re.sub(r"[^\d,\.]", "", raw or "").replace(",", ".")
+    digitish = str(raw or "").translate(str.maketrans({
+        "О": "0",
+        "о": "0",
+        "O": "0",
+        "o": "0",
+        "З": "3",
+        "з": "3",
+    }))
+    cleaned = re.sub(r"[^\d,\.]", "", digitish)
     if not cleaned:
         return ""
+    last_comma = cleaned.rfind(",")
+    last_dot = cleaned.rfind(".")
+    if last_comma >= 0 and last_dot >= 0:
+        decimal_separator = "," if last_comma > last_dot else "."
+        thousands_separator = "." if decimal_separator == "," else ","
+        cleaned = cleaned.replace(thousands_separator, "").replace(decimal_separator, ".")
+    elif last_comma >= 0:
+        cleaned = cleaned.replace(",", ".")
+    elif cleaned.count(".") > 1:
+        last_separator = cleaned.rfind(".")
+        cleaned = cleaned[:last_separator].replace(".", "") + "." + cleaned[last_separator + 1 :]
     try:
         value = float(cleaned)
     except ValueError:
@@ -84,8 +124,9 @@ def normalize_amount(raw: str) -> str:
 
 def normalize_date(raw: str) -> str:
     raw = normalize_spaces(raw).lower()
+    raw = re.sub(r"\b(\d{1,2})[.:\-/](\d{1,2})[.:\-/]?(\d{4})\b", r"\1.\2.\3", raw)
 
-    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y.%m.%d"):
+    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d"):
         try:
             dt = datetime.strptime(raw, fmt)
             return dt.strftime("%Y-%m-%d")
@@ -106,6 +147,62 @@ def normalize_date(raw: str) -> str:
                 return ""
 
     return ""
+
+
+def normalize_account(value: str) -> str:
+    accountish = str(value or "").translate(str.maketrans({
+        "О": "0",
+        "о": "0",
+        "O": "0",
+        "o": "0",
+        "С": "0",
+        "с": "0",
+        "C": "0",
+        "c": "0",
+    }))
+    return re.sub(r"[^A-Z0-9]", "", accountish.upper())
+
+
+def normalize_digits_ocr(value: str) -> str:
+    digitish = str(value or "").translate(str.maketrans({
+        "О": "0",
+        "о": "0",
+        "O": "0",
+        "o": "0",
+        "З": "3",
+        "з": "3",
+    }))
+    return re.sub(r"\D+", "", digitish)
+
+
+def hamming_distance(left: str, right: str) -> int:
+    if len(left) != len(right):
+        return max(len(left), len(right))
+    return sum(1 for a, b in zip(left, right) if a != b)
+
+
+def clean_payment_number(value: str) -> str:
+    cleaned = normalize_spaces(value).upper()
+    cleaned = re.sub(r"[^A-ZА-Я0-9\-/]+", "", cleaned)
+    cleaned = cleaned.translate(str.maketrans({
+        "О": "O",
+        "Т": "1",
+        "З": "3",
+    }))
+    if cleaned.startswith(("OR", "0R", "ОR")):
+        cleaned = "QR" + cleaned[2:]
+    return cleaned
+
+
+def source_bank(source: str) -> str:
+    lowered = source.lower()
+    if "casp KZKA".lower() in lowered or "caspKZKA".lower() in lowered or "kaspi" in lowered:
+        return "kaspi"
+    if "kcjbkzkx" in lowered or "центркредит" in lowered or "банк центркредит" in lowered:
+        return "bcc"
+    if "hsbkkzkx" in lowered or "народный банк" in lowered or "halyk" in lowered:
+        return "halyk"
+    return "unknown"
 
 
 def _prepare_image_variants(img: np.ndarray) -> list[np.ndarray]:
@@ -238,6 +335,83 @@ def pick_sender_bin(source: str) -> str:
 def pick_number_and_date(source: str) -> tuple[str, str]:
     number = ""
     date = ""
+    bank = source_bank(source)
+
+    if bank == "kaspi":
+        m_num = re.search(
+            r"(?:№|no|nо|n\?)\s*квитанц\w*\s+([a-zа-я0-9\-/]{2,60})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m_num:
+            number = clean_payment_number(m_num.group(1))
+
+        m_date = re.search(
+            r"дата\s+и\s+время(?:\s+по\s+астане)?\s+(\d{2}[.\-/]\d{2}[.\-/]\d{4})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m_date:
+            date = normalize_date(m_date.group(1))
+        if not date:
+            date_candidates = re.findall(r"\b\d{2}[.:\-/]\d{2}[.:\-/]?\d{4}\b", source)
+            for candidate in date_candidates:
+                d = normalize_date(candidate)
+                if d:
+                    date = d
+                    break
+
+        if number or date:
+            return number, date
+        return number, date
+
+    if bank == "bcc":
+        m_num = re.search(
+            r"плат[её]жн\w*\s+поручен\w*\s*№\s*([a-zа-я0-9\-/]{1,40})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m_num:
+            number = clean_payment_number(m_num.group(1))
+
+        m_date = re.search(
+            r"проведено\s+банком\s+(\d{2}[.\-/]\d{2}[.\-/]\d{4}|\d{4}[.\-/]\d{2}[.\-/]\d{2})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if not m_date:
+            m_date = re.search(
+                r"дата\s+валютирования[\s\S]{0,120}?(\d{2}[.\-/]\d{2}[.\-/]\d{4}|\d{4}[.\-/]\d{2}[.\-/]\d{2})",
+                source,
+                flags=re.IGNORECASE,
+            )
+        if m_date:
+            date = normalize_date(m_date.group(1))
+
+        if number or date:
+            return number, date
+
+    if bank == "halyk":
+        m_num = re.search(
+            r"№\s*([a-zа-я0-9\-/]{1,40})\s*от\s*(\d{2}[.\-/]\d{2}[.\-/]\d{4}|\d{4}[.\-/]\d{2}[.\-/]\d{2})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m_num:
+            number = clean_payment_number(m_num.group(1))
+
+        m_date = re.search(
+            r"дата\s+валютирования[\s\S]{0,160}?(\d{2}[.\-/]\d{2}[.\-/]\d{4}|\d{4}[.\-/]\d{2}[.\-/]\d{2})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m_date:
+            date = normalize_date(m_date.group(1))
+        elif m_num:
+            date = normalize_date(m_num.group(2))
+
+        if number or date:
+            return number, date
 
     # "Платежное поручение №628 19 ноября 2024 г."
     m = re.search(
@@ -246,7 +420,7 @@ def pick_number_and_date(source: str) -> tuple[str, str]:
         flags=re.IGNORECASE,
     )
     if m:
-        number = m.group(1).strip().upper()
+        number = clean_payment_number(m.group(1))
         date = normalize_date(m.group(2))
         return number, date
 
@@ -257,14 +431,14 @@ def pick_number_and_date(source: str) -> tuple[str, str]:
         flags=re.IGNORECASE,
     )
     if m2:
-        number = m2.group(1).strip().upper()
+        number = clean_payment_number(m2.group(1))
         date = normalize_date(m2.group(2))
         return number, date
 
     # Fallback separate number/date
     num = re.search(r"(?:№|#|no\.?|n\.?)[\s:]*([a-zа-я0-9\-/]{2,40})", source, flags=re.IGNORECASE)
     if num:
-        number = num.group(1).strip().upper()
+        number = clean_payment_number(num.group(1))
 
     date_candidates = re.findall(r"\b\d{2}[.\-/]\d{2}[.\-/]\d{4}\b|\b\d{4}[.\-/]\d{2}[.\-/]\d{2}\b|\b[0-3]?\d\s+[а-яё]+\s+\d{4}\b", source, flags=re.IGNORECASE)
     for candidate in date_candidates:
@@ -277,6 +451,31 @@ def pick_number_and_date(source: str) -> tuple[str, str]:
 
 
 def pick_amount(source: str) -> str:
+    bank = source_bank(source)
+
+    if bank == "kaspi":
+        m = re.search(
+            r"(?:п\w*)?лат\w*[\s\S]{0,60}(?:усп\w*|сп\w*|снеш\w*)[\s\S]{0,60}соверш\w*[\s\S]{0,80}?([0-9oOоОзЗ]{1,3}(?:[ \u00A0][0-9oOоОзЗ]{3})*(?:[\.,][0-9oOоОзЗ]{2})|[0-9oOоОзЗ]+[\.,][0-9oOоОзЗ]{2})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            amount = normalize_amount(m.group(1))
+            if amount:
+                return amount
+        return ""
+
+    if bank == "bcc":
+        m = re.search(
+            r"(?:сома[сы]?|сумма)[^\d]{0,40}(\d{1,3}(?:[ \u00A0]\d{3})*(?:[\.,]\d{2})|\d+[\.,]\d{2})",
+            source,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            amount = normalize_amount(m.group(1))
+            if amount:
+                return amount
+
     # Priority: amount near keywords.
     m = re.search(
         r"(?:сумма\s*прописью\s*:|сумма\s*:|сумма|итого|amount|total)[^\d]{0,30}(\d{1,3}(?:[ \u00A0]\d{3})*(?:[\.,]\d{2})|\d+[\.,]\d{2})",
@@ -302,6 +501,35 @@ def pick_amount(source: str) -> str:
     return values[0][1]
 
 
+def pick_trusted_beneficiary(source: str) -> dict[str, str]:
+    source_accounts = normalize_account(source)
+    source_account_candidates = re.findall(r"KZ[0-9A-Z]{18}", source_accounts)
+    source_digits = normalize_digits_ocr(source)
+
+    for beneficiary in TRUSTED_BENEFICIARIES:
+        bin_digits = beneficiary["bin"]
+        account = normalize_account(beneficiary["account"])
+        account_matches = account in source_accounts or any(
+            hamming_distance(candidate, account) <= 2
+            for candidate in source_account_candidates
+        )
+        if bin_digits in source_digits and account_matches:
+            return {
+                "payment_order_beneficiary_valid": "true",
+                "payment_order_beneficiary_name": beneficiary["name"],
+                "payment_order_beneficiary_bin": beneficiary["bin"],
+                "payment_order_beneficiary_account": beneficiary["account"],
+            }
+
+    bins = re.findall(r"\d{12}", source_digits)
+    accounts = source_account_candidates
+    return {
+        "payment_order_beneficiary_valid": "false",
+        "payment_order_beneficiary_bin": bins[-1] if bins else "",
+        "payment_order_beneficiary_account": accounts[-1] if accounts else "",
+    }
+
+
 def extract_fields(text: str) -> dict[str, str]:
     source = normalize_spaces(text)
     out: dict[str, str] = {}
@@ -319,6 +547,8 @@ def extract_fields(text: str) -> dict[str, str]:
     amount = pick_amount(source)
     if amount:
         out["payment_order_amount"] = amount
+
+    out.update({k: v for k, v in pick_trusted_beneficiary(source).items() if v})
 
     return out
 

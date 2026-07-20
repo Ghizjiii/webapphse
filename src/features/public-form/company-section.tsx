@@ -21,6 +21,7 @@ interface CompanySectionProps {
   paymentOrderDate: string;
   paymentOrderAmount: string;
   paymentAutofillHint: string;
+  paymentBeneficiaryHint: string;
   uploadingPaymentOrder: boolean;
   paymentOrderStage: PaymentOrderStage;
   errors: ValidationErrors;
@@ -64,6 +65,7 @@ export function CompanySection(props: CompanySectionProps) {
     paymentOrderDate,
     paymentOrderAmount,
     paymentAutofillHint,
+    paymentBeneficiaryHint,
     uploadingPaymentOrder,
     paymentOrderStage,
     errors,
@@ -268,11 +270,14 @@ export function CompanySection(props: CompanySectionProps) {
               </div>
             )}
             {paymentAutofillHint && <p className="text-xs text-gray-500 mt-1">{paymentAutofillHint}</p>}
+            {paymentBeneficiaryHint && <p className="text-xs font-medium text-emerald-600 mt-1">{paymentBeneficiaryHint}</p>}
             {errors.payment_order && <p className="text-xs text-red-500 mt-1">{errors.payment_order}</p>}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Номер платежного поручения</label>
                 <input
+                  type="text"
+                  inputMode="text"
                   value={paymentOrderNumber}
                   onChange={event => onPaymentOrderNumberChange(event.target.value)}
                   placeholder="Например, 0256"

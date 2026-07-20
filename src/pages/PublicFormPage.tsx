@@ -93,6 +93,7 @@ export default function PublicFormPage() {
             paymentOrderDate={controller.paymentOrderDate}
             paymentOrderAmount={controller.paymentOrderAmount}
             paymentAutofillHint={controller.paymentAutofillHint}
+            paymentBeneficiaryHint={controller.paymentBeneficiaryHint}
             uploadingPaymentOrder={controller.uploadingPaymentOrder}
             paymentOrderStage={controller.paymentOrderStage}
             errors={controller.errors}

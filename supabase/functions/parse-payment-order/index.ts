@@ -3,6 +3,7 @@ import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared
 
 const OCR_API_URL = String(Deno.env.get("PAYMENT_OCR_API_URL") || "").trim().replace(/\/+$/, "");
 const OCR_API_TOKEN = String(Deno.env.get("PAYMENT_OCR_API_TOKEN") || "").trim();
+const LOCAL_OCR_API_URL = String(Deno.env.get("LOCAL_PAYMENT_OCR_API_URL") || "http://ocr-api:8000").trim().replace(/\/+$/, "");
 
 function extractErrorMessage(payload: unknown, fallback: string): string {
   if (payload && typeof payload === "object") {
@@ -17,6 +18,22 @@ function extractErrorMessage(payload: unknown, fallback: string): string {
 function asTrimmedString(value: unknown): string | undefined {
   const normalized = String(value ?? "").trim();
   return normalized || undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["true", "1", "yes", "y"].includes(normalized)) return true;
+  if (["false", "0", "no", "n"].includes(normalized)) return false;
+  return undefined;
+}
+
+function getRecordValue(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return undefined;
 }
 
 Deno.serve(async (req: Request) => {
@@ -49,21 +66,48 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(req, 400, { error: "No file provided" });
     }
 
-    const upstreamFormData = new FormData();
-    upstreamFormData.append(
-      "file",
-      new File([await file.arrayBuffer()], file.name || "payment-order", {
-        type: file.type || "application/octet-stream",
-      }),
-    );
+    const fileBytes = await file.arrayBuffer();
 
-    const upstreamResponse = await fetch(`${OCR_API_URL}/parse-payment`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OCR_API_TOKEN}`,
-      },
-      body: upstreamFormData,
+    async function callUpstream(path: string, headers: Record<string, string>) {
+      const upstreamFormData = new FormData();
+      upstreamFormData.append(
+        "file",
+        new File([fileBytes], file.name || "payment-order", {
+          type: file.type || "application/octet-stream",
+        }),
+      );
+
+      return await fetch(`${OCR_API_URL}${path}`, {
+        method: "POST",
+        headers,
+        body: upstreamFormData,
+      });
+    }
+
+    let upstreamResponse = await callUpstream("/parse-payment", {
+      Authorization: `Bearer ${OCR_API_TOKEN}`,
     });
+
+    if ([401, 403, 404, 405].includes(upstreamResponse.status)) {
+      upstreamResponse = await callUpstream("/extract-payment-order", {
+        "x-ocr-token": OCR_API_TOKEN,
+      });
+    }
+
+    if ([401, 403, 404, 405].includes(upstreamResponse.status) && LOCAL_OCR_API_URL) {
+      const localFormData = new FormData();
+      localFormData.append(
+        "file",
+        new File([fileBytes], file.name || "payment-order", {
+          type: file.type || "application/octet-stream",
+        }),
+      );
+
+      upstreamResponse = await fetch(`${LOCAL_OCR_API_URL}/extract-payment-order`, {
+        method: "POST",
+        body: localFormData,
+      });
+    }
 
     const upstreamText = await upstreamResponse.text();
     let upstreamPayload: unknown = null;
@@ -88,17 +132,24 @@ Deno.serve(async (req: Request) => {
     }
 
     const parsed = upstreamPayload as Record<string, unknown>;
+    const extracted = parsed.extracted && typeof parsed.extracted === "object"
+      ? parsed.extracted as Record<string, unknown>
+      : parsed;
 
     return jsonResponse(req, 200, {
       ok: true,
       source: asTrimmedString(parsed.source),
       filename: asTrimmedString(parsed.filename) || file.name || "payment-order",
       extracted: {
-        payment_order_number: asTrimmedString(parsed.payment_number),
-        payment_order_date: asTrimmedString(parsed.payment_date),
-        payment_order_amount: asTrimmedString(parsed.amount),
-        payment_order_bin_iin: asTrimmedString(parsed.payer_bin),
-        payment_order_payer_name: asTrimmedString(parsed.payer_name),
+        payment_order_number: asTrimmedString(getRecordValue(extracted, ["payment_order_number", "payment_number"])),
+        payment_order_date: asTrimmedString(getRecordValue(extracted, ["payment_order_date", "payment_date"])),
+        payment_order_amount: asTrimmedString(getRecordValue(extracted, ["payment_order_amount", "amount"])),
+        payment_order_bin_iin: asTrimmedString(getRecordValue(extracted, ["payment_order_bin_iin", "payer_bin"])),
+        payment_order_payer_name: asTrimmedString(getRecordValue(extracted, ["payment_order_payer_name", "payer_name"])),
+        payment_order_beneficiary_valid: asBoolean(getRecordValue(extracted, ["payment_order_beneficiary_valid", "beneficiary_valid"])),
+        payment_order_beneficiary_bin: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_bin", "beneficiary_bin"])),
+        payment_order_beneficiary_account: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_account", "beneficiary_account"])),
+        payment_order_beneficiary_name: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_name", "beneficiary_name"])),
       },
     });
   } catch (error) {

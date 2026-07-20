@@ -45,7 +45,10 @@ export type LinkStatus = 'loading' | 'valid' | 'invalid' | 'expired' | 'inactive
 export type PaymentOrderStage = 'idle' | 'uploading' | 'recognizing' | 'checking' | 'done' | 'error';
 
 export const DUPLICATE_PAYMENT_ORDER_ERROR =
-  'Этот счет уже был загружен ранее для этой компании (BIN/ИИН, номер, дата и сумма совпадают). Загрузите другой счет.';
+  'Этот чек или платежное поручение уже были загружены ранее (номер, дата и сумма совпадают). Загрузите другой документ.';
+
+export const INVALID_PAYMENT_BENEFICIARY_ERROR =
+  'Оплата должна быть проведена на реквизиты HSE Company, Safety construction или Safety Education Group. Проверьте БИН и счет бенефициара в документе.';
 
 export function createLocalParticipant(): LocalParticipant {
   return {
@@ -123,17 +126,55 @@ export function isPaymentOrderDuplicateError(err: unknown): boolean {
 }
 
 export function parsePaymentOrderAmount(value: string): number | null {
-  const cleaned = String(value || '')
+  let cleaned = String(value || '')
     .replace(/\s+/g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
+    .replace(/[^\d.,]/g, '');
 
   if (!cleaned) return null;
+
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? ',' : '.';
+    const thousandsSeparator = decimalSeparator === ',' ? '.' : ',';
+    cleaned = cleaned.replace(new RegExp(`\\${thousandsSeparator}`, 'g'), '').replace(decimalSeparator, '.');
+  } else if (lastComma >= 0) {
+    cleaned = cleaned.replace(',', '.');
+  } else if ((cleaned.match(/\./g) || []).length > 1) {
+    const lastSeparator = cleaned.lastIndexOf('.');
+    cleaned = `${cleaned.slice(0, lastSeparator).replace(/\./g, '')}.${cleaned.slice(lastSeparator + 1)}`;
+  }
 
   const parsed = Number(cleaned);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
 
   return Math.round(parsed * 100) / 100;
+}
+
+export function normalizePaymentOrderDate(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const iso = raw.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$/);
+  if (iso) {
+    const year = Number(iso[1]);
+    const month = Number(iso[2]);
+    const day = Number(iso[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+      return `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+    }
+  }
+
+  const dmy = raw.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/);
+  if (!dmy) return raw;
+
+  const day = Number(dmy[1]);
+  const month = Number(dmy[2]);
+  const year = Number(dmy[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return raw;
+  return `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
 }
 
 function parseIsoDate(value: string | null | undefined): Date | null {

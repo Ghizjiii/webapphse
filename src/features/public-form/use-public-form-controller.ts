@@ -14,10 +14,12 @@ import {
  createLocalParticipant,
  DUPLICATE_PAYMENT_ORDER_ERROR,
  getParticipantMissingFields,
+ INVALID_PAYMENT_BENEFICIARY_ERROR,
  isContractActiveByDates,
  isParticipantRowStarted,
  isPaymentOrderDuplicateError,
  normalizeDigits,
+ normalizePaymentOrderDate,
  normalizePaymentOrderNumber,
  parsePaymentOrderAmount,
  PARTICIPANT_REQUIRED_FIELD_LABELS,
@@ -65,9 +67,11 @@ export function usePublicFormController(token: string | undefined) {
  const [paymentOrderDate, setPaymentOrderDate] = useState('');
  const [paymentOrderAmount, setPaymentOrderAmount] = useState('');
  const [paymentAutofillHint, setPaymentAutofillHint] = useState('');
+ const [paymentBeneficiaryHint, setPaymentBeneficiaryHint] = useState('');
  const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
  const [paymentOrderStage, setPaymentOrderStage] = useState<PaymentOrderStage>('idle');
  const [paymentOrderDuplicate, setPaymentOrderDuplicate] = useState(false);
+ const [paymentBeneficiaryValid, setPaymentBeneficiaryValid] = useState<boolean | null>(null);
  const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
 
  const [participants, setParticipants] = useState<LocalParticipant[]>([createLocalParticipant()]);
@@ -87,13 +91,12 @@ export function usePublicFormController(token: string | undefined) {
  const lookupRequestIdRef = useRef(0);
 
  const checkPaymentOrderDuplicate = useCallback(async (params: {
- companyBinDigits: string;
  paymentOrderNumber: string;
  paymentOrderDate: string;
  paymentOrderAmount: number;
  questionnaireId?: string | null;
  }): Promise<boolean> => {
- if (!params.companyBinDigits || !params.paymentOrderNumber || !params.paymentOrderDate || !Number.isFinite(params.paymentOrderAmount)) {
+ if (!params.paymentOrderNumber || !params.paymentOrderDate || !Number.isFinite(params.paymentOrderAmount)) {
  return false;
  }
 
@@ -110,7 +113,6 @@ export function usePublicFormController(token: string | undefined) {
  Apikey: supabaseAnonKey,
  },
  body: JSON.stringify({
- company_bin: params.companyBinDigits,
  payment_order_number: params.paymentOrderNumber,
  payment_order_date: params.paymentOrderDate,
  payment_order_amount: params.paymentOrderAmount,
@@ -222,10 +224,10 @@ export function usePublicFormController(token: string | undefined) {
  const paymentOrderAmountParsed = parsePaymentOrderAmount(paymentOrderAmount);
  const paymentOrderMetaReady = Boolean(
  normalizePaymentOrderNumber(paymentOrderNumber) &&
- paymentOrderDate.trim() &&
+ normalizePaymentOrderDate(paymentOrderDate) &&
  paymentOrderAmountParsed !== null
  );
- const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && !paymentOrderDuplicate;
+ const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && paymentBeneficiaryValid !== false && !paymentOrderDuplicate;
  const isInternalRequest = requestType === 'internal';
  const photoRequired = isInternalRequest;
  const canEditParticipants = canFillParticipants && (paymentOrderOptional || paymentOrderReady);
@@ -411,8 +413,9 @@ export function usePublicFormController(token: string | undefined) {
  if (!paymentOrderOptional) {
  if (!paymentOrderUrl) nextErrors.payment_order = 'Загрузите файл платежного поручения.';
  if (!normalizePaymentOrderNumber(paymentOrderNumber)) nextErrors.payment_order_number = 'Укажите номер платежного поручения.';
- if (!paymentOrderDate.trim()) nextErrors.payment_order_date = 'Укажите дату оплаты.';
+ if (!normalizePaymentOrderDate(paymentOrderDate)) nextErrors.payment_order_date = 'Укажите дату оплаты.';
  if (amountParsed === null) nextErrors.payment_order_amount = 'Укажите корректную сумму оплаты.';
+ if (paymentBeneficiaryValid === false) nextErrors.payment_order = INVALID_PAYMENT_BENEFICIARY_ERROR;
  if (paymentOrderDuplicate) nextErrors.payment_order = DUPLICATE_PAYMENT_ORDER_ERROR;
  }
 
@@ -450,6 +453,7 @@ export function usePublicFormController(token: string | undefined) {
  companyPhone,
  directoryMatch,
  participants,
+ paymentBeneficiaryValid,
  paymentOrderAmount,
  paymentOrderDate,
  paymentOrderDuplicate,
@@ -471,7 +475,9 @@ export function usePublicFormController(token: string | undefined) {
  setUploadingPaymentOrder(true);
  setPaymentOrderStage('uploading');
  setPaymentAutofillHint('');
+ setPaymentBeneficiaryHint('');
  setPaymentOrderDuplicate(false);
+ setPaymentBeneficiaryValid(null);
  setErrors(prev => ({ ...prev, payment_order: undefined }));
 
  try {
@@ -487,6 +493,10 @@ export function usePublicFormController(token: string | undefined) {
  payment_order_date?: string;
  payment_order_amount?: string;
  payment_order_bin_iin?: string;
+ payment_order_beneficiary_valid?: boolean;
+ payment_order_beneficiary_bin?: string;
+ payment_order_beneficiary_account?: string;
+ payment_order_beneficiary_name?: string;
  } = {};
  let ocrErrorMessage = '';
 
@@ -497,9 +507,16 @@ export function usePublicFormController(token: string | undefined) {
  }
 
  const nextNumber = normalizePaymentOrderNumber(String(extracted.payment_order_number || ''));
- const nextDate = String(extracted.payment_order_date || '').trim();
+ const nextDate = normalizePaymentOrderDate(String(extracted.payment_order_date || '').trim());
  const nextAmount = String(extracted.payment_order_amount || '').trim();
- const nextBin = normalizeDigits(String(extracted.payment_order_bin_iin || ''));
+ const nextBeneficiaryValid = extracted.payment_order_beneficiary_valid === true;
+ const nextBeneficiaryName = String(extracted.payment_order_beneficiary_name || '').trim();
+ setPaymentBeneficiaryValid(nextBeneficiaryValid);
+ setPaymentBeneficiaryHint(
+ nextBeneficiaryValid
+ ? `Оплата проведена на ${nextBeneficiaryName || 'разрешенные реквизиты'}.`
+ : ''
+ );
 
  if (!paymentOrderNumber && nextNumber) setPaymentOrderNumber(nextNumber);
  if (!paymentOrderDate && nextDate) setPaymentOrderDate(nextDate);
@@ -514,22 +531,20 @@ export function usePublicFormController(token: string | undefined) {
  : 'Автозаполнение не нашло ключевые поля. Заполните номер, дату и сумму вручную.'
  );
 
- if (nextBin && normalizeDigits(companyBin) && nextBin !== normalizeDigits(companyBin)) {
+ if (!nextBeneficiaryValid) {
  setErrors(prev => ({
  ...prev,
- payment_order: 'В документе найден БИН/ИИН, который не совпадает с введенным БИН/ИИН компании.',
+ payment_order: INVALID_PAYMENT_BENEFICIARY_ERROR,
  }));
  }
 
  const candidateNumber = normalizePaymentOrderNumber(nextNumber || paymentOrderNumber);
- const candidateDate = String(nextDate || paymentOrderDate || '').trim();
+ const candidateDate = normalizePaymentOrderDate(nextDate || paymentOrderDate || '');
  const candidateAmount = parsePaymentOrderAmount(nextAmount || paymentOrderAmount);
- const candidateBin = normalizeDigits(companyBin);
 
- if (candidateNumber && candidateDate && candidateAmount !== null && candidateBin) {
+ if (candidateNumber && candidateDate && candidateAmount !== null) {
  setPaymentOrderStage('checking');
  const isDuplicate = await checkPaymentOrderDuplicate({
- companyBinDigits: candidateBin,
  paymentOrderNumber: candidateNumber,
  paymentOrderDate: candidateDate,
  paymentOrderAmount: candidateAmount,
@@ -557,7 +572,6 @@ export function usePublicFormController(token: string | undefined) {
  }
  }, [
  checkPaymentOrderDuplicate,
- companyBin,
  paymentOrderAmount,
  paymentOrderDate,
  paymentOrderNumber,
@@ -571,12 +585,11 @@ export function usePublicFormController(token: string | undefined) {
  try {
  const paymentOrderAmountValue = parsePaymentOrderAmount(paymentOrderAmount);
  const paymentOrderNumberValue = normalizePaymentOrderNumber(paymentOrderNumber);
- const paymentOrderDateValue = paymentOrderDate.trim() || null;
+ const paymentOrderDateValue = normalizePaymentOrderDate(paymentOrderDate) || null;
  const paymentBinDigits = normalizeDigits(companyBin);
 
  if (paymentOrderUrl && paymentOrderDateValue && paymentOrderAmountValue !== null && paymentOrderNumberValue) {
  const isDuplicate = await checkPaymentOrderDuplicate({
- companyBinDigits: paymentBinDigits,
  paymentOrderNumber: paymentOrderNumberValue,
  paymentOrderDate: paymentOrderDateValue,
  paymentOrderAmount: paymentOrderAmountValue,
@@ -836,7 +849,7 @@ export function usePublicFormController(token: string | undefined) {
  } catch (error) {
  logger.error('PublicFormPage', 'Submit failed', error);
  if (isPaymentOrderDuplicateError(error)) {
- setErrors({ payment_order: 'Дубликат платежного поручения: BIN/ИИН + номер + дата + сумма уже использованы в другой заявке.' });
+ setErrors({ payment_order: DUPLICATE_PAYMENT_ORDER_ERROR });
  return;
  }
  setErrors({ participants: 'Ошибка отправки. Попробуйте еще раз.' });
@@ -962,12 +975,11 @@ export function usePublicFormController(token: string | undefined) {
  }, [availableCourses, canEditParticipants, pageSize, participants]);
 
  useEffect(() => {
- const companyBinDigits = normalizeDigits(companyBin);
  const paymentOrderNumberValue = normalizePaymentOrderNumber(paymentOrderNumber);
- const paymentOrderDateValue = paymentOrderDate.trim();
+ const paymentOrderDateValue = normalizePaymentOrderDate(paymentOrderDate);
  const paymentOrderAmountValue = parsePaymentOrderAmount(paymentOrderAmount);
 
- if (!paymentOrderUrl || !companyBinDigits || !paymentOrderNumberValue || !paymentOrderDateValue || paymentOrderAmountValue === null) {
+ if (!paymentOrderUrl || !paymentOrderNumberValue || !paymentOrderDateValue || paymentOrderAmountValue === null) {
  setPaymentOrderDuplicate(false);
  setErrors(prev => {
  if (prev.payment_order !== DUPLICATE_PAYMENT_ORDER_ERROR) return prev;
@@ -978,7 +990,6 @@ export function usePublicFormController(token: string | undefined) {
 
  const timer = window.setTimeout(async () => {
  const isDuplicate = await checkPaymentOrderDuplicate({
- companyBinDigits,
  paymentOrderNumber: paymentOrderNumberValue,
  paymentOrderDate: paymentOrderDateValue,
  paymentOrderAmount: paymentOrderAmountValue,
@@ -1065,6 +1076,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderDate,
  paymentOrderAmount,
  paymentAutofillHint,
+ paymentBeneficiaryHint,
  uploadingPaymentOrder,
  paymentOrderStage,
  participants,

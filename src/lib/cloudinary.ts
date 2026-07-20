@@ -6,6 +6,11 @@ export interface PaymentOrderExtractedFields {
   payment_order_date?: string;
   payment_order_amount?: string;
   payment_order_bin_iin?: string;
+  payment_order_payer_name?: string;
+  payment_order_beneficiary_valid?: boolean;
+  payment_order_beneficiary_bin?: string;
+  payment_order_beneficiary_account?: string;
+  payment_order_beneficiary_name?: string;
 }
 
 export interface UploadedPaymentOrder {
