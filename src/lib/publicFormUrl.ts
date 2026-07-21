@@ -4,7 +4,12 @@ function normalizeBaseUrl(rawValue: string): string | null {
 
   try {
     const normalized = value.includes('://') ? value : `https://${value}`;
-    return new URL(normalized).href.replace(/\/+$/, '');
+    const url = new URL(normalized);
+    if (url.hostname === 'hse.absystems.kz') {
+      url.hostname = 'app.hse-company.kz';
+    }
+
+    return url.href.replace(/\/+$/, '');
   } catch {
     return null;
   }

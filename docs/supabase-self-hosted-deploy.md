@@ -29,7 +29,7 @@ These values are configured locally in `.env`:
 
 ```text
 VITE_SUPABASE_URL=https://supabase.hse-company.kz
-VITE_PUBLIC_APP_URL=https://hse.absystems.kz
+VITE_PUBLIC_APP_URL=https://app.hse-company.kz
 ```
 
 The Bitrix outgoing webhook points to:
