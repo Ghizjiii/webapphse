@@ -371,6 +371,24 @@ function plain(value: unknown): string {
   return String(value || "").trim();
 }
 
+function describeUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error || "Unknown sync error";
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message = plain(record.message || record.error_description || record.error);
+    if (message) return message;
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") return serialized;
+    } catch {
+      // fall through
+    }
+  }
+
+  return "Unknown sync error";
+}
+
 async function getAuthenticatedUser(req: Request, supabase = adminClient()) {
   const bearerToken = plain(req.headers.get("authorization")).replace(/^Bearer\s+/i, "").trim();
   if (!bearerToken) {
@@ -2400,6 +2418,82 @@ async function fetchSmartProcessItem(itemId: string): Promise<Record<string, unk
   return itemFields ? { ...item, ...itemFields } : item;
 }
 
+function extractBitrixListRows(raw: unknown): Array<Record<string, unknown>> {
+  const record = (raw || {}) as Record<string, unknown>;
+  const candidates = [
+    record.items,
+    record.result,
+    (record.result as Record<string, unknown> | undefined)?.items,
+  ];
+
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    return candidate.map(item => {
+      const row = (item || {}) as Record<string, unknown>;
+      const fields = row.fields && typeof row.fields === "object" ? row.fields as Record<string, unknown> : null;
+      return fields ? { ...row, ...fields } : row;
+    });
+  }
+
+  return [];
+}
+
+function smartItemId(item: Record<string, unknown>): string {
+  return plain(item.id || item.ID);
+}
+
+function smartItemTitle(item: Record<string, unknown>): string {
+  return plain(item.title || item.TITLE);
+}
+
+function normalizeSmartItemTitle(value: unknown): string {
+  return plain(value).replace(/\s+/g, " ").toLowerCase();
+}
+
+async function listSmartProcessItemsForDeal(bitrixDealId: string): Promise<Array<Record<string, unknown>>> {
+  const filterVariants = [
+    { parentId2: bitrixDealId },
+    { PARENT_ID_2: bitrixDealId },
+    { parentId1: bitrixDealId },
+    { PARENT_ID_1: bitrixDealId },
+  ];
+  const out = new Map<string, Record<string, unknown>>();
+
+  for (const filter of filterVariants) {
+    try {
+      const raw = await callBitrix("crm.item.list", {
+        entityTypeId: SMART_PROCESS_ENTITY_TYPE_ID,
+        order: { id: "DESC" },
+        filter,
+        select: ["id", "title", "companyId", "parentId1", "parentId2", "PARENT_ID_1", "PARENT_ID_2", "*", "uf*"],
+      });
+      for (const item of extractBitrixListRows(raw)) {
+        const id = smartItemId(item);
+        if (id) out.set(id, item);
+      }
+      if (out.size > 0) break;
+    } catch {
+      // try the next parent field variant
+    }
+  }
+
+  return Array.from(out.values());
+}
+
+async function loadSmartProcessItemsByTitle(bitrixDealId: string): Promise<Map<string, Record<string, unknown>>> {
+  const out = new Map<string, Record<string, unknown>>();
+  const items = await listSmartProcessItemsForDeal(bitrixDealId);
+
+  for (const item of items) {
+    const key = normalizeSmartItemTitle(smartItemTitle(item));
+    if (key && !out.has(key)) {
+      out.set(key, item);
+    }
+  }
+
+  return out;
+}
+
 function buildCloudinaryJpgCandidates(photoUrl: string): string[] {
   const base = plain(photoUrl);
   if (!base) return [];
@@ -2498,6 +2592,80 @@ async function attachPhotoToSmartItem(itemId: string, photoUrl: string, particip
   throw new Error("Failed to attach photo to Bitrix smart-process item");
 }
 
+function isUniqueViolationError(error: unknown): boolean {
+  const record = (error || {}) as Record<string, unknown>;
+  return plain(record.code) === "23505" || /duplicate key|unique constraint/i.test(describeUnknownError(error));
+}
+
+async function findCertificateIdByPatch(
+  supabase: ReturnType<typeof adminClient>,
+  patch: Record<string, unknown>,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("certificates")
+    .select("id")
+    .eq("questionnaire_id", plain(patch.questionnaire_id))
+    .eq("participant_id", plain(patch.participant_id))
+    .eq("course_name", plain(patch.course_name))
+    .eq("qualification", plain(patch.qualification))
+    .eq("electrical_safety_group", plain(patch.electrical_safety_group))
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to look up certificate after conflict: ${describeUnknownError(error)}`);
+  }
+
+  return plain((data as Record<string, unknown> | null)?.id);
+}
+
+async function persistCertificatePatch(params: {
+  supabase: ReturnType<typeof adminClient>;
+  existingId: string;
+  patch: Record<string, unknown>;
+}): Promise<string> {
+  const { supabase, existingId, patch } = params;
+
+  if (existingId) {
+    const { error } = await supabase
+      .from("certificates")
+      .update(patch)
+      .eq("id", existingId);
+    if (error) {
+      throw new Error(`Failed to update certificate ${existingId}: ${describeUnknownError(error)}`);
+    }
+    return existingId;
+  }
+
+  const { data, error } = await supabase
+    .from("certificates")
+    .insert(patch)
+    .select("id")
+    .single();
+
+  if (!error) {
+    return plain((data as Record<string, unknown> | null)?.id);
+  }
+
+  if (!isUniqueViolationError(error)) {
+    throw new Error(`Failed to insert certificate: ${describeUnknownError(error)}`);
+  }
+
+  const conflictingId = await findCertificateIdByPatch(supabase, patch);
+  if (!conflictingId) {
+    throw new Error(`Failed to resolve duplicate certificate: ${describeUnknownError(error)}`);
+  }
+
+  const { error: updateError } = await supabase
+    .from("certificates")
+    .update(patch)
+    .eq("id", conflictingId);
+  if (updateError) {
+    throw new Error(`Failed to update duplicate certificate ${conflictingId}: ${describeUnknownError(updateError)}`);
+  }
+
+  return conflictingId;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return preflightResponse(req);
 
@@ -2508,11 +2676,14 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
+  let requestQuestionnaireId = "";
+
   try {
     const auth = await requireActiveProfile(req);
     const responsibleBitrixUserId = plain(auth.profile.bitrix_user_id);
     const body = await req.json();
     const questionnaireId = plain(body?.questionnaireId);
+    requestQuestionnaireId = questionnaireId;
     const paymentFieldCode = plain(body?.paymentFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FIELD") || "");
     const paymentStatusFieldCode = plain(body?.paymentStatusFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_STATUS_FIELD") || "");
     const paymentFileFieldCode = plain(body?.paymentFileFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FILE_FIELD") || "");
@@ -2683,8 +2854,8 @@ Deno.serve(async (req: Request) => {
       ensureParticipantEmailField(),
       ensureParticipantFullNameField(),
     ]);
-    const certificateInserts: Array<Record<string, unknown>> = [];
-    const certificateUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+    const existingBitrixItemsByTitle = await loadSmartProcessItemsByTitle(bitrixDealId);
+    let persistedCertificateCount = 0;
     let photoFailures = 0;
     const photoFailureSamples: string[] = [];
 
@@ -2713,6 +2884,14 @@ Deno.serve(async (req: Request) => {
         }
       } else {
         itemId = "";
+      }
+
+      if (!itemId) {
+        const matchedBitrixItem = existingBitrixItemsByTitle.get(normalizeSmartItemTitle(expectedTitle));
+        if (matchedBitrixItem) {
+          itemId = smartItemId(matchedBitrixItem);
+          currentBitrixItem = matchedBitrixItem;
+        }
       }
 
       const effectiveQualification = plain(
@@ -2785,18 +2964,7 @@ Deno.serve(async (req: Request) => {
         (!resolvedPhotoSyncKey && !hasCurrentPhoto)
       );
 
-      if (photoSourceKey && shouldSyncPhoto) {
-        const fullName = participantDisplayName(task.participant);
-        try {
-          await attachPhotoToSmartItem(itemId, task.participant.photo_url, fullName);
-          resolvedPhotoSyncKey = photoSourceKey;
-        } catch (error) {
-          photoFailures++;
-          if (photoFailureSamples.length < 3) {
-            photoFailureSamples.push(`${fullName || task.participant.id}: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        }
-      } else if (photoSourceKey && !resolvedPhotoSyncKey && hasCurrentPhoto) {
+      if (photoSourceKey && !shouldSyncPhoto && !resolvedPhotoSyncKey && hasCurrentPhoto) {
         resolvedPhotoSyncKey = photoSourceKey;
       }
 
@@ -2828,30 +2996,77 @@ Deno.serve(async (req: Request) => {
         baseCertificatePatch.photo_sync_key = resolvedPhotoSyncKey;
       }
 
-      if (existingCertificate?.id) {
-        certificateUpdates.push({
-          id: existingCertificate.id,
-          patch: baseCertificatePatch,
-        });
-      } else {
-        certificateInserts.push(baseCertificatePatch);
-      }
-    });
+      const persistedCertificateId = await persistCertificatePatch({
+        supabase,
+        existingId: plain(existingCertificate?.id),
+        patch: baseCertificatePatch,
+      });
+      persistedCertificateCount++;
 
-    if (certificateUpdates.length > 0) {
-      await runInChunks(certificateUpdates, BITRIX_SYNC_CONCURRENCY, async item => {
+      if (!existingCertificate) {
+        existingCertificateByKey.set(
+          taskKey(task.participant.id, task.courseName, effectiveQualification, effectiveElectricalSafetyGroup),
+          {
+            id: persistedCertificateId,
+            participant_id: task.participant.id,
+            bitrix_item_id: itemId,
+            photo_sync_key: resolvedPhotoSyncKey,
+            full_name: participantDisplayName(task.participant),
+            last_name: task.participant.last_name,
+            first_name: task.participant.first_name,
+            middle_name: task.participant.patronymic,
+            position: task.participant.position,
+            category: task.participant.category,
+            course_name: task.courseName,
+            start_date: null,
+            expiry_date: null,
+            issuer_company: null,
+            commission_chair: null,
+            protocol_number: null,
+            document_number: null,
+            commission_member_1: null,
+            commission_member_2: null,
+            commission_member_3: null,
+            commission_member_4: null,
+            commission_members: null,
+            qualification: effectiveQualification,
+            electrical_safety_group: effectiveElectricalSafetyGroup,
+            level: null,
+            marker_pass: null,
+            type_learn: null,
+            commis_concl: null,
+            grade: null,
+            manager: null,
+            is_printed: null,
+            employee_status: null,
+            price: typeof baseCertificatePatch.price === "number" ? baseCertificatePatch.price : null,
+          },
+        );
+      }
+
+      if (photoSourceKey && shouldSyncPhoto) {
+        const fullName = participantDisplayName(task.participant);
+        try {
+          await attachPhotoToSmartItem(itemId, task.participant.photo_url, fullName);
+          resolvedPhotoSyncKey = photoSourceKey;
+        } catch (error) {
+          photoFailures++;
+          if (photoFailureSamples.length < 3) {
+            photoFailureSamples.push(`${fullName || task.participant.id}: ${describeUnknownError(error)}`);
+          }
+        }
+      }
+
+      if (resolvedPhotoSyncKey && persistedCertificateId && plain(baseCertificatePatch.photo_sync_key) !== resolvedPhotoSyncKey) {
         const { error } = await supabase
           .from("certificates")
-          .update(item.patch)
-          .eq("id", item.id);
-        if (error) throw error;
-      });
-    }
-
-    if (certificateInserts.length > 0) {
-      const { error } = await supabase.from("certificates").insert(certificateInserts);
-      if (error) throw error;
-    }
+          .update({ photo_sync_key: resolvedPhotoSyncKey, updated_at: new Date().toISOString() })
+          .eq("id", persistedCertificateId);
+        if (error) {
+          throw new Error(`Failed to update certificate photo sync key ${persistedCertificateId}: ${describeUnknownError(error)}`);
+        }
+      }
+    });
 
     await supabase
       .from("deals")
@@ -2870,21 +3085,20 @@ Deno.serve(async (req: Request) => {
       isUpdate: Boolean(plain(deal?.bitrix_deal_id)),
       dealTitle,
       dealUrl: buildDealUrl(bitrixDealId),
-      certificateCount: certificateUpdates.length + certificateInserts.length,
+      certificateCount: persistedCertificateCount,
       photoFailures,
       photoFailureSamples,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown sync error";
+    const message = describeUnknownError(error);
+    console.error("bitrix-sync failed", { message, error });
     const status = /unauthorized|inactive|profile not found/i.test(message) ? 401 : 500;
     try {
-      const body = await req.clone().json();
-      const questionnaireId = plain(body?.questionnaireId);
-      if (questionnaireId) {
+      if (requestQuestionnaireId) {
         await adminClient()
           .from("deals")
           .update({ sync_status: "error", error_message: message })
-          .eq("questionnaire_id", questionnaireId);
+          .eq("questionnaire_id", requestQuestionnaireId);
       }
     } catch {
       // ignore error persistence failure
