@@ -81,13 +81,15 @@ function pushUniqueOption(target: CourseOption[], option: CourseOption, seen: Se
 export function buildCourseOptions(params: {
   baseCourses: string[];
   coursePriceRules: RefCoursePrice[];
+  qualificationOptions?: string[];
   category?: string;
 }): CourseOption[] {
-  const { baseCourses, coursePriceRules, category = '' } = params;
+  const { baseCourses, coursePriceRules, qualificationOptions = [], category = '' } = params;
   const seen = new Set<string>();
   const options: CourseOption[] = [];
   const variantCourses = new Set<string>();
   const variantsByCourse = new Map<string, CourseOption[]>();
+  const qualificationCourseKey = normalizeCourseOptionValue(QUALIFICATION_COURSE_NAME);
 
   for (const rule of coursePriceRules) {
     const normalizedCourseName = normalizeCourseOptionValue(rule.course_name);
@@ -104,6 +106,35 @@ export function buildCourseOptions(params: {
     if (!nextSeen.has(normalizeCourseOptionValue(option.displayName))) {
       current.push(option);
       variantsByCourse.set(normalizedCourseName, current);
+    }
+  }
+
+  const hasQualificationCourse = baseCourses.some(courseName => (
+    normalizeCourseOptionValue(courseName) === qualificationCourseKey
+  )) || variantsByCourse.has(qualificationCourseKey);
+  if (hasQualificationCourse) {
+    const current = variantsByCourse.get(qualificationCourseKey) || [];
+    const nextSeen = new Set(current.map(item => normalizeCourseOptionValue(item.qualification)).filter(Boolean));
+
+    for (const qualification of qualificationOptions) {
+      const value = plain(qualification);
+      const normalizedValue = normalizeCourseOptionValue(value);
+      if (!normalizedValue || nextSeen.has(normalizedValue)) continue;
+
+      nextSeen.add(normalizedValue);
+      current.push({
+        displayName: buildCourseOptionLabel(QUALIFICATION_COURSE_NAME, value, ''),
+        courseName: QUALIFICATION_COURSE_NAME,
+        qualification: value,
+        electricalSafetyGroup: '',
+        category: '',
+        sortOrder: 0,
+      });
+    }
+
+    if (current.length > 0) {
+      variantsByCourse.set(qualificationCourseKey, current);
+      variantCourses.add(qualificationCourseKey);
     }
   }
 

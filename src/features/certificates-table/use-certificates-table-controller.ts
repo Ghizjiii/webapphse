@@ -731,6 +731,10 @@ export function useCertificatesTableController({
   return normalized;
   }
 
+  function isQualificationCourseName(courseName: string): boolean {
+  return normalizeCoursePriceLookup(courseName).includes('\u043a\u0432\u0430\u043b\u0438\u0444\u0438\u043a\u0430\u0446');
+  }
+
   function buildDocumentNumberGroupKey(row: Certificate): string {
   const parts = [
   normalizeCoursePriceLookup(row.course_name),
@@ -1381,6 +1385,10 @@ export function useCertificatesTableController({
   ),
   [localCertificates, referenceBitrixListItems]
   );
+  const qualificationReferenceOptions = useMemo(
+  () => getReferenceListValues('QUALIFICATION'),
+  [referenceBitrixListItems]
+  );
   const courseSpecificOptionsByCourse = useMemo(() => {
   const seenByField = new Map<string, Set<string>>();
   const result = new Map<string, Record<CourseSpecificFieldKey, string[]>>();
@@ -1426,7 +1434,11 @@ export function useCertificatesTableController({
   function getCourseSpecificOptions(courseName: string, fieldKey: CourseSpecificFieldKey): string[] {
   const courseKey = normalizeCoursePriceLookup(courseName);
   if (!courseKey) return [];
-  return courseSpecificOptionsByCourse.get(courseKey)?.[fieldKey] || [];
+  const priceOptions = courseSpecificOptionsByCourse.get(courseKey)?.[fieldKey] || [];
+  if (fieldKey === 'qualification' && isQualificationCourseName(courseName)) {
+  return mergeSelectOptions(priceOptions, qualificationReferenceOptions);
+  }
+  return priceOptions;
   }
 
   function isCourseSpecificFieldApplicable(courseName: string, fieldKey: CourseSpecificFieldKey): boolean {
@@ -1446,7 +1458,7 @@ export function useCertificatesTableController({
   }
 
   function isQualificationCourse(courseName: string): boolean {
-  return isCourseSpecificFieldApplicable(courseName, 'qualification');
+  return isQualificationCourseName(courseName) || isCourseSpecificFieldApplicable(courseName, 'qualification');
   }
 
  const orderedVisibleColumnKeys = useMemo(
@@ -1492,7 +1504,7 @@ export function useCertificatesTableController({
   () => mergeSelectOptions(
   visibleRows.flatMap(row => getCourseSpecificOptions(row.course_name, 'qualification'))
   ),
-  [visibleRows, courseSpecificOptionsByCourse]
+  [visibleRows, courseSpecificOptionsByCourse, qualificationReferenceOptions]
   );
   const bulkElectricalSafetyGroupOptions = useMemo(
   () => mergeSelectOptions(

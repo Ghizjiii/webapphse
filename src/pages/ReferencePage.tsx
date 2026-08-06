@@ -33,6 +33,7 @@ type Tab =
   | 'marker-pass'
   | 'type-learn'
   | 'commis-concl'
+  | 'qualification'
   | 'electrical-safety-admission'
   | 'electrical-safety-group'
   | 'regions'
@@ -181,6 +182,10 @@ export default function ReferencePage() {
     () => toRefItems(bitrixListItems.filter(item => item.list_key === 'COMMIS_CONCL')),
     [bitrixListItems]
   );
+  const qualificationItems = useMemo(
+    () => toRefItems(bitrixListItems.filter(item => item.list_key === 'QUALIFICATION')),
+    [bitrixListItems]
+  );
   const electricalSafetyAdmissionRows = useMemo<ReferenceTableRow[]>(
     () => bitrixListItems
       .filter(item => item.list_key === 'ELECTRICAL_SAFETY_ADMISSION')
@@ -306,6 +311,7 @@ export default function ReferencePage() {
     { key: 'marker-pass' as Tab, group: 'secondary' as TabGroup, label: 'Отметка проверки знаний', icon: <CheckCircle2 size={15} />, count: markerPassItems.length },
     { key: 'type-learn' as Tab, group: 'secondary' as TabGroup, label: 'Вид проверки / тип обучения', icon: <ClipboardCheck size={15} />, count: typeLearnItems.length },
     { key: 'commis-concl' as Tab, group: 'secondary' as TabGroup, label: 'Заключение комиссии', icon: <ShieldCheck size={15} />, count: commisConclItems.length },
+    { key: 'qualification' as Tab, group: 'secondary' as TabGroup, label: 'Название курсов квалификации', icon: <Award size={15} />, count: qualificationItems.length },
     { key: 'electrical-safety-admission' as Tab, group: 'secondary' as TabGroup, label: 'Допуск электробезопасности', icon: <Shield size={15} />, count: electricalSafetyAdmissionRows.length },
     { key: 'electrical-safety-group' as Tab, group: 'secondary' as TabGroup, label: 'Группа электробезопасности', icon: <ShieldCheck size={15} />, count: electricalSafetyGroupRows.length },
     { key: 'regions' as Tab, group: 'secondary' as TabGroup, label: 'Регион / отдел', icon: <MapPinned size={15} />, count: regionItems.length },
@@ -702,6 +708,11 @@ export default function ReferencePage() {
               <ReadonlyReferenceTab
                 title={BITRIX_REFERENCE_LISTS.COMMIS_CONCL.name}
                 items={commisConclItems}
+              />
+            ) : tab === 'qualification' ? (
+              <ReadonlyReferenceTab
+                title={BITRIX_REFERENCE_LISTS.QUALIFICATION.name}
+                items={qualificationItems}
               />
             ) : tab === 'electrical-safety-admission' ? (
               <ReadonlyReferenceTableTab

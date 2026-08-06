@@ -84,6 +84,7 @@ export function usePublicFormController(token: string | undefined) {
  const [participants, setParticipants] = useState<LocalParticipant[]>([createLocalParticipant()]);
  const [availableCourses, setAvailableCourses] = useState<string[]>([]);
  const [coursePriceRules, setCoursePriceRules] = useState<RefCoursePrice[]>([]);
+ const [availableQualifications, setAvailableQualifications] = useState<string[]>([]);
  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
  const [availableElectricalSafetyGroups, setAvailableElectricalSafetyGroups] = useState<string[]>(buildPreviousElectricalSafetyGroupOptions(DEFAULT_ELECTRICAL_SAFETY_GROUPS));
  const [openCourseSelect, setOpenCourseSelect] = useState<string | null>(null);
@@ -446,6 +447,18 @@ export function usePublicFormController(token: string | undefined) {
  .order('electrical_safety_group')
  .then(({ data }) => {
  setCoursePriceRules((data || []) as RefCoursePrice[]);
+ });
+ void supabase
+ .from('ref_bitrix_list_items')
+ .select('name')
+ .eq('list_key', 'QUALIFICATION')
+ .order('sort_order')
+ .order('name')
+ .then(({ data }) => {
+ const rows = (data || [])
+ .map(item => String(item.name || '').trim())
+ .filter(Boolean);
+ setAvailableQualifications(rows);
  });
  void supabase
  .from('ref_bitrix_list_items')
@@ -973,6 +986,7 @@ export function usePublicFormController(token: string | undefined) {
  const allowedOptions = buildCourseOptions({
  baseCourses: availableCourses,
  coursePriceRules,
+ qualificationOptions: availableQualifications,
  category: String(value || ''),
  });
  const allowedKeys = new Set(allowedOptions.map(option => normalizeCourseOptionValue(option.displayName)).filter(Boolean));
@@ -986,7 +1000,7 @@ export function usePublicFormController(token: string | undefined) {
  ),
  };
  }));
- }, [availableCourses, coursePriceRules]);
+ }, [availableCourses, availableQualifications, coursePriceRules]);
 
  const toggleCourse = useCallback((participantId: string, course: string) => {
  setParticipants(current => current.map(participant => {
@@ -1121,11 +1135,12 @@ export function usePublicFormController(token: string | undefined) {
  return buildCourseOptions({
  baseCourses: availableCourses,
  coursePriceRules,
+ qualificationOptions: availableQualifications,
  category: participant.category,
  })
  .map(option => option.displayName)
  .filter(course => course.toLowerCase().includes(courseSearch.toLowerCase()));
- }, [availableCourses, coursePriceRules, courseSearch]);
+ }, [availableCourses, availableQualifications, coursePriceRules, courseSearch]);
  const totalPages = Math.ceil(participants.length / pageSize);
  const pagedParticipants = participants.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 

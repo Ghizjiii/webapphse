@@ -64,7 +64,7 @@ export const BITRIX_REFERENCE_LISTS = {
   COMMIS_CONCL: { iblockId: 80, name: 'Заключение комиссии' },
   COURSE_PRICES: { iblockId: 84, name: 'Course default prices' },
   REGIONS: { iblockId: Number(import.meta.env.VITE_BITRIX_REGION_LIST_IBLOCK_ID || '118'), name: 'Отделы и регионы' },
-  QUALIFICATION: { iblockId: 86, name: 'Квалификация' },
+  QUALIFICATION: { iblockId: 86, name: 'Название курсов квалификации' },
   ELECTRICAL_SAFETY_ADMISSION: { iblockId: 88, name: 'Допуск электробезопасность' },
   ELECTRICAL_SAFETY_GROUP: { iblockId: 90, name: 'Группа электробезопасность' },
   CITIES: { iblockId: 92, name: 'Города' },
@@ -151,7 +151,7 @@ function normalizeListField(entry: [string, unknown]): BitrixListFieldDefinition
   };
 }
 
-async function callBitrixListMethod(method: string, params: Record<string, string | number>): Promise<unknown> {
+async function callBitrixListPayload(method: string, params: Record<string, string | number>): Promise<Record<string, unknown>> {
   const url = `${WEBHOOK}/${method}.json`;
   const maxAttempts = 4;
   let lastError: Error | null = null;
@@ -200,7 +200,7 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
         throw err;
       }
 
-      return data.result;
+      return data;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error || '');
       lastError = error instanceof Error ? error : new Error(message);
@@ -214,6 +214,11 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
   }
 
   throw lastError || new Error(`Bitrix list call failed: ${method}`);
+}
+
+async function callBitrixListMethod(method: string, params: Record<string, string | number>): Promise<unknown> {
+  const payload = await callBitrixListPayload(method, params);
+  return payload.result;
 }
 
 function findField(
@@ -476,21 +481,37 @@ async function fetchBitrixListFields(iblockId: number): Promise<BitrixListFieldD
   return Object.entries(fieldsRecord).map(normalizeListField);
 }
 
-export async function fetchBitrixListElements(iblockId: number): Promise<BitrixListElement[]> {
-  const [result, fields] = await Promise.all([
-    callBitrixListMethod('lists.element.get', {
+async function fetchBitrixListElementRows(iblockId: number): Promise<Array<Record<string, unknown>>> {
+  const rows: Array<Record<string, unknown>> = [];
+  let start: string | number = 0;
+
+  while (true) {
+    const payload = await callBitrixListPayload('lists.element.get', {
       IBLOCK_TYPE_ID: resolveBitrixListTypeId(iblockId),
       IBLOCK_ID: iblockId,
-    }),
+      start,
+    });
+    const pageRows = Array.isArray(payload.result) ? payload.result : [];
+    rows.push(...pageRows.map(row => toPlainRecord(row)));
+
+    const next = payload.next;
+    if (next === undefined || next === null || String(next).trim() === '') break;
+    start = typeof next === 'number' ? next : String(next);
+  }
+
+  return rows;
+}
+
+export async function fetchBitrixListElements(iblockId: number): Promise<BitrixListElement[]> {
+  const [rows, fields] = await Promise.all([
+    fetchBitrixListElementRows(iblockId),
     listRequiresFieldMetadata(iblockId)
       ? fetchBitrixListFields(iblockId)
       : Promise.resolve([] as BitrixListFieldDefinition[]),
   ]);
 
-  const rows = Array.isArray(result) ? result : [];
-
   return rows
-    .map((row, index) => normalizeListElement(row as Record<string, unknown>, index, iblockId, fields))
+    .map((row, index) => normalizeListElement(row, index, iblockId, fields))
     .filter((row): row is BitrixListElement => Boolean(row));
 }
 
