@@ -7,7 +7,13 @@ import { uploadPhoto } from '../lib/cloudinary';
 import { getParticipantDisplayName } from '../lib/participantName';
 import { parseParticipantImportFile } from '../lib/participantImport';
 import { PARTICIPANT_IMPORT_HELP_URL, PARTICIPANT_IMPORT_TEMPLATE_URL } from '../lib/participantImportAssets';
-import { DEFAULT_ELECTRICAL_SAFETY_GROUPS, isElectricalSafetyCourse, normalizePreviousElectricalSafetyGroup } from '../lib/electricalSafety';
+import {
+  DEFAULT_ELECTRICAL_SAFETY_GROUPS,
+  NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP,
+  buildPreviousElectricalSafetyGroupOptions,
+  isElectricalSafetyCourse,
+  normalizePreviousElectricalSafetyGroup,
+} from '../lib/electricalSafety';
 import { useToast } from '../context/ToastContext';
 import type { Participant, ParticipantCourse, SortConfig } from '../types';
 import PhotoCropModal from './PhotoCropModal';
@@ -87,7 +93,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
-  const [electricalSafetyGroups, setElectricalSafetyGroups] = useState<string[]>(DEFAULT_ELECTRICAL_SAFETY_GROUPS);
+  const [electricalSafetyGroups, setElectricalSafetyGroups] = useState<string[]>(buildPreviousElectricalSafetyGroupOptions(DEFAULT_ELECTRICAL_SAFETY_GROUPS));
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -280,7 +286,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
               participant_id: participantId,
               questionnaire_id: questionnaireId,
               course_name: course,
-              previous_electrical_safety_group: '',
+              previous_electrical_safety_group: isElectricalSafetyCourse(course) ? NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP : '',
             }))
           );
           if (coursesError) throw coursesError;
@@ -312,7 +318,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
             participant_id: participantId,
             questionnaire_id: questionnaireId,
             course_name: courseName,
-            previous_electrical_safety_group: '',
+            previous_electrical_safety_group: isElectricalSafetyCourse(courseName) ? NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP : '',
           },
         ];
     applyParticipantPatch(participantId, { courses: nextCourses } as Partial<Participant>);
@@ -329,7 +335,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
         participant_id: participantId,
         questionnaire_id: questionnaireId,
         course_name: courseName,
-        previous_electrical_safety_group: '',
+        previous_electrical_safety_group: isElectricalSafetyCourse(courseName) ? NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP : '',
       });
       if (error && previousParticipant) {
         setLocalParticipants(prev => prev.map(participant => (
@@ -357,7 +363,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       .order('sort_order')
       .order('name');
     const rows = (data || []).map(item => String(item.name || '').trim()).filter(Boolean);
-    setElectricalSafetyGroups(rows.length > 0 ? rows : DEFAULT_ELECTRICAL_SAFETY_GROUPS);
+    setElectricalSafetyGroups(buildPreviousElectricalSafetyGroupOptions(rows));
   }
 
   useEffect(() => {
@@ -748,14 +754,13 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
                                 {course.course_name}
                               </span>
                               <select
-                                value={course.previous_electrical_safety_group || ''}
+                                value={normalizePreviousElectricalSafetyGroup(course.previous_electrical_safety_group)}
                                 onChange={event => {
                                   void updatePreviousElectricalSafetyGroup(p.id, course.course_name, event.target.value);
                                 }}
                                 className="mt-1.5 w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-amber-400"
                                 disabled={saving}
                               >
-                                <option value="">Нет / первичная</option>
                                 {electricalSafetyGroups.map(group => (
                                   <option key={group} value={group}>{group}</option>
                                 ))}

@@ -5,7 +5,7 @@ import type {
   ProtocolCategoryScope,
   RefProtocolNumeratorSetting,
 } from '../types';
-import { electricalSafetyGroupShort, gradeShort } from './electricalSafety';
+import { electricalSafetyGroupShort, gradeShort, normalizePreviousElectricalSafetyGroup } from './electricalSafety';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -785,7 +785,7 @@ export function buildProtocolDocumentPayload(params: {
       '{{DOC_VALID}}': formatDateKazRusWords(cert.expiry_date),
       '{{EL_SAFE_GROUP}}': String(cert.electrical_safety_group || '').trim(),
       '{{EL_SAFE_GROUP_SHRT}}': electricalSafetyGroupShort(cert.electrical_safety_group),
-      '{{EL_SAFE_GROUP_OLD}}': String(cert.previous_electrical_safety_group || '').trim(),
+      '{{EL_SAFE_GROUP_OLD}}': params.protocol.template_key === 'tpl_protocol_15_electrical_safety' ? normalizePreviousElectricalSafetyGroup(cert.previous_electrical_safety_group) : '',
       '{{EL_SAFE_APPROV}}': String(cert.electrical_safety_admission_protocol || '').trim(),
       '{{MARKER_PASS}}': String(cert.marker_pass || '').trim(),
       '{{TYPE_LEARN}}': String(cert.type_learn || '').trim(),

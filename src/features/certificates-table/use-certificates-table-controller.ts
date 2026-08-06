@@ -13,6 +13,11 @@ import {
  updateSmartProcessItem,
 } from '../../lib/bitrix';
 import { resolveCourseOption } from '../../lib/courseOptions';
+import {
+  PREVIOUS_ELECTRICAL_SAFETY_GROUP_OPTIONS,
+  isElectricalSafetyCourse,
+  normalizePreviousElectricalSafetyGroup,
+} from '../../lib/electricalSafety';
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate, templateSupportsPhoto } from '../../lib/documentGeneration';
 import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { reconcileProtocolsFromCertificates } from '../../lib/protocolGeneration';
@@ -62,7 +67,7 @@ export function useCertificatesTableController({
  const { showToast } = useToast();
  const isInternalRequest = requestType === 'internal';
   const fallbackCategoryOptions = ['ИТР', 'Обычный'];
-  const fallbackTypeLearnOptions = ['первичная', 'повторная', 'периодическая'];
+  const fallbackTypeLearnOptions = ['очередная', 'первичная', 'повторная', 'периодическая'];
   const canonicalMarkerPassOptions = [
   'Прошел (-а)',
   'Не прошел (-а)',
@@ -149,6 +154,7 @@ export function useCertificatesTableController({
  function normalizeTypeLearnValue(value: string): string {
  const normalized = String(value || '').trim().toLocaleLowerCase('ru');
  if (!normalized) return '';
+ if (normalized === 'очередной' || normalized === 'очередная') return 'очередная';
  if (normalized === 'первичный' || normalized === 'первичная') return 'первичная';
  if (normalized === 'повторный' || normalized === 'повторная') return 'повторная';
  if (normalized === 'периодический' || normalized === 'периодическая') return 'периодическая';
@@ -187,6 +193,9 @@ export function useCertificatesTableController({
  electrical_safety_admission_protocol: String(cert.electrical_safety_admission_protocol || '').trim(),
  marker_pass: normalizeMarkerPassValue(cert.marker_pass),
  type_learn: normalizeTypeLearnValue(cert.type_learn),
+ previous_electrical_safety_group: isElectricalSafetyCourse(cert.course_name)
+ ? normalizePreviousElectricalSafetyGroup(cert.previous_electrical_safety_group)
+ : '',
  commis_concl: normalizeCommisConclValue(cert.commis_concl),
  grade: normalizeGradeValue(cert.grade),
  employee_status: normalizeEmployeeStatusValue(cert.employee_status),
@@ -333,6 +342,7 @@ export function useCertificatesTableController({
   const [bulkManager, setBulkManager] = useState<string>('');
   const [bulkQualification, setBulkQualification] = useState<string>('');
   const [bulkElectricalSafetyGroup, setBulkElectricalSafetyGroup] = useState<string>('');
+  const [bulkPreviousElectricalSafetyGroup, setBulkPreviousElectricalSafetyGroup] = useState<string>('');
   const [bulkCommissionMembersProtocol, setBulkCommissionMembersProtocol] = useState<string>('');
   const [bulkElectricalSafetyAdmissionProtocol, setBulkElectricalSafetyAdmissionProtocol] = useState<string>('');
   const [bulkMarkerPass, setBulkMarkerPass] = useState<string>('');
@@ -820,10 +830,6 @@ export function useCertificatesTableController({
   };
   }
 
-  function isElectricalSafetyCourse(courseName: string): boolean {
-  return normalizeCoursePriceLookup(courseName).includes('электробезопас');
-  }
-
   function resolveReferencePrice(
   courseName: string,
   category: string,
@@ -869,18 +875,33 @@ export function useCertificatesTableController({
   }
 
   function applyCourseSpecificFields(cert: Certificate, patch: Partial<Certificate>): Partial<Certificate> {
-  if (coursePriceRules.length === 0) return patch;
-
   const touchesCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name');
   const touchesQualification = Object.prototype.hasOwnProperty.call(patch, 'qualification');
   const touchesElectricalSafetyGroup = Object.prototype.hasOwnProperty.call(patch, 'electrical_safety_group');
+  const touchesPreviousElectricalSafetyGroup = Object.prototype.hasOwnProperty.call(patch, 'previous_electrical_safety_group');
   const touchesLevel = Object.prototype.hasOwnProperty.call(patch, 'level');
   const nextCourseName = Object.prototype.hasOwnProperty.call(patch, 'course_name')
   ? String(patch.course_name || '')
   : cert.course_name;
+  const nextPatch: Partial<Certificate> = { ...patch };
+  const supportsPreviousElectricalSafetyGroup = isElectricalSafetyCourse(nextCourseName);
+
+  if (touchesPreviousElectricalSafetyGroup) {
+  nextPatch.previous_electrical_safety_group = supportsPreviousElectricalSafetyGroup
+  ? normalizePreviousElectricalSafetyGroup(patch.previous_electrical_safety_group)
+  : '';
+  }
+  if (touchesCourseName && supportsPreviousElectricalSafetyGroup && !touchesPreviousElectricalSafetyGroup) {
+  nextPatch.previous_electrical_safety_group = normalizePreviousElectricalSafetyGroup(cert.previous_electrical_safety_group);
+  }
+  if (touchesCourseName && !supportsPreviousElectricalSafetyGroup && String(cert.previous_electrical_safety_group || '').trim()) {
+  nextPatch.previous_electrical_safety_group = '';
+  }
+
+  if (coursePriceRules.length === 0) return nextPatch;
+
   const supportsQualification = isQualificationCourse(nextCourseName);
   const supportsElectricalSafetyGroup = isCourseSpecificFieldApplicable(nextCourseName, 'electrical_safety_group');
-  const nextPatch: Partial<Certificate> = { ...patch };
 
   if (touchesQualification) {
   nextPatch.qualification = String(patch.qualification || '');
@@ -934,6 +955,7 @@ export function useCertificatesTableController({
   function buildCourseSpecificCleanupPatch(cert: Certificate): Partial<Certificate> | null {
   const supportsQualification = isQualificationCourse(cert.course_name);
   const supportsElectricalSafetyGroup = isCourseSpecificFieldApplicable(cert.course_name, 'electrical_safety_group');
+  const supportsPreviousElectricalSafetyGroup = isElectricalSafetyCourse(cert.course_name);
   const patch: Partial<Certificate> = {};
 
   if (!supportsQualification && (String(cert.qualification || '').trim() || String(cert.level || '').trim())) {
@@ -943,6 +965,9 @@ export function useCertificatesTableController({
 
   if (!supportsElectricalSafetyGroup && String(cert.electrical_safety_group || '').trim()) {
   patch.electrical_safety_group = '';
+  }
+  if (!supportsPreviousElectricalSafetyGroup && String(cert.previous_electrical_safety_group || '').trim()) {
+  patch.previous_electrical_safety_group = '';
   }
 
   return Object.keys(patch).length > 0 ? patch : null;
@@ -1474,6 +1499,12 @@ export function useCertificatesTableController({
   visibleRows.flatMap(row => getCourseSpecificOptions(row.course_name, 'electrical_safety_group'))
   ),
   [visibleRows, courseSpecificOptionsByCourse]
+  );
+  const bulkPreviousElectricalSafetyGroupOptions = useMemo(
+  () => visibleRows.some(row => isElectricalSafetyCourse(row.course_name))
+  ? PREVIOUS_ELECTRICAL_SAFETY_GROUP_OPTIONS
+  : [],
+  [visibleRows]
   );
   const bulkCommissionMembersProtocolOptions = useMemo(
   () => mergeSelectOptions(
@@ -2015,6 +2046,29 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   );
   }
 
+  async function bulkFillPreviousElectricalSafetyGroup() {
+  if (bulkSaving) return;
+  const normalizedValue = normalizePreviousElectricalSafetyGroup(bulkPreviousElectricalSafetyGroup);
+  const applicableRows = visibleRows.filter(row => isElectricalSafetyCourse(row.course_name));
+  const skippedCount = visibleRows.length - applicableRows.length;
+
+  if (applicableRows.length === 0) {
+  showToast('warning', 'В текущем наборе нет строк курса "Электробезопасность"');
+  return;
+  }
+
+  await runBulk(
+  applicableRows.map(row => ({
+  id: row.id,
+  patch: { previous_electrical_safety_group: normalizedValue } as Partial<Certificate>,
+  }))
+  );
+
+  if (skippedCount > 0) {
+  showToast('warning', `Поле "Имеющаяся группа электробезопасности" применено только к курсу "Электробезопасность": пропущено ${skippedCount}.`);
+  }
+  }
+
   async function bulkFillReferenceFilteredField(
   fieldKey: 'commission_members_protocol' | 'electrical_safety_admission_protocol',
   value: string,
@@ -2432,7 +2486,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  ? findReferenceBitrixItemId(bitrixListItemsForSync, 'TYPE_LEARN', normalizedTypeLearn, [cert.type_learn || ''])
  : '';
  if (String(normalizedTypeLearn || '').trim() && !typeLearnValue) {
- throw new Error(`Не найден вариант Bitrix для поля "Вид проверки знаний / тип обучения": ${normalizedTypeLearn}`);
+ throw new Error(`Не найден вариант Bitrix для поля "Вид проверки / тип обучения": ${normalizedTypeLearn}`);
  }
 
  const normalizedCommisConcl = toBitrixCommisConclValue(cert.commis_concl || '');
@@ -2646,6 +2700,8 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   bulkQualificationOptions,
   bulkElectricalSafetyGroup,
   bulkElectricalSafetyGroupOptions,
+  bulkPreviousElectricalSafetyGroup,
+  bulkPreviousElectricalSafetyGroupOptions,
   bulkCommissionMembersProtocol,
   bulkCommissionMembersProtocolOptions,
   bulkElectricalSafetyAdmissionProtocol,
@@ -2691,6 +2747,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   setBulkManager,
   setBulkQualification,
   setBulkElectricalSafetyGroup,
+  setBulkPreviousElectricalSafetyGroup,
   setBulkCommissionMembersProtocol,
   setBulkElectricalSafetyAdmissionProtocol,
   setBulkMarkerPass,
@@ -2719,6 +2776,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
   bulkFillManager,
   bulkFillQualification,
   bulkFillElectricalSafetyGroup,
+  bulkFillPreviousElectricalSafetyGroup,
   bulkFillCommissionMembersProtocol,
   bulkFillElectricalSafetyAdmissionProtocol,
   bulkFillMarkerPass,

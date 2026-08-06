@@ -60,7 +60,7 @@ export const BITRIX_REFERENCE_LISTS = {
   GRADE: { iblockId: 72, name: 'Оценка за квалиф. экзамен' },
   EMPLOYEE_STATUS: { iblockId: 74, name: 'Статус сотрудника' },
   MARKER_PASS: { iblockId: 76, name: 'Отметка о проверке знаний' },
-  TYPE_LEARN: { iblockId: 78, name: 'Вид проверки знаний / тип обучения' },
+  TYPE_LEARN: { iblockId: 78, name: 'Вид проверки / тип обучения' },
   COMMIS_CONCL: { iblockId: 80, name: 'Заключение комиссии' },
   COURSE_PRICES: { iblockId: 84, name: 'Course default prices' },
   REGIONS: { iblockId: Number(import.meta.env.VITE_BITRIX_REGION_LIST_IBLOCK_ID || '118'), name: 'Отделы и регионы' },

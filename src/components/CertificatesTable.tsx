@@ -203,6 +203,8 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         bulkQualificationOptions={controller.bulkQualificationOptions}
         bulkElectricalSafetyGroup={controller.bulkElectricalSafetyGroup}
         bulkElectricalSafetyGroupOptions={controller.bulkElectricalSafetyGroupOptions}
+        bulkPreviousElectricalSafetyGroup={controller.bulkPreviousElectricalSafetyGroup}
+        bulkPreviousElectricalSafetyGroupOptions={controller.bulkPreviousElectricalSafetyGroupOptions}
         bulkCommissionMembersProtocol={controller.bulkCommissionMembersProtocol}
         bulkCommissionMembersProtocolOptions={controller.bulkCommissionMembersProtocolOptions}
         bulkElectricalSafetyAdmissionProtocol={controller.bulkElectricalSafetyAdmissionProtocol}
@@ -260,6 +262,10 @@ export default function CertificatesTable(props: CertificatesTableProps) {
         onBulkElectricalSafetyGroupChange={controller.setBulkElectricalSafetyGroup}
         onBulkFillElectricalSafetyGroup={() => {
           void controller.bulkFillElectricalSafetyGroup();
+        }}
+        onBulkPreviousElectricalSafetyGroupChange={controller.setBulkPreviousElectricalSafetyGroup}
+        onBulkFillPreviousElectricalSafetyGroup={() => {
+          void controller.bulkFillPreviousElectricalSafetyGroup();
         }}
         onBulkCommissionMembersProtocolChange={controller.setBulkCommissionMembersProtocol}
         onBulkFillCommissionMembersProtocol={() => {

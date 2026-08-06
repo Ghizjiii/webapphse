@@ -7,6 +7,8 @@ import { fetchCoursesList } from '../../lib/bitrix';
 import { buildCourseOptions, normalizeCourseOptionValue, resolveCourseOption } from '../../lib/courseOptions';
 import {
  DEFAULT_ELECTRICAL_SAFETY_GROUPS,
+ NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP,
+ buildPreviousElectricalSafetyGroupOptions,
  isElectricalSafetyCourse,
  normalizePreviousElectricalSafetyGroup,
 } from '../../lib/electricalSafety';
@@ -83,7 +85,7 @@ export function usePublicFormController(token: string | undefined) {
  const [availableCourses, setAvailableCourses] = useState<string[]>([]);
  const [coursePriceRules, setCoursePriceRules] = useState<RefCoursePrice[]>([]);
  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
- const [availableElectricalSafetyGroups, setAvailableElectricalSafetyGroups] = useState<string[]>(DEFAULT_ELECTRICAL_SAFETY_GROUPS);
+ const [availableElectricalSafetyGroups, setAvailableElectricalSafetyGroups] = useState<string[]>(buildPreviousElectricalSafetyGroupOptions(DEFAULT_ELECTRICAL_SAFETY_GROUPS));
  const [openCourseSelect, setOpenCourseSelect] = useState<string | null>(null);
  const [courseSearch, setCourseSearch] = useState('');
  const [submitting, setSubmitting] = useState(false);
@@ -397,10 +399,10 @@ export function usePublicFormController(token: string | undefined) {
  .map((course: { course_name: string }) => course.course_name),
  previousElectricalSafetyGroups: Object.fromEntries(
  (participantCourses || [])
- .filter(course => course.participant_id === participant.id)
+ .filter(course => course.participant_id === participant.id && isElectricalSafetyCourse(course.course_name))
  .map((course: { course_name: string; previous_electrical_safety_group?: string | null }) => [
  course.course_name,
- String(course.previous_electrical_safety_group || ''),
+ normalizePreviousElectricalSafetyGroup(course.previous_electrical_safety_group),
  ])
  ),
  photo_url: participant.photo_url || '',
@@ -455,7 +457,7 @@ export function usePublicFormController(token: string | undefined) {
  const rows = (data || [])
  .map(item => String(item.name || '').trim())
  .filter(Boolean);
- setAvailableElectricalSafetyGroups(rows.length > 0 ? rows : DEFAULT_ELECTRICAL_SAFETY_GROUPS);
+ setAvailableElectricalSafetyGroups(buildPreviousElectricalSafetyGroupOptions(rows));
  });
  }, [lookupCompanyByBin, token]);
 
@@ -992,6 +994,7 @@ export function usePublicFormController(token: string | undefined) {
  const exists = participant.courses.includes(course);
  const nextPreviousGroups = { ...(participant.previousElectricalSafetyGroups || {}) };
  if (exists) delete nextPreviousGroups[course];
+ else if (isElectricalSafetyCourse(course)) nextPreviousGroups[course] = NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP;
  return {
  ...participant,
  courses: exists ? participant.courses.filter(item => item !== course) : [...participant.courses, course],

@@ -20,6 +20,7 @@ const PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD_TITLES = [
   "\u0418\u043c\u0435\u044e\u0449\u0430\u044f\u0441\u044f \u0433\u0440\u0443\u043f\u043f\u0430 \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u0438",
   "\u041f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0430\u044f \u0433\u0440\u0443\u043f\u043f\u0430 \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u0438",
 ];
+const NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP = "\u041d\u0435\u0442 \u0434\u043e\u043f\u0443\u0441\u043a\u0430";
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
 const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
 
@@ -547,6 +548,7 @@ function toBitrixCommisConclValue(value: unknown): string {
 function normalizeTypeLearnValue(value: unknown): string {
   const normalized = plain(value).toLocaleLowerCase("ru");
   if (!normalized) return "";
+  if (normalized === "\u043e\u0447\u0435\u0440\u0435\u0434\u043d\u043e\u0439" || normalized === "\u043e\u0447\u0435\u0440\u0435\u0434\u043d\u0430\u044f") return "\u043e\u0447\u0435\u0440\u0435\u0434\u043d\u0430\u044f";
   if (normalized === "первичный" || normalized === "первичная") return "первичная";
   if (normalized === "повторный" || normalized === "повторная") return "повторная";
   if (normalized === "периодический" || normalized === "периодическая") return "периодическая";
@@ -590,6 +592,29 @@ function normalizeCoursePriceLookup(value: unknown): string {
   }
 
   return normalized;
+}
+
+function isElectricalSafetyCourseName(value: unknown): boolean {
+  return normalizeCoursePriceLookup(value).includes("\u044d\u043b\u0435\u043a\u0442\u0440\u043e\u0431\u0435\u0437\u043e\u043f\u0430\u0441");
+}
+
+function normalizePreviousElectricalSafetyGroup(value: unknown): string {
+  const normalized = normalizeCoursePriceLookup(value);
+  if (!normalized || normalized.includes("\u043d\u0435\u0442") || normalized.includes("\u0431\u0435\u0437 \u0434\u043e\u043f\u0443\u0441\u043a")) {
+    return NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP;
+  }
+
+  const romanMatch = normalized.match(/\b(ii|iii|iv|v)\b/i);
+  const digitMatch = normalized.match(/\b([2-5])\b/);
+  const romanByDigit: Record<string, string> = {
+    "2": "II",
+    "3": "III",
+    "4": "IV",
+    "5": "V",
+  };
+  const roman = romanMatch?.[1]?.toUpperCase() || (digitMatch ? romanByDigit[digitMatch[1]] : "");
+  if (!roman) return NO_PREVIOUS_ELECTRICAL_SAFETY_GROUP;
+  return `\u0433\u0440\u0443\u043f\u043f\u0430 \u0434\u043e\u043f\u0443\u0441\u043a\u0430 ${roman}`;
 }
 
 function buildCourseSelectionLabel(
@@ -2811,7 +2836,9 @@ Deno.serve(async (req: Request) => {
       const bucket = coursesByParticipant.get(row.participant_id) || [];
       bucket.push({
         ...parseParticipantCourseSelection(row.course_name, participant?.category || "", referenceCoursePrices),
-        previousElectricalSafetyGroup: plain(row.previous_electrical_safety_group),
+        previousElectricalSafetyGroup: isElectricalSafetyCourseName(row.course_name)
+          ? normalizePreviousElectricalSafetyGroup(row.previous_electrical_safety_group)
+          : "",
       });
       coursesByParticipant.set(row.participant_id, bucket);
     }

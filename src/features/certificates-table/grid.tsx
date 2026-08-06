@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { CheckCircle, ChevronDown, ChevronUp, ChevronsUpDown, Trash2, XCircle } from 'lucide-react';
 import type { Certificate, SortConfig } from '../../types';
+import { isElectricalSafetyCourse } from '../../lib/electricalSafety';
 import {
   AUX_COLUMN_LABELS,
   BULK_TEXT_FILL_FIELDS,
@@ -35,6 +36,8 @@ interface CertificatesGridProps {
   bulkQualificationOptions: string[];
   bulkElectricalSafetyGroup: string;
   bulkElectricalSafetyGroupOptions: string[];
+  bulkPreviousElectricalSafetyGroup: string;
+  bulkPreviousElectricalSafetyGroupOptions: string[];
   bulkCommissionMembersProtocol: string;
   bulkCommissionMembersProtocolOptions: string[];
   bulkElectricalSafetyAdmissionProtocol: string;
@@ -73,6 +76,8 @@ interface CertificatesGridProps {
   onBulkQualificationChange: (value: string) => void;
   onBulkFillElectricalSafetyGroup: () => void;
   onBulkElectricalSafetyGroupChange: (value: string) => void;
+  onBulkFillPreviousElectricalSafetyGroup: () => void;
+  onBulkPreviousElectricalSafetyGroupChange: (value: string) => void;
   onBulkFillCommissionMembersProtocol: () => void;
   onBulkCommissionMembersProtocolChange: (value: string) => void;
   onBulkFillElectricalSafetyAdmissionProtocol: () => void;
@@ -151,6 +156,8 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     bulkQualificationOptions,
     bulkElectricalSafetyGroup,
     bulkElectricalSafetyGroupOptions,
+    bulkPreviousElectricalSafetyGroup,
+    bulkPreviousElectricalSafetyGroupOptions,
     bulkCommissionMembersProtocol,
     bulkCommissionMembersProtocolOptions,
     bulkElectricalSafetyAdmissionProtocol,
@@ -189,6 +196,8 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     onBulkQualificationChange,
     onBulkFillElectricalSafetyGroup,
     onBulkElectricalSafetyGroupChange,
+    onBulkFillPreviousElectricalSafetyGroup,
+    onBulkPreviousElectricalSafetyGroupChange,
     onBulkFillCommissionMembersProtocol,
     onBulkCommissionMembersProtocolChange,
     onBulkFillElectricalSafetyAdmissionProtocol,
@@ -296,7 +305,19 @@ export function CertificatesGrid(props: CertificatesGridProps) {
     );
   }
 
-  function SelectCell({ certId, field, value, options }: { certId: string; field: keyof Certificate; value: string; options: string[] }) {
+  function SelectCell({
+    certId,
+    field,
+    value,
+    options,
+    allowBlank = true,
+  }: {
+    certId: string;
+    field: keyof Certificate;
+    value: string;
+    options: string[];
+    allowBlank?: boolean;
+  }) {
     return (
       <select
         value={value || ''}
@@ -304,7 +325,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
         className="min-w-[120px] w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
         disabled={saving}
       >
-        <option value="">-</option>
+        {allowBlank && <option value="">-</option>}
         {options.map(option => (
           <option key={option} value={option}>{repairDisplayText(option)}</option>
         ))}
@@ -514,6 +535,31 @@ export function CertificatesGrid(props: CertificatesGridProps) {
           <button
             onClick={onBulkFillElectricalSafetyGroup}
             disabled={bulkSaving || !bulkElectricalSafetyGroup}
+            className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Заполнить
+          </button>
+        </div>
+      );
+    }
+
+    if (columnKey === 'previous_electrical_safety_group') {
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={bulkPreviousElectricalSafetyGroup}
+            onChange={event => onBulkPreviousElectricalSafetyGroupChange(event.target.value)}
+            className="min-w-[150px] rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px]"
+            disabled={bulkSaving || bulkPreviousElectricalSafetyGroupOptions.length === 0}
+          >
+            <option value="">Выбрать...</option>
+            {bulkPreviousElectricalSafetyGroupOptions.map(option => (
+              <option key={option} value={option}>{repairDisplayText(option)}</option>
+            ))}
+          </select>
+          <button
+            onClick={onBulkFillPreviousElectricalSafetyGroup}
+            disabled={bulkSaving || !bulkPreviousElectricalSafetyGroup}
             className="rounded border border-gray-300 px-2 py-1 text-[11px] hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
           >
             Заполнить
@@ -1021,6 +1067,21 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                             value={String(cert[textField.key] ?? '')}
                             options={typeLearnOptions}
                           />
+                        ) : textField.key === 'previous_electrical_safety_group' ? (
+                          (() => {
+                            if (!isElectricalSafetyCourse(cert.course_name)) {
+                              return <ReadonlyCell value="" />;
+                            }
+                            return (
+                              <SelectCell
+                                certId={cert.id}
+                                field={textField.key}
+                                value={String(cert[textField.key] ?? '') || bulkPreviousElectricalSafetyGroupOptions[0] || ''}
+                                options={bulkPreviousElectricalSafetyGroupOptions}
+                                allowBlank={false}
+                              />
+                            );
+                          })()
                         ) : textField.key === 'commis_concl' ? (
                           <SelectCell
                             certId={cert.id}

@@ -444,12 +444,11 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                                 {course}
                               </span>
                               <select
-                                value={participant.previousElectricalSafetyGroups?.[course] || ''}
+                                value={participant.previousElectricalSafetyGroups?.[course] || availableElectricalSafetyGroups[0] || ''}
                                 onChange={event => onPreviousElectricalSafetyGroupChange(participant.id, course, event.target.value)}
                                 className="mt-1.5 w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-amber-400"
                                 disabled={!canEditParticipants}
                               >
-                                <option value="">Нет / первичная</option>
                                 {availableElectricalSafetyGroups.map(group => (
                                   <option key={group} value={group}>{group}</option>
                                 ))}
