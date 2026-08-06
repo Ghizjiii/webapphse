@@ -750,11 +750,12 @@ export default function DashboardPage() {
             </div>
           </div>
           {renderPaginationControls('border-b border-gray-100')}
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto overscroll-x-contain">
+          <table className="min-w-[1320px] w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60">
-                <th className="text-left px-5 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider w-16">№</th>
-                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявка / Название компании</th>
+                <th className="sticky left-0 z-20 w-16 bg-gray-50 px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">№</th>
+                <th className="sticky left-16 z-20 min-w-[260px] bg-gray-50 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Заявка / Название компании</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Регион / отдел</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Тип</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">{trashMode ? 'Корзина' : 'Статус'}</th>
@@ -798,15 +799,15 @@ export default function DashboardPage() {
                 return (
                   <tr
                     key={q.id}
-                    className={`cursor-pointer border-b transition-colors ${
+                    className={`group cursor-pointer border-b transition-colors ${
                       isWorkflowOverdue
                         ? 'border-red-100 bg-red-50/60 hover:bg-red-50'
                         : 'border-gray-50 hover:bg-blue-50/30'
                     }`}
                     onClick={() => navigate(`/dashboard/questionnaire/${q.id}`)}
                   >
-                    <td className="px-5 py-4 text-gray-400 font-medium align-top">{rowNumber}</td>
-                    <td className="px-4 py-4">
+                    <td className="sticky left-0 z-10 bg-inherit px-5 py-4 align-top font-medium text-gray-400">{rowNumber}</td>
+                    <td className="sticky left-16 z-10 bg-inherit px-4 py-4">
                       <div className="font-medium text-gray-900">{requestLabel}</div>
                       {company?.name ? (
                         <div className="mt-0.5 text-xs text-gray-500">{company.name}</div>
@@ -926,6 +927,7 @@ export default function DashboardPage() {
               })}
             </tbody>
           </table>
+          </div>
           {renderPaginationControls('border-t border-gray-100')}
           </>
         )}

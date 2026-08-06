@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { BarChart3, BookOpen, ChevronRight, LayoutDashboard, LogOut, Users } from 'lucide-react';
 import BrandLogo from './BrandLogo';
+import DevelopedByFooter from './DevelopedByFooter';
 import { useAuth } from '../context/AuthContext';
 import { APP_ROLE_LABELS } from '../lib/profileDirectory';
 
@@ -124,6 +125,7 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
             <LogOut size={16} />
             Выйти
           </button>
+          <DevelopedByFooter theme="dark" className="mt-4" />
         </div>
       </aside>
 
@@ -212,6 +214,9 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
         )}
 
         <main className="min-w-0 flex-1 p-3 sm:p-5 lg:p-8">{children}</main>
+        <footer className="px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] lg:hidden">
+          <DevelopedByFooter />
+        </footer>
       </div>
     </div>
   );

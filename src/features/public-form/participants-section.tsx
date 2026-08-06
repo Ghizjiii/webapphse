@@ -269,8 +269,14 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
               {HEADER_DEFS.map(column => (
                 <th
                   key={column.key}
-                  className={`relative text-left py-3 text-xs font-medium text-gray-500 uppercase tracking-wide ${
+                  className={`relative py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 ${
                     column.key === 'photo' ? 'px-6' : 'px-4'
+                  } ${
+                    column.key === 'photo'
+                      ? 'sticky left-0 z-20 bg-white'
+                      : column.key === 'full_name'
+                        ? 'sticky left-[96px] z-20 bg-white shadow-[1px_0_0_rgba(229,231,235,1)]'
+                        : ''
                   }`}
                   style={{ width: columnWidths[column.key], minWidth: columnWidths[column.key] }}
                 >
@@ -297,7 +303,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
 
               return (
                 <tr key={participant.id} className={`border-b border-gray-50 ${hasMissing ? 'bg-red-50/40' : ''}`}>
-                  <td className="px-6 py-3 align-top" style={{ width: columnWidths.photo, minWidth: columnWidths.photo }}>
+                  <td className="sticky left-0 z-10 bg-white px-6 py-3 align-top" style={{ width: columnWidths.photo, minWidth: columnWidths.photo }}>
                     <div className="relative w-12 h-14 flex-shrink-0">
                       {participant.photoPreview || participant.photo_url ? (
                         <img src={participant.photoPreview || participant.photo_url} alt="" className="w-12 h-14 rounded-lg object-cover border border-gray-200" />
@@ -338,7 +344,15 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                   </td>
 
                   {(['full_name', 'email', 'position'] as const).map(field => (
-                    <td key={field} className="px-4 py-3 align-top" style={{ width: columnWidths[field], minWidth: columnWidths[field] }}>
+                    <td
+                      key={field}
+                      className={`px-4 py-3 align-top ${
+                        field === 'full_name'
+                          ? 'sticky left-[96px] z-10 bg-white shadow-[1px_0_0_rgba(229,231,235,1)]'
+                          : ''
+                      }`}
+                      style={{ width: columnWidths[field], minWidth: columnWidths[field] }}
+                    >
                       <input
                         type={field === 'email' ? 'email' : 'text'}
                         value={participant[field]}

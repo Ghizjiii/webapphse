@@ -229,9 +229,9 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
   const previewRatio = 120 / frameSize.width;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+    <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/55 p-3 backdrop-blur-sm sm:p-4">
+      <div className="my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col rounded-2xl bg-white shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)]">
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3 sm:px-5 sm:py-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Загрузка фото</h2>
             <p className="mt-0.5 text-sm text-gray-500">Передвиньте фото и настройте масштаб</p>
@@ -246,7 +246,7 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
           </button>
         </div>
 
-        <div className="grid gap-6 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 py-4 sm:gap-6 sm:px-5 sm:py-5 lg:grid-cols-[minmax(0,1fr)_220px]">
           <div className="min-w-0">
             <div className="mb-3 flex items-center gap-3">
               <button
@@ -274,10 +274,10 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
               </button>
             </div>
 
-            <div className="rounded-xl border border-gray-200 bg-slate-100 p-4">
+            <div className="rounded-xl border border-gray-200 bg-slate-100 p-3 sm:p-4">
               <div
                 ref={frameRef}
-                className="relative mx-auto aspect-[3/4] w-[min(72vw,330px)] touch-none cursor-grab overflow-hidden rounded-xl bg-gray-200 active:cursor-grabbing"
+                className="relative mx-auto aspect-[3/4] w-[min(76vw,330px)] touch-none cursor-grab overflow-hidden rounded-xl bg-gray-200 active:cursor-grabbing"
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerEnd}
@@ -351,7 +351,7 @@ export default function PhotoCropModal({ file, onCancel, onConfirm }: Props) {
           </div>
         </div>
 
-        <div className="flex flex-wrap justify-end gap-3 border-t border-gray-200 px-5 py-4">
+        <div className="flex flex-shrink-0 flex-wrap justify-end gap-3 border-t border-gray-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
           <button
             type="button"
             onClick={onCancel}

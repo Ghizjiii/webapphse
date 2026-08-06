@@ -3,6 +3,7 @@ import { CheckCircle2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 import ConfirmModal from '../components/ConfirmModal';
+import DevelopedByFooter from '../components/DevelopedByFooter';
 import { CompanySection } from '../features/public-form/company-section';
 import { ParticipantsSection } from '../features/public-form/participants-section';
 import { StatusPage } from '../features/public-form/status-page';
@@ -179,6 +180,7 @@ export default function PublicFormPage() {
             </p>
           </div>
         </form>
+        <DevelopedByFooter theme="dark" className="mt-6" />
       </div>
 
       {showSubmitConfirm && (

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
+import DevelopedByFooter from '../components/DevelopedByFooter';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -87,6 +88,7 @@ export default function LoginPage() {
             </form>
           </div>
         </div>
+        <DevelopedByFooter theme="dark" className="mt-5" />
       </div>
     </div>
   );
