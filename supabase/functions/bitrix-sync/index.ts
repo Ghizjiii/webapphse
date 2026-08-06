@@ -15,6 +15,11 @@ const PARTICIPANT_FULL_NAME_FIELD_TITLE = "\u0424\u0418\u041e";
 const PARTICIPANT_FULL_NAME_FIELD_NAME = "PARTICIPANT_FULL_NAME";
 const PARTICIPANT_FULL_NAME_FIELD_ENV = plainEnv("BITRIX_PARTICIPANT_FULL_NAME_FIELD");
 const PARTICIPANT_FULL_NAME_FIELD_FALLBACK = "ufCrm12ParticipantFullName";
+const PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD_ENV = plainEnv("BITRIX_CERT_PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD");
+const PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD_TITLES = [
+  "\u0418\u043c\u0435\u044e\u0449\u0430\u044f\u0441\u044f \u0433\u0440\u0443\u043f\u043f\u0430 \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u0438",
+  "\u041f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0430\u044f \u0433\u0440\u0443\u043f\u043f\u0430 \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u0438",
+];
 const DEFAULT_ALLOWED_HEADERS = "Content-Type, Authorization, X-Client-Info, Apikey";
 const DEFAULT_ALLOWED_METHODS = "POST, OPTIONS";
 
@@ -149,6 +154,7 @@ type SyncTask = {
   courseName: string;
   qualification: string;
   electricalSafetyGroup: string;
+  previousElectricalSafetyGroup: string;
 };
 
 type DealProductRow = {
@@ -183,6 +189,7 @@ type ExistingCertificateRow = {
   commission_members: string | null;
   qualification: string | null;
   electrical_safety_group: string | null;
+  previous_electrical_safety_group: string | null;
   level: string | null;
   marker_pass: string | null;
   type_learn: string | null;
@@ -1727,16 +1734,34 @@ async function ensureParticipantFullNameField(): Promise<string> {
   return findSmartFieldCodeByTitle(fields, PARTICIPANT_FULL_NAME_FIELD_TITLE) || PARTICIPANT_FULL_NAME_FIELD_FALLBACK;
 }
 
+async function resolvePreviousElectricalSafetyGroupField(): Promise<string> {
+  if (PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD_ENV) return PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD_ENV;
+
+  try {
+    const fields = await loadSmartProcessFields();
+    for (const title of PREVIOUS_ELECTRICAL_SAFETY_GROUP_FIELD_TITLES) {
+      const existing = findSmartFieldCodeByTitle(fields, title);
+      if (existing) return existing;
+    }
+  } catch {
+    // Field is optional; local storage and document generation still work.
+  }
+
+  return "";
+}
+
 function buildDesiredSmartProcessFieldEntries(params: {
   participant: ParticipantRow;
   participantEmailFieldCode: string;
   participantFullNameFieldCode: string;
+  previousElectricalSafetyGroupFieldCode: string;
   courseName: string;
   expectedTitle: string;
   responsibleBitrixUserId: string;
   existingCertificate: ExistingCertificateRow | null;
   selectedQualification: string;
   selectedElectricalSafetyGroup: string;
+  selectedPreviousElectricalSafetyGroup: string;
   currentItem: Record<string, unknown> | null;
   enumMaps: EnumMaps;
   defaultPrice: number | null;
@@ -1781,6 +1806,14 @@ function buildDesiredSmartProcessFieldEntries(params: {
       code: params.participantFullNameFieldCode,
       kind: "text",
       value: participantDisplayName(params.participant),
+    });
+  }
+
+  if (params.previousElectricalSafetyGroupFieldCode && plain(params.selectedPreviousElectricalSafetyGroup)) {
+    entries.push({
+      code: params.previousElectricalSafetyGroupFieldCode,
+      kind: "text",
+      value: plain(params.selectedPreviousElectricalSafetyGroup),
     });
   }
 
@@ -2741,14 +2774,14 @@ Deno.serve(async (req: Request) => {
 
     const coursesResult = await supabase
       .from("participant_courses")
-      .select("participant_id, course_name")
+      .select("participant_id, course_name, previous_electrical_safety_group")
       .in("participant_id", participants.map(item => item.id));
     if (coursesResult.error) throw coursesResult.error;
 
     const [existingCertsResult, coursePricesResult] = await Promise.all([
       supabase
         .from("certificates")
-        .select("id, participant_id, bitrix_item_id, photo_sync_key, full_name, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, electrical_safety_group, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
+        .select("id, participant_id, bitrix_item_id, photo_sync_key, full_name, last_name, first_name, middle_name, position, category, course_name, start_date, expiry_date, issuer_company, commission_chair, protocol_number, document_number, commission_member_1, commission_member_2, commission_member_3, commission_member_4, commission_members, qualification, electrical_safety_group, previous_electrical_safety_group, level, marker_pass, type_learn, commis_concl, grade, manager, is_printed, employee_status, price")
         .eq("questionnaire_id", questionnaireId),
       supabase
         .from("ref_course_prices")
@@ -2771,11 +2804,15 @@ Deno.serve(async (req: Request) => {
       courseName: string;
       qualification: string;
       electricalSafetyGroup: string;
+      previousElectricalSafetyGroup: string;
     }>>();
-    for (const row of (coursesResult.data || []) as Array<{ participant_id: string; course_name: string }>) {
+    for (const row of (coursesResult.data || []) as Array<{ participant_id: string; course_name: string; previous_electrical_safety_group?: string | null }>) {
       const participant = participantsById.get(row.participant_id);
       const bucket = coursesByParticipant.get(row.participant_id) || [];
-      bucket.push(parseParticipantCourseSelection(row.course_name, participant?.category || "", referenceCoursePrices));
+      bucket.push({
+        ...parseParticipantCourseSelection(row.course_name, participant?.category || "", referenceCoursePrices),
+        previousElectricalSafetyGroup: plain(row.previous_electrical_safety_group),
+      });
       coursesByParticipant.set(row.participant_id, bucket);
     }
 
@@ -2785,6 +2822,7 @@ Deno.serve(async (req: Request) => {
         courseName: "",
         qualification: "",
         electricalSafetyGroup: "",
+        previousElectricalSafetyGroup: "",
       }];
       return courses.map(course => ({ participant, ...course }));
     });
@@ -2849,10 +2887,11 @@ Deno.serve(async (req: Request) => {
 
     await syncDealProductRows(bitrixDealId, dealProductRows);
 
-    const [enumMaps, participantEmailFieldCode, participantFullNameFieldCode] = await Promise.all([
+    const [enumMaps, participantEmailFieldCode, participantFullNameFieldCode, previousElectricalSafetyGroupFieldCode] = await Promise.all([
       loadEnumMaps(supabase),
       ensureParticipantEmailField(),
       ensureParticipantFullNameField(),
+      resolvePreviousElectricalSafetyGroupField(),
     ]);
     const existingBitrixItemsByTitle = await loadSmartProcessItemsByTitle(bitrixDealId);
     let persistedCertificateCount = 0;
@@ -2922,12 +2961,14 @@ Deno.serve(async (req: Request) => {
         participant: task.participant,
         participantEmailFieldCode,
         participantFullNameFieldCode,
+        previousElectricalSafetyGroupFieldCode,
         courseName: task.courseName,
         expectedTitle,
         responsibleBitrixUserId,
         existingCertificate,
         selectedQualification: effectiveQualification,
         selectedElectricalSafetyGroup: effectiveElectricalSafetyGroup,
+        selectedPreviousElectricalSafetyGroup: task.previousElectricalSafetyGroup,
         currentItem: currentBitrixItem,
         enumMaps,
         defaultPrice: defaultReferencePrice,
@@ -2983,6 +3024,7 @@ Deno.serve(async (req: Request) => {
         course_name: task.courseName,
         qualification: effectiveQualification,
         electrical_safety_group: effectiveElectricalSafetyGroup,
+        previous_electrical_safety_group: task.previousElectricalSafetyGroup,
         sync_status: "synced",
         sync_error: "",
         updated_at: new Date().toISOString(),
@@ -3031,6 +3073,7 @@ Deno.serve(async (req: Request) => {
             commission_members: null,
             qualification: effectiveQualification,
             electrical_safety_group: effectiveElectricalSafetyGroup,
+            previous_electrical_safety_group: task.previousElectricalSafetyGroup,
             level: null,
             marker_pass: null,
             type_learn: null,

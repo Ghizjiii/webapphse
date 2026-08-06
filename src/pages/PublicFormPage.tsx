@@ -63,7 +63,7 @@ export default function PublicFormPage() {
 
   return (
     <div
-      className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 px-4 py-10"
+      className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 px-3 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-6 sm:px-4 sm:py-10"
       translate="no"
       onClick={() => controller.setOpenCourseSelect(null)}
     >
@@ -124,6 +124,7 @@ export default function PublicFormPage() {
             participants={controller.participants}
             pagedParticipants={controller.pagedParticipants}
             availableCategories={controller.availableCategories}
+            availableElectricalSafetyGroups={controller.availableElectricalSafetyGroups}
             openCourseSelect={controller.openCourseSelect}
             courseSearch={controller.courseSearch}
             errors={controller.errors}
@@ -145,6 +146,7 @@ export default function PublicFormPage() {
               void controller.handlePhotoSelect(participantId, file);
             }}
             onToggleCourse={controller.toggleCourse}
+            onPreviousElectricalSafetyGroupChange={controller.updatePreviousElectricalSafetyGroup}
             onOpenCourseSelectChange={controller.setOpenCourseSelect}
             onCourseSearchChange={controller.setCourseSearch}
             onRemoveParticipant={controller.removeParticipant}

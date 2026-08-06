@@ -130,6 +130,8 @@ export async function resolveProtocolSmartProcessFieldMap(entityTypeId: number):
   courseReference?: SmartProcessFieldDescriptor;
   file?: SmartProcessFieldDescriptor;
   isPrinted?: SmartProcessFieldDescriptor;
+  electricalSafetyGroup?: SmartProcessFieldDescriptor;
+  previousElectricalSafetyGroup?: SmartProcessFieldDescriptor;
 }> {
   const descriptors = await fetchSmartProcessFieldDescriptors(entityTypeId);
 
@@ -144,6 +146,12 @@ export async function resolveProtocolSmartProcessFieldMap(entityTypeId: number):
     }),
     file: findSmartProcessFieldDescriptor(descriptors, { titles: ['Файл протокола'] }),
     isPrinted: findSmartProcessFieldDescriptor(descriptors, { titles: ['Распечатан', 'Печатать', 'Печать'] }),
+    electricalSafetyGroup: findSmartProcessFieldDescriptor(descriptors, {
+      titles: ['Группа электробезопасности', 'Группа Электробезопасность'],
+    }),
+    previousElectricalSafetyGroup: findSmartProcessFieldDescriptor(descriptors, {
+      titles: ['Имеющаяся группа электробезопасности', 'Предыдущая группа электробезопасности'],
+    }),
   };
 }
 

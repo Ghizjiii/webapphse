@@ -7,6 +7,7 @@ import { uploadPhoto } from '../lib/cloudinary';
 import { getParticipantDisplayName } from '../lib/participantName';
 import { parseParticipantImportFile } from '../lib/participantImport';
 import { PARTICIPANT_IMPORT_HELP_URL, PARTICIPANT_IMPORT_TEMPLATE_URL } from '../lib/participantImportAssets';
+import { DEFAULT_ELECTRICAL_SAFETY_GROUPS, isElectricalSafetyCourse, normalizePreviousElectricalSafetyGroup } from '../lib/electricalSafety';
 import { useToast } from '../context/ToastContext';
 import type { Participant, ParticipantCourse, SortConfig } from '../types';
 import PhotoCropModal from './PhotoCropModal';
@@ -86,6 +87,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [referenceCategories, setReferenceCategories] = useState<string[]>([]);
+  const [electricalSafetyGroups, setElectricalSafetyGroups] = useState<string[]>(DEFAULT_ELECTRICAL_SAFETY_GROUPS);
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -278,6 +280,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
               participant_id: participantId,
               questionnaire_id: questionnaireId,
               course_name: course,
+              previous_electrical_safety_group: '',
             }))
           );
           if (coursesError) throw coursesError;
@@ -309,6 +312,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
             participant_id: participantId,
             questionnaire_id: questionnaireId,
             course_name: courseName,
+            previous_electrical_safety_group: '',
           },
         ];
     applyParticipantPatch(participantId, { courses: nextCourses } as Partial<Participant>);
@@ -325,6 +329,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
         participant_id: participantId,
         questionnaire_id: questionnaireId,
         course_name: courseName,
+        previous_electrical_safety_group: '',
       });
       if (error && previousParticipant) {
         setLocalParticipants(prev => prev.map(participant => (
@@ -344,8 +349,20 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
     setReferenceCategories((data || []).map(item => String(item.name || '').trim()).filter(Boolean));
   }
 
+  async function loadElectricalSafetyGroups() {
+    const { data } = await supabase
+      .from('ref_bitrix_list_items')
+      .select('name')
+      .eq('list_key', 'ELECTRICAL_SAFETY_GROUP')
+      .order('sort_order')
+      .order('name');
+    const rows = (data || []).map(item => String(item.name || '').trim()).filter(Boolean);
+    setElectricalSafetyGroups(rows.length > 0 ? rows : DEFAULT_ELECTRICAL_SAFETY_GROUPS);
+  }
+
   useEffect(() => {
     void loadReferenceCategories();
+    void loadElectricalSafetyGroups();
 
     const intervalId = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
@@ -367,6 +384,39 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
+
+  async function updatePreviousElectricalSafetyGroup(participantId: string, courseName: string, value: string) {
+    const normalized = normalizePreviousElectricalSafetyGroup(value);
+    const previousParticipant = localParticipants.find(participant => participant.id === participantId) || null;
+    setLocalParticipants(prev => prev.map(participant => (
+      participant.id === participantId
+        ? {
+            ...participant,
+            courses: (participant.courses || []).map(course => (
+              course.course_name === courseName
+                ? { ...course, previous_electrical_safety_group: normalized }
+                : course
+            )),
+          }
+        : participant
+    )));
+
+    const { error } = await supabase
+      .from('participant_courses')
+      .update({ previous_electrical_safety_group: normalized })
+      .eq('participant_id', participantId)
+      .eq('course_name', courseName);
+
+    if (error && previousParticipant) {
+      showToast('error', UI.saveError);
+      setLocalParticipants(prev => prev.map(participant => (
+        participant.id === participantId ? previousParticipant : participant
+      )));
+      return;
+    }
+
+    onRefresh();
+  }
 
   const categoryOptions = useMemo(() => {
     const unique = new Set<string>();
@@ -683,6 +733,35 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
                         >
                           {UI.close}
                         </button>
+                      </div>
+                    )}
+                    {(p.courses || []).some(course => isElectricalSafetyCourse(course.course_name)) && (
+                      <div className="mt-2 space-y-2">
+                        {(p.courses || [])
+                          .filter(course => isElectricalSafetyCourse(course.course_name))
+                          .map(course => (
+                            <label key={`prev-${course.course_name}`} className="block rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-2">
+                              <span className="block text-[11px] font-medium leading-4 text-amber-800">
+                                Имеющаяся группа электробезопасности
+                              </span>
+                              <span className="mt-0.5 block truncate text-[11px] leading-4 text-amber-700" title={course.course_name}>
+                                {course.course_name}
+                              </span>
+                              <select
+                                value={course.previous_electrical_safety_group || ''}
+                                onChange={event => {
+                                  void updatePreviousElectricalSafetyGroup(p.id, course.course_name, event.target.value);
+                                }}
+                                className="mt-1.5 w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                disabled={saving}
+                              >
+                                <option value="">Нет / первичная</option>
+                                {electricalSafetyGroups.map(group => (
+                                  <option key={group} value={group}>{group}</option>
+                                ))}
+                              </select>
+                            </label>
+                          ))}
                       </div>
                     )}
                   </div>

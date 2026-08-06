@@ -5,6 +5,7 @@ import type {
   ProtocolCategoryScope,
   RefProtocolNumeratorSetting,
 } from '../types';
+import { electricalSafetyGroupShort, gradeShort } from './electricalSafety';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -72,12 +73,12 @@ const TEMPLATE_BOT_WORKER: ProtocolTemplateConfig = {
 };
 
 const TEMPLATE_ELECTRICAL_SAFETY_ITR: ProtocolTemplateConfig = {
-  key: 'manual_protocol_15_electrical_safety_itr',
+  key: 'tpl_protocol_15_electrical_safety',
   name: '15. Электробезопасность - Протокол ИТР состава',
 };
 
 const TEMPLATE_ELECTRICAL_SAFETY_WORKER: ProtocolTemplateConfig = {
-  key: 'manual_protocol_16_electrical_safety_worker',
+  key: 'tpl_protocol_15_electrical_safety',
   name: '16. Электробезопасность - Протокол для рабочего состава',
 };
 
@@ -698,6 +699,21 @@ export function formatProtocolDateShortRu(value: string | null | undefined): str
   return `${day}.${month}.${year}`;
 }
 
+function formatProtocolDateShortYear(value: string | null | undefined): string {
+  if (!value) return '';
+  const source = String(value).split('T')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(source)) return '';
+  const [year, month, day] = source.split('-');
+  return `${day}.${month}.${year.slice(-2)}`;
+}
+
+function formatProtocolDateForTemplate(protocol: Protocol): string {
+  if (protocol.template_key === 'tpl_protocol_15_electrical_safety') {
+    return formatProtocolDateShortYear(protocol.protocol_date);
+  }
+  return formatProtocolDateRu(protocol.protocol_date);
+}
+
 export function makeProtocolGeneratedFileName(courseName: string, categoryLabel: string): string {
   const safeCourseName = String(courseName || '').trim() || 'Протокол';
   const safeCategory = String(categoryLabel || '').trim();
@@ -716,7 +732,7 @@ function protocolGlobalPlaceholders(params: {
   certificates: Certificate[];
 }): Record<string, string> {
   const first = params.certificates[0];
-  const protocolDateRu = formatProtocolDateRu(params.protocol.protocol_date);
+  const protocolDateRu = formatProtocolDateForTemplate(params.protocol);
 
   return {
     '{{WORK_PLACE}}': String(params.companyName || '').trim(),
@@ -762,14 +778,21 @@ export function buildProtocolDocumentPayload(params: {
       '{{COURSE_NAME}}': String(cert.course_name || '').trim(),
       '{{DOC_NUM}}': String(cert.document_number || '').trim(),
       '{{PROTOCOL_NUM}}': String(params.protocol.protocol_number || '').trim(),
-      '{{PROTOCOL_DATE}}': formatProtocolDateRu(params.protocol.protocol_date),
+      '{{PROTOCOL_DATE}}': formatProtocolDateForTemplate(params.protocol),
+      '{{PROTOCOL_DATE_SHORT_YEAR}}': formatProtocolDateShortYear(params.protocol.protocol_date),
       '{{PROTOCOL_DATE_SHORT}}': formatProtocolDateShortRu(params.protocol.protocol_date),
       '{{COURSE_START}}': formatDateKazRusWords(cert.start_date),
       '{{DOC_VALID}}': formatDateKazRusWords(cert.expiry_date),
+      '{{EL_SAFE_GROUP}}': String(cert.electrical_safety_group || '').trim(),
+      '{{EL_SAFE_GROUP_SHRT}}': electricalSafetyGroupShort(cert.electrical_safety_group),
+      '{{EL_SAFE_GROUP_OLD}}': String(cert.previous_electrical_safety_group || '').trim(),
+      '{{EL_SAFE_APPROV}}': String(cert.electrical_safety_admission_protocol || '').trim(),
       '{{MARKER_PASS}}': String(cert.marker_pass || '').trim(),
       '{{TYPE_LEARN}}': String(cert.type_learn || '').trim(),
+      '{{TYPE_TRAINING}}': String(cert.type_learn || '').trim(),
       '{{COMMIS_CONCL}}': String(cert.commis_concl || '').trim(),
       '{{GRADE}}': String(cert.grade || '').trim(),
+      '{{GRADE_SHORT}}': gradeShort(cert.grade),
       '{{QUALIFICATION}}': String(cert.qualification || '').trim(),
       '{{LEVEL}}': String(cert.level || '').trim(),
       '{{CHAIRMAN}}': String(cert.commission_chair || '').trim(),

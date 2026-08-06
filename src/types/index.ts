@@ -258,6 +258,7 @@ export interface ParticipantCourse {
   questionnaire_id: string | null;
   course_name: string;
   course_id?: string;
+  previous_electrical_safety_group?: string;
 }
 
 export interface Certificate {
@@ -290,6 +291,7 @@ export interface Certificate {
   electrical_safety_admission_protocol: string;
   qualification: string;
   electrical_safety_group: string;
+  previous_electrical_safety_group: string;
   level: string;
   marker_pass: string;
   type_learn: string;

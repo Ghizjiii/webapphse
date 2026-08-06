@@ -11,6 +11,7 @@ export interface LocalParticipant {
   position: string;
   category: string;
   courses: string[];
+  previousElectricalSafetyGroups: Record<string, string>;
   photo_url: string;
   photoFile?: File;
   photoPreview?: string;
@@ -64,6 +65,7 @@ export function createLocalParticipant(): LocalParticipant {
     position: '',
     category: '',
     courses: [],
+    previousElectricalSafetyGroups: {},
     photo_url: '',
   };
 }
@@ -83,6 +85,7 @@ export function isParticipantRowStarted(participant: LocalParticipant): boolean 
     participant.position.trim() ||
     participant.category.trim() ||
     participant.courses.length > 0 ||
+    Object.values(participant.previousElectricalSafetyGroups || {}).some(value => String(value || '').trim()) ||
     hasParticipantPhoto(participant)
   );
 }

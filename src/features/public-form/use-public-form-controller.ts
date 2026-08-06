@@ -4,7 +4,12 @@ import { supabase } from '../../lib/supabase';
 import { prepareParticipantPhotoFile, uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
 import { extractPaymentOrderFields } from '../../lib/paymentOcr';
 import { fetchCoursesList } from '../../lib/bitrix';
-import { buildCourseOptions, normalizeCourseOptionValue } from '../../lib/courseOptions';
+import { buildCourseOptions, normalizeCourseOptionValue, resolveCourseOption } from '../../lib/courseOptions';
+import {
+ DEFAULT_ELECTRICAL_SAFETY_GROUPS,
+ isElectricalSafetyCourse,
+ normalizePreviousElectricalSafetyGroup,
+} from '../../lib/electricalSafety';
 import { logger } from '../../lib/logger';
 import { getParticipantDisplayName } from '../../lib/participantName';
 import { parseParticipantImportFile } from '../../lib/participantImport';
@@ -78,6 +83,7 @@ export function usePublicFormController(token: string | undefined) {
  const [availableCourses, setAvailableCourses] = useState<string[]>([]);
  const [coursePriceRules, setCoursePriceRules] = useState<RefCoursePrice[]>([]);
  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+ const [availableElectricalSafetyGroups, setAvailableElectricalSafetyGroups] = useState<string[]>(DEFAULT_ELECTRICAL_SAFETY_GROUPS);
  const [openCourseSelect, setOpenCourseSelect] = useState<string | null>(null);
  const [courseSearch, setCourseSearch] = useState('');
  const [submitting, setSubmitting] = useState(false);
@@ -252,6 +258,39 @@ export function usePublicFormController(token: string | undefined) {
  ? 'Не удалось загрузить или распознать документ.'
  : '';
 
+ const selectedCoursesTotal = useMemo(() => {
+ let total = 0;
+ let pricedCount = 0;
+
+ for (const participant of participants) {
+ for (const course of participant.courses) {
+ const option = resolveCourseOption(course, coursePriceRules, participant.category);
+ const matchedRule = coursePriceRules.find(rule => (
+ normalizeCourseOptionValue(rule.course_name) === normalizeCourseOptionValue(option.courseName) &&
+ normalizeCourseOptionValue(rule.category) === normalizeCourseOptionValue(participant.category) &&
+ normalizeCourseOptionValue(rule.qualification) === normalizeCourseOptionValue(option.qualification) &&
+ normalizeCourseOptionValue(rule.electrical_safety_group) === normalizeCourseOptionValue(option.electricalSafetyGroup) &&
+ typeof rule.price === 'number' &&
+ Number.isFinite(rule.price)
+ )) || coursePriceRules.find(rule => (
+ normalizeCourseOptionValue(rule.course_name) === normalizeCourseOptionValue(option.courseName) &&
+ !normalizeCourseOptionValue(rule.category) &&
+ normalizeCourseOptionValue(rule.qualification) === normalizeCourseOptionValue(option.qualification) &&
+ normalizeCourseOptionValue(rule.electrical_safety_group) === normalizeCourseOptionValue(option.electricalSafetyGroup) &&
+ typeof rule.price === 'number' &&
+ Number.isFinite(rule.price)
+ ));
+
+ if (matchedRule && typeof matchedRule.price === 'number') {
+ total += matchedRule.price;
+ pricedCount += 1;
+ }
+ }
+ }
+
+ return { total, pricedCount };
+ }, [coursePriceRules, participants]);
+
  useEffect(() => {
  if (hasActiveContract && noContractConfirmed) {
  setNoContractConfirmed(false);
@@ -356,6 +395,14 @@ export function usePublicFormController(token: string | undefined) {
  courses: (participantCourses || [])
  .filter(course => course.participant_id === participant.id)
  .map((course: { course_name: string }) => course.course_name),
+ previousElectricalSafetyGroups: Object.fromEntries(
+ (participantCourses || [])
+ .filter(course => course.participant_id === participant.id)
+ .map((course: { course_name: string; previous_electrical_safety_group?: string | null }) => [
+ course.course_name,
+ String(course.previous_electrical_safety_group || ''),
+ ])
+ ),
  photo_url: participant.photo_url || '',
  })));
  }
@@ -398,6 +445,18 @@ export function usePublicFormController(token: string | undefined) {
  .then(({ data }) => {
  setCoursePriceRules((data || []) as RefCoursePrice[]);
  });
+ void supabase
+ .from('ref_bitrix_list_items')
+ .select('name')
+ .eq('list_key', 'ELECTRICAL_SAFETY_GROUP')
+ .order('sort_order')
+ .order('name')
+ .then(({ data }) => {
+ const rows = (data || [])
+ .map(item => String(item.name || '').trim())
+ .filter(Boolean);
+ setAvailableElectricalSafetyGroups(rows.length > 0 ? rows : DEFAULT_ELECTRICAL_SAFETY_GROUPS);
+ });
  }, [lookupCompanyByBin, token]);
 
  const validate = useCallback((): boolean => {
@@ -415,6 +474,13 @@ export function usePublicFormController(token: string | undefined) {
  if (!normalizePaymentOrderNumber(paymentOrderNumber)) nextErrors.payment_order_number = 'Укажите номер платежного поручения.';
  if (!normalizePaymentOrderDate(paymentOrderDate)) nextErrors.payment_order_date = 'Укажите дату оплаты.';
  if (amountParsed === null) nextErrors.payment_order_amount = 'Укажите корректную сумму оплаты.';
+ if (
+ amountParsed !== null &&
+ selectedCoursesTotal.pricedCount > 0 &&
+ selectedCoursesTotal.total > amountParsed
+ ) {
+ nextErrors.payment_order_amount = `Сумма выбранных курсов ${selectedCoursesTotal.total.toLocaleString('ru-RU')} ₸ больше суммы платежного документа ${amountParsed.toLocaleString('ru-RU')} ₸.`;
+ }
  if (paymentBeneficiaryValid === false) nextErrors.payment_order = INVALID_PAYMENT_BENEFICIARY_ERROR;
  if (paymentOrderDuplicate) nextErrors.payment_order = DUPLICATE_PAYMENT_ORDER_ERROR;
  }
@@ -461,6 +527,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderNumber,
  paymentOrderUrl,
  photoRequired,
+ selectedCoursesTotal,
  ]);
 
  const handlePhotoSelect = useCallback(async (participantId: string, file: File) => {
@@ -773,6 +840,9 @@ export function usePublicFormController(token: string | undefined) {
  participant_id: participant.id,
  questionnaire_id: questionnaireId,
  course_name: course,
+ previous_electrical_safety_group: isElectricalSafetyCourse(course)
+ ? normalizePreviousElectricalSafetyGroup(participant.previousElectricalSafetyGroups?.[course])
+ : '',
  });
  }
  } else {
@@ -796,6 +866,9 @@ export function usePublicFormController(token: string | undefined) {
  participant_id: newParticipant.id,
  questionnaire_id: questionnaireId,
  course_name: course,
+ previous_electrical_safety_group: isElectricalSafetyCourse(course)
+ ? normalizePreviousElectricalSafetyGroup(participant.previousElectricalSafetyGroups?.[course])
+ : '',
  });
  }
  }
@@ -905,6 +978,10 @@ export function usePublicFormController(token: string | undefined) {
  return {
  ...nextParticipant,
  courses: participant.courses.filter(course => allowedKeys.has(normalizeCourseOptionValue(course))),
+ previousElectricalSafetyGroups: Object.fromEntries(
+ Object.entries(participant.previousElectricalSafetyGroups || {})
+ .filter(([course]) => allowedKeys.has(normalizeCourseOptionValue(course)))
+ ),
  };
  }));
  }, [availableCourses, coursePriceRules]);
@@ -913,9 +990,25 @@ export function usePublicFormController(token: string | undefined) {
  setParticipants(current => current.map(participant => {
  if (participant.id !== participantId) return participant;
  const exists = participant.courses.includes(course);
+ const nextPreviousGroups = { ...(participant.previousElectricalSafetyGroups || {}) };
+ if (exists) delete nextPreviousGroups[course];
  return {
  ...participant,
  courses: exists ? participant.courses.filter(item => item !== course) : [...participant.courses, course],
+ previousElectricalSafetyGroups: nextPreviousGroups,
+ };
+ }));
+ }, []);
+
+ const updatePreviousElectricalSafetyGroup = useCallback((participantId: string, course: string, value: string) => {
+ setParticipants(current => current.map(participant => {
+ if (participant.id !== participantId) return participant;
+ return {
+ ...participant,
+ previousElectricalSafetyGroups: {
+ ...(participant.previousElectricalSafetyGroups || {}),
+ [course]: normalizePreviousElectricalSafetyGroup(value),
+ },
  };
  }));
  }, []);
@@ -957,6 +1050,7 @@ export function usePublicFormController(token: string | undefined) {
  position: row.position,
  category: row.category,
  courses: row.courses,
+ previousElectricalSafetyGroups: {},
  }));
  return [...filled, ...imported];
  });
@@ -1082,6 +1176,7 @@ export function usePublicFormController(token: string | undefined) {
  participants,
  availableCourses,
  availableCategories,
+ availableElectricalSafetyGroups,
  openCourseSelect,
  courseSearch,
  pageSize,
@@ -1122,6 +1217,7 @@ export function usePublicFormController(token: string | undefined) {
  submitQuestionnaire,
  updateParticipant,
  toggleCourse,
+ updatePreviousElectricalSafetyGroup,
  removeParticipant,
  addParticipant,
  importParticipantsFromFile,

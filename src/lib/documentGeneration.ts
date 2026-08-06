@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Certificate, GeneratedDocumentType } from '../types';
+import { electricalSafetyGroupShort, gradeShort } from './electricalSafety';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -30,7 +31,17 @@ const TEMPLATE_BOT_ID: TemplateConfig = {
   docType: 'id_card',
 };
 
+const TEMPLATE_ELECTRICAL_SAFETY_ID: TemplateConfig = {
+  key: 'tpl_10_electrical_safety_id',
+  name: '10. Electrical safety ID',
+  docType: 'id_card',
+};
+
 const TEMPLATE_RULES: Array<{ matcher: RegExp; template: TemplateConfig }> = [
+  {
+    matcher: /(?:\u044d\u043b\u0435\u043a\u0442\u0440\u043e\u0431\u0435\u0437\u043e\u043f\u0430\u0441)/i,
+    template: TEMPLATE_ELECTRICAL_SAFETY_ID,
+  },
   {
     matcher: /(?:\u043f\u043e\u0436\u0430\u0440\u043d\u043e)[-\s]?(?:\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a(?:\u0438\u0439|\u043e\u0433\u043e))\s+(?:\u043c\u0438\u043d\u0438\u043c\u0443\u043c)/i,
     template: { key: 'tpl_03_fire_tech_minimum', name: '03. Fire technical minimum', docType: 'id_card' },
@@ -174,6 +185,13 @@ function formatIndustrialSafetyValidUntil(value: string | null | undefined): str
   return `${parts.year} \u0433. (\u0436.) \u00ab${formatIndustrialSafetyDay(value)}\u00bb ${MONTHS_KAZ_RUS_GENITIVE[parts.monthIndex]}`;
 }
 
+function formatElectricalSafetyIssueDate(value: string | null | undefined): string {
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  const day = String(parts.day).padStart(2, '0');
+  return `\u00ab${day}\u00bb ${MONTHS_RUS_GENITIVE[parts.monthIndex]}/${MONTHS_KAZ[parts.monthIndex]} ${parts.year} \u0433. \u0436.`;
+}
+
 function formatCourseStartKaz(value: string | null | undefined): string {
   const parts = parseDateParts(value);
   if (!parts) return '';
@@ -245,6 +263,7 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const courseName = String(cert.course_name || '').trim();
   const usesLongRussianDates = template?.key === 'tpl_03_fire_tech_minimum';
   const usesIndustrialSafetyBilingualDates = INDUSTRIAL_SAFETY_TEMPLATE_KEYS.has(String(template?.key || ''));
+  const usesElectricalSafetyTemplate = template?.key === TEMPLATE_ELECTRICAL_SAFETY_ID.key;
   const startDate = usesLongRussianDates ? formatDateKazRusWords(cert.start_date) : normalizeDate(cert.start_date);
   const expiryDate = usesLongRussianDates ? formatDateKazRusWords(cert.expiry_date) : normalizeDate(cert.expiry_date);
   const frontSideStartDate = usesIndustrialSafetyBilingualDates
@@ -256,6 +275,9 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const documentValidDate = usesIndustrialSafetyBilingualDates
     ? formatIndustrialSafetyValidUntil(cert.expiry_date)
     : expiryDate;
+  const electricalSafetyIssueDate = usesElectricalSafetyTemplate
+    ? formatElectricalSafetyIssueDate(cert.start_date)
+    : frontSideStartDate;
 
   const values: Record<string, string> = {
     WORK_PLACE: firstNotEmpty(companyName, cert.employee_status),
@@ -288,11 +310,16 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
     COMMISSION_MEMBER_3: String(cert.commission_member_3 || '').trim(),
     COMMISSION_MEMBER_4: String(cert.commission_member_4 || '').trim(),
     QUALIFICATION: String(cert.qualification || '').trim(),
+    EL_SAFE_GROUP: String(cert.electrical_safety_group || '').trim(),
+    EL_SAFE_GROUP_SHRT: electricalSafetyGroupShort(cert.electrical_safety_group),
+    EL_SAFE_GROUP_OLD: String(cert.previous_electrical_safety_group || '').trim(),
+    EL_SAFE_APPROV: String(cert.electrical_safety_admission_protocol || '').trim(),
     LEVEL: String(cert.level || '').trim(),
     MARKER_PASS: String(cert.marker_pass || '').trim(),
     TYPE_LEARN: String(cert.type_learn || '').trim(),
     COMMIS_CONCL: String(cert.commis_concl || '').trim(),
     GRADE: String(cert.grade || '').trim(),
+    GRADE_SHORT: gradeShort(cert.grade),
     MANAGER: String(cert.manager || '').trim(),
     HEAD: String(cert.manager || '').trim(),
     DATE: frontSideStartDate,
@@ -300,6 +327,7 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
     DATE_END: documentValidDate,
     DOC_VALID: documentValidDate,
     COURSE_START: frontSideStartDate,
+    COURSE_START_MODIF: electricalSafetyIssueDate,
     COURSE_START_DIFFER: backSideStartDate,
     COURSE_START_KAZ: formatCourseStartKaz(cert.start_date),
     COURSE_START_RUS: formatCourseStartRus(cert.start_date),

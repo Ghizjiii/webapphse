@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent, MutableRefObject } from 'react';
 import { ChevronDown, Download, HelpCircle, Plus, Trash2, Upload, Users, X } from 'lucide-react';
 import { getParticipantMissingFields, isParticipantRowStarted, type LocalParticipant, type ValidationErrors } from './model';
 import { PARTICIPANT_IMPORT_HELP_URL, PARTICIPANT_IMPORT_TEMPLATE_URL } from '../../lib/participantImportAssets';
+import { isElectricalSafetyCourse } from '../../lib/electricalSafety';
 import PhotoCropModal from '../../components/PhotoCropModal';
 
 type ParticipantColumnKey =
@@ -48,6 +49,7 @@ interface ParticipantsSectionProps {
   participants: LocalParticipant[];
   pagedParticipants: LocalParticipant[];
   availableCategories: string[];
+  availableElectricalSafetyGroups: string[];
   openCourseSelect: string | null;
   courseSearch: string;
   errors: ValidationErrors;
@@ -67,6 +69,7 @@ interface ParticipantsSectionProps {
   onParticipantFieldChange: <K extends keyof LocalParticipant>(id: string, field: K, value: LocalParticipant[K]) => void;
   onParticipantPhotoPick: (participantId: string, file: File) => void;
   onToggleCourse: (participantId: string, course: string) => void;
+  onPreviousElectricalSafetyGroupChange: (participantId: string, course: string, value: string) => void;
   onOpenCourseSelectChange: (participantId: string | null) => void;
   onCourseSearchChange: (value: string) => void;
   onRemoveParticipant: (participantIndex: number) => void;
@@ -79,6 +82,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     participants,
     pagedParticipants,
     availableCategories,
+    availableElectricalSafetyGroups,
     openCourseSelect,
     courseSearch,
     errors,
@@ -98,6 +102,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
     onParticipantFieldChange,
     onParticipantPhotoPick,
     onToggleCourse,
+    onPreviousElectricalSafetyGroupChange,
     onOpenCourseSelectChange,
     onCourseSearchChange,
     onRemoveParticipant,
@@ -426,6 +431,31 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                               );
                             })}
                           </div>
+                        </div>
+                      )}
+                      {participant.courses.some(isElectricalSafetyCourse) && (
+                        <div className="mt-2 space-y-2">
+                          {participant.courses.filter(isElectricalSafetyCourse).map(course => (
+                            <label key={`prev-${course}`} className="block rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-2">
+                              <span className="block text-[11px] font-medium leading-4 text-amber-800">
+                                Имеющаяся группа электробезопасности
+                              </span>
+                              <span className="mt-0.5 block truncate text-[11px] leading-4 text-amber-700" title={course}>
+                                {course}
+                              </span>
+                              <select
+                                value={participant.previousElectricalSafetyGroups?.[course] || ''}
+                                onChange={event => onPreviousElectricalSafetyGroupChange(participant.id, course, event.target.value)}
+                                className="mt-1.5 w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                disabled={!canEditParticipants}
+                              >
+                                <option value="">Нет / первичная</option>
+                                {availableElectricalSafetyGroups.map(group => (
+                                  <option key={group} value={group}>{group}</option>
+                                ))}
+                              </select>
+                            </label>
+                          ))}
                         </div>
                       )}
                     </div>

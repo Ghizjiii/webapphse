@@ -20,8 +20,8 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
   const avatarText = avatarSeed.trim().charAt(0).toUpperCase() || '?';
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <aside className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-slate-900 text-gray-300">
+    <div className="min-h-screen bg-gray-50 lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-slate-900 text-gray-300 lg:flex">
         <div className="border-b border-slate-700/60 p-5">
           <div className="flex items-center gap-2.5">
             <BrandLogo variant="light" className="h-9 w-16 flex-shrink-0 object-contain" />
@@ -127,10 +127,72 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
         </div>
       </aside>
 
-      <div className="ml-64 flex min-h-screen min-w-0 flex-1 flex-col">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:ml-64">
+        <div className="sticky top-0 z-30 border-b border-slate-800 bg-slate-900 px-3 py-2.5 text-white lg:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <Link to="/dashboard" className="flex min-w-0 items-center gap-2">
+              <BrandLogo variant="light" className="h-8 w-14 flex-shrink-0 object-contain" />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">HSE Platform</div>
+                <div className="truncate text-[11px] text-slate-400">{roleLabel}</div>
+              </div>
+            </Link>
+            <button
+              onClick={signOut}
+              className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-100"
+            >
+              <LogOut size={14} />
+              Выйти
+            </button>
+          </div>
+          <nav className="mt-2 flex gap-1 overflow-x-auto pb-0.5">
+            <Link
+              to="/dashboard"
+              className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                location.pathname === '/dashboard' ? 'bg-blue-600 text-white' : 'bg-white/5 text-slate-200'
+              }`}
+            >
+              <LayoutDashboard size={14} />
+              Анкеты
+            </Link>
+            {isAdmin && (
+              <Link
+                to="/dashboard/analytics"
+                className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                  location.pathname.startsWith('/dashboard/analytics') ? 'bg-blue-600 text-white' : 'bg-white/5 text-slate-200'
+                }`}
+              >
+                <BarChart3 size={14} />
+                Аналитика
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                to="/dashboard/reference"
+                className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                  location.pathname === '/dashboard/reference' ? 'bg-blue-600 text-white' : 'bg-white/5 text-slate-200'
+                }`}
+              >
+                <BookOpen size={14} />
+                Справочник
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                to="/dashboard/admin"
+                className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                  location.pathname.startsWith('/dashboard/admin') ? 'bg-blue-600 text-white' : 'bg-white/5 text-slate-200'
+                }`}
+              >
+                <Users size={14} />
+                Пользователи
+              </Link>
+            )}
+          </nav>
+        </div>
         {breadcrumbs && breadcrumbs.length > 0 && (
-          <header className="sticky top-0 z-20 border-b border-gray-200 bg-white px-8 py-3.5">
-            <nav className="flex items-center gap-1 text-sm text-gray-500">
+          <header className="sticky top-[85px] z-20 border-b border-gray-200 bg-white px-3 py-3 lg:top-0 lg:px-8 lg:py-3.5">
+            <nav className="flex items-center gap-1 overflow-x-auto whitespace-nowrap text-sm text-gray-500">
               {breadcrumbs.map((breadcrumb, index) => (
                 <span key={index} className="flex items-center gap-1">
                   {index > 0 && <ChevronRight size={14} className="text-gray-300" />}
@@ -149,7 +211,7 @@ export default function DashboardLayout({ children, breadcrumbs }: Props) {
           </header>
         )}
 
-        <main className="min-w-0 flex-1 p-8">{children}</main>
+        <main className="min-w-0 flex-1 p-3 sm:p-5 lg:p-8">{children}</main>
       </div>
     </div>
   );

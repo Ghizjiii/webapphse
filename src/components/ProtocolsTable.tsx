@@ -79,6 +79,15 @@ function buildProtocolFileFieldValue(fieldType: string, isMultiple: boolean, fil
   return isMultiple ? [normalizedUrl] : normalizedUrl;
 }
 
+function isPlainBitrixTextField(fieldType: string): boolean {
+  const normalizedType = String(fieldType || '').trim().toLowerCase();
+  return !normalizedType || ['string', 'text', 'textarea'].includes(normalizedType);
+}
+
+function uniqueJoined(values: Array<string | null | undefined>): string {
+  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean))).join(', ');
+}
+
 function getBitrixCourseEnumAliases(courseName: string): string[] {
   const normalized = String(courseName || '').trim();
   if (!normalized) return [];
@@ -570,6 +579,26 @@ export default function ProtocolsTable({
             [numberFieldKey]: String(row.protocol_number || '').trim(),
             [dateFieldKey]: row.protocol_date || null,
           };
+
+          const rowCertificates = certificatesForProtocolRow(row, certificates);
+          const electricalSafetyGroupText = uniqueJoined(rowCertificates.map(cert => cert.electrical_safety_group));
+          const previousElectricalSafetyGroupText = uniqueJoined(rowCertificates.map(cert => cert.previous_electrical_safety_group));
+
+          if (protocolFieldMap.electricalSafetyGroup && electricalSafetyGroupText) {
+            if (isPlainBitrixTextField(protocolFieldMap.electricalSafetyGroup.type)) {
+              baseFields[protocolFieldMap.electricalSafetyGroup.key] = electricalSafetyGroupText;
+            } else {
+              warnings.add(`Поле "Группа электробезопасности" в протоколах имеет тип "${protocolFieldMap.electricalSafetyGroup.type || 'unknown'}", значение не было записано.`);
+            }
+          }
+
+          if (protocolFieldMap.previousElectricalSafetyGroup && previousElectricalSafetyGroupText) {
+            if (isPlainBitrixTextField(protocolFieldMap.previousElectricalSafetyGroup.type)) {
+              baseFields[protocolFieldMap.previousElectricalSafetyGroup.key] = previousElectricalSafetyGroupText;
+            } else {
+              warnings.add(`Поле "Имеющаяся группа электробезопасности" в протоколах имеет тип "${protocolFieldMap.previousElectricalSafetyGroup.type || 'unknown'}", значение не было записано.`);
+            }
+          }
 
           if (isPrintedFieldKey) {
             baseFields[isPrintedFieldKey] = row.is_printed ? '1' : '0';
