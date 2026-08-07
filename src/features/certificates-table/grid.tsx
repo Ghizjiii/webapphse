@@ -916,8 +916,8 @@ export function CertificatesGrid(props: CertificatesGridProps) {
           </thead>
           <tbody>
             {certificates.map((cert, index) => (
-              <tr key={cert.id} className="border-b border-gray-50 transition-colors hover:bg-gray-50/50">
-                <td className="sticky left-0 z-10 bg-white px-4 py-2 text-xs font-medium text-gray-500">
+              <tr key={cert.id} className="border-b border-slate-200 transition-colors odd:bg-white even:bg-slate-50/80 hover:bg-blue-50/50">
+                <td className="sticky left-0 z-10 bg-inherit px-4 py-2 text-xs font-medium text-gray-500">
                   {rowStartIndex + index + 1}
                 </td>
                 <td className="px-4 py-2">

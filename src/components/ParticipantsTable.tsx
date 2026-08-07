@@ -632,8 +632,8 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
           </thead>
           <tbody>
             {paged.map((p, index) => (
-              <tr key={p.id} className="border-b border-gray-100 transition-colors hover:bg-gray-50/70">
-                <td className="sticky left-0 z-10 bg-white px-4 py-3 text-xs font-medium text-gray-500 sm:text-sm">
+              <tr key={p.id} className="border-b border-slate-200 transition-colors odd:bg-white even:bg-slate-50/80 hover:bg-blue-50/50">
+                <td className="sticky left-0 z-10 bg-inherit px-4 py-3 text-xs font-medium text-gray-500 sm:text-sm">
                   {(currentPage - 1) * pageSize + index + 1}
                 </td>
                 <td className="px-4 py-3">

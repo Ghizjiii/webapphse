@@ -302,8 +302,15 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
               const filteredCourses = getFilteredCourses(participant);
 
               return (
-                <tr key={participant.id} className={`border-b border-gray-50 ${hasMissing ? 'bg-red-50/40' : ''}`}>
-                  <td className="sticky left-0 z-10 bg-white px-4 py-3 align-top text-xs font-medium text-gray-500" style={{ width: columnWidths.num, minWidth: columnWidths.num }}>
+                <tr
+                  key={participant.id}
+                  className={`border-b transition-colors ${
+                    hasMissing
+                      ? 'border-red-200 bg-red-50/60'
+                      : 'border-slate-200 odd:bg-white even:bg-slate-50/80 hover:bg-blue-50/50'
+                  }`}
+                >
+                  <td className="sticky left-0 z-10 bg-inherit px-4 py-3 align-top text-xs font-medium text-gray-500" style={{ width: columnWidths.num, minWidth: columnWidths.num }}>
                     {(currentPage - 1) * pageSize + pageIndex + 1}
                   </td>
                   <td className="px-6 py-3 align-top" style={{ width: columnWidths.photo, minWidth: columnWidths.photo }}>

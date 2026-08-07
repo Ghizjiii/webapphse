@@ -801,8 +801,8 @@ export default function DashboardPage() {
                     key={q.id}
                     className={`group cursor-pointer border-b transition-colors ${
                       isWorkflowOverdue
-                        ? 'border-red-100 bg-red-50/60 hover:bg-red-50'
-                        : 'border-gray-50 hover:bg-blue-50/30'
+                        ? 'border-red-200 bg-red-50/70 hover:bg-red-50'
+                        : 'border-slate-200 odd:bg-white even:bg-slate-50/80 hover:bg-blue-50/60'
                     }`}
                     onClick={() => navigate(`/dashboard/questionnaire/${q.id}`)}
                   >
