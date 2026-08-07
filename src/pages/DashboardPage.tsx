@@ -751,11 +751,11 @@ export default function DashboardPage() {
           </div>
           {renderPaginationControls('border-b border-gray-100')}
           <div className="overflow-x-auto overscroll-x-contain">
-          <table className="min-w-[1320px] w-full text-sm">
+          <table className="min-w-[1320px] w-full text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60">
                 <th className="sticky left-0 z-20 w-16 bg-gray-50 px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">№</th>
-                <th className="sticky left-16 z-20 min-w-[260px] bg-gray-50 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Заявка / Название компании</th>
+                <th className="min-w-[260px] px-4 py-3.5 text-left text-[10px] font-medium uppercase tracking-wider text-gray-600 sm:text-xs">Заявка / Название компании</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Регион / отдел</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Тип</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">{trashMode ? 'Корзина' : 'Статус'}</th>
@@ -807,7 +807,7 @@ export default function DashboardPage() {
                     onClick={() => navigate(`/dashboard/questionnaire/${q.id}`)}
                   >
                     <td className="sticky left-0 z-10 bg-inherit px-5 py-4 align-top font-medium text-gray-400">{rowNumber}</td>
-                    <td className="sticky left-16 z-10 bg-inherit px-4 py-4">
+                    <td className="px-4 py-4">
                       <div className="font-medium text-gray-900">{requestLabel}</div>
                       {company?.name ? (
                         <div className="mt-0.5 text-xs text-gray-500">{company.name}</div>

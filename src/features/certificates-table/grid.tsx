@@ -845,13 +845,13 @@ export function CertificatesGrid(props: CertificatesGridProps) {
         </div>
       )}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full bg-white text-sm" style={{ minWidth: `${tableMinWidth}px` }}>
+        <table className="w-full bg-white text-xs sm:text-sm" style={{ minWidth: `${tableMinWidth}px` }}>
           <thead className="sticky top-0 z-20 bg-white shadow-[0_1px_0_rgba(229,231,235,1)]">
             <tr className="border-b border-gray-200 bg-gray-50/95">
               <th className="sticky left-0 z-30 w-14 bg-gray-50 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">
                 №
               </th>
-              <th className="sticky left-14 z-30 w-20 bg-gray-50 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">
+              <th className="w-20 bg-gray-50 px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">
                 {'\u0424\u043e\u0442\u043e'}
               </th>
               {orderedVisibleColumnKeys.map(columnKey => {
@@ -864,9 +864,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                   <th
                     key={key}
                     draggable
-                    className={`relative cursor-pointer select-none whitespace-nowrap px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600 transition-colors hover:bg-gray-100/60 hover:text-gray-900 ${
-                      key === 'full_name' ? 'sticky left-[136px] z-30 bg-gray-50 shadow-[1px_0_0_rgba(229,231,235,1)]' : ''
-                    }`}
+                    className="relative cursor-pointer select-none whitespace-nowrap px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600 transition-colors hover:bg-gray-100/60 hover:text-gray-900"
                     onClick={() => { if (isSortable) onSort(key); }}
                     onDragStart={event => {
                       onDraggingColumnChange(key);
@@ -900,15 +898,13 @@ export function CertificatesGrid(props: CertificatesGridProps) {
             </tr>
             <tr className="border-b border-gray-100 bg-white/95">
               <th className="sticky left-0 z-30 bg-white" />
-              <th className="sticky left-14 z-30 bg-white" />
+              <th className="bg-white" />
               {orderedVisibleColumnKeys.map(columnKey => {
                 const key = String(columnKey);
                 return (
                   <th
                     key={`${key}-bulk`}
-                    className={`px-2 py-2 text-left ${
-                      key === 'full_name' ? 'sticky left-[136px] z-30 bg-white shadow-[1px_0_0_rgba(229,231,235,1)]' : ''
-                    }`}
+                    className="px-2 py-2 text-left"
                     style={{ width: columnWidths[key], minWidth: columnWidths[key] }}
                   >
                     {renderBulkControl(key)}
@@ -924,7 +920,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                 <td className="sticky left-0 z-10 bg-white px-4 py-2 text-xs font-medium text-gray-500">
                   {rowStartIndex + index + 1}
                 </td>
-                <td className="sticky left-14 z-10 bg-white px-4 py-2">
+                <td className="px-4 py-2">
                   {(() => {
                     const photoUrl = getCertificatePhotoUrl(cert);
                     const title = getCertificateDisplayName(cert) || cert.id;
@@ -952,9 +948,7 @@ export function CertificatesGrid(props: CertificatesGridProps) {
                     return (
                       <td
                         key={key}
-                        className={`px-4 py-2 ${
-                          textField.key === 'full_name' ? 'sticky left-[136px] z-10 bg-white shadow-[1px_0_0_rgba(229,231,235,1)]' : ''
-                        }`}
+                        className="px-4 py-2"
                         style={{ width: columnWidths[key], minWidth: columnWidths[key] }}
                       >
                         {textField.key === 'full_name' ? (

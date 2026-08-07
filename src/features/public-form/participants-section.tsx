@@ -7,6 +7,7 @@ import { isElectricalSafetyCourse } from '../../lib/electricalSafety';
 import PhotoCropModal from '../../components/PhotoCropModal';
 
 type ParticipantColumnKey =
+  | 'num'
   | 'photo'
   | 'full_name'
   | 'email'
@@ -16,6 +17,7 @@ type ParticipantColumnKey =
   | 'actions';
 
 const DEFAULT_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
+  num: 64,
   photo: 96,
   full_name: 320,
   email: 240,
@@ -26,6 +28,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
 };
 
 const MIN_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
+  num: 64,
   photo: 96,
   full_name: 220,
   email: 180,
@@ -36,6 +39,7 @@ const MIN_COLUMN_WIDTHS: Record<ParticipantColumnKey, number> = {
 };
 
 const HEADER_DEFS: Array<{ key: ParticipantColumnKey; label: string; resizable: boolean }> = [
+  { key: 'num', label: '№', resizable: false },
   { key: 'photo', label: 'Фото', resizable: false },
   { key: 'full_name', label: 'ФИО', resizable: true },
   { key: 'email', label: 'Email участника', resizable: true },
@@ -263,20 +267,16 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
             paddingBottom: tableViewportPaddingBottom ? `${tableViewportPaddingBottom}px` : undefined,
           }}
         >
-          <table className="w-full table-fixed" style={{ minWidth: `${tableMinWidth}px` }}>
+          <table className="w-full table-fixed text-xs sm:text-sm" style={{ minWidth: `${tableMinWidth}px` }}>
           <thead>
             <tr className="border-b border-gray-100">
               {HEADER_DEFS.map(column => (
                 <th
                   key={column.key}
-                  className={`relative py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 ${
+                  className={`relative py-3 text-left text-[10px] font-medium uppercase tracking-wide text-gray-500 sm:text-xs ${
                     column.key === 'photo' ? 'px-6' : 'px-4'
                   } ${
-                    column.key === 'photo'
-                      ? 'sticky left-0 z-20 bg-white'
-                      : column.key === 'full_name'
-                        ? 'sticky left-[96px] z-20 bg-white shadow-[1px_0_0_rgba(229,231,235,1)]'
-                        : ''
+                    column.key === 'num' ? 'sticky left-0 z-20 bg-white' : ''
                   }`}
                   style={{ width: columnWidths[column.key], minWidth: columnWidths[column.key] }}
                 >
@@ -293,7 +293,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
             </tr>
           </thead>
           <tbody>
-            {pagedParticipants.map(participant => {
+            {pagedParticipants.map((participant, pageIndex) => {
               const index = participants.findIndex(item => item.id === participant.id);
               const missingFields = errors.participants && isParticipantRowStarted(participant)
                 ? getParticipantMissingFields(participant, { photoRequired })
@@ -303,7 +303,10 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
 
               return (
                 <tr key={participant.id} className={`border-b border-gray-50 ${hasMissing ? 'bg-red-50/40' : ''}`}>
-                  <td className="sticky left-0 z-10 bg-white px-6 py-3 align-top" style={{ width: columnWidths.photo, minWidth: columnWidths.photo }}>
+                  <td className="sticky left-0 z-10 bg-white px-4 py-3 align-top text-xs font-medium text-gray-500" style={{ width: columnWidths.num, minWidth: columnWidths.num }}>
+                    {(currentPage - 1) * pageSize + pageIndex + 1}
+                  </td>
+                  <td className="px-6 py-3 align-top" style={{ width: columnWidths.photo, minWidth: columnWidths.photo }}>
                     <div className="relative w-12 h-14 flex-shrink-0">
                       {participant.photoPreview || participant.photo_url ? (
                         <img src={participant.photoPreview || participant.photo_url} alt="" className="w-12 h-14 rounded-lg object-cover border border-gray-200" />
@@ -346,18 +349,14 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                   {(['full_name', 'email', 'position'] as const).map(field => (
                     <td
                       key={field}
-                      className={`px-4 py-3 align-top ${
-                        field === 'full_name'
-                          ? 'sticky left-[96px] z-10 bg-white shadow-[1px_0_0_rgba(229,231,235,1)]'
-                          : ''
-                      }`}
+                      className="px-4 py-3 align-top"
                       style={{ width: columnWidths[field], minWidth: columnWidths[field] }}
                     >
                       <input
                         type={field === 'email' ? 'email' : 'text'}
                         value={participant[field]}
                         onChange={event => onParticipantFieldChange(participant.id, field, event.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all hover:border-gray-300 ${
+                        className={`w-full px-3 py-2 border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all hover:border-gray-300 sm:text-sm ${
                           field !== 'email' && missingFields.includes(field) ? 'border-red-400 bg-red-50' : 'border-gray-200'
                         }`}
                         placeholder="—"
@@ -371,7 +370,7 @@ export function ParticipantsSection(props: ParticipantsSectionProps) {
                       <select
                         value={participant.category}
                         onChange={event => onParticipantFieldChange(participant.id, 'category', event.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 appearance-none pr-8 bg-white ${
+                        className={`w-full px-3 py-2 border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 appearance-none pr-8 bg-white sm:text-sm ${
                           missingFields.includes('category') ? 'border-red-400 bg-red-50' : 'border-gray-200'
                         }`}
                         disabled={!canEditParticipants}

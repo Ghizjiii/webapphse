@@ -459,7 +459,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
             if (e.key === 'Enter') saveEdit();
             if (e.key === 'Escape') setEditCell(null);
           }}
-          className="w-full rounded border border-blue-400 bg-blue-50 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="w-full rounded border border-blue-400 bg-blue-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 sm:text-sm"
           disabled={saving}
         />
       );
@@ -467,7 +467,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
 
     return (
       <div
-        className="min-h-[32px] cursor-pointer rounded-lg px-2 py-1.5 text-sm text-gray-800 transition-all hover:bg-blue-50 hover:ring-1 hover:ring-blue-200"
+        className="min-h-[32px] cursor-pointer rounded-lg px-2 py-1.5 text-xs text-gray-800 transition-all hover:bg-blue-50 hover:ring-1 hover:ring-blue-200 sm:text-sm"
         onClick={() => startEdit(p.id, field, value)}
       >
         {value || <span className="text-gray-300">{UI.empty}</span>}
@@ -482,7 +482,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
         onChange={event => {
           void saveParticipantPatch(participant.id, { category: event.target.value });
         }}
-        className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400 sm:text-sm"
         disabled={saving}
       >
         <option value="">{UI.empty}</option>
@@ -617,12 +617,12 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
       </div>
 
       <ResizableTableContainer>
-        <table className="w-full min-w-[1080px] text-sm">
+        <table className="w-full min-w-[1080px] text-xs sm:text-sm">
           <thead>
             <tr className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50/80">
               <th className="sticky left-0 z-20 w-14 bg-gray-50 px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-gray-600">{UI.num}</th>
-              <th className="sticky left-14 z-20 w-20 bg-gray-50 px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-gray-600">{UI.photo}</th>
-              <SortableHeader label={UI.fullName} sortKey="full_name" sortConfig={sortConfig} onSort={handleSort} className="sticky left-[136px] z-20 min-w-[240px] bg-gray-50 shadow-[1px_0_0_rgba(229,231,235,1)]" />
+              <th className="w-20 bg-gray-50 px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-gray-600">{UI.photo}</th>
+              <SortableHeader label={UI.fullName} sortKey="full_name" sortConfig={sortConfig} onSort={handleSort} className="min-w-[240px]" />
               <SortableHeader label={UI.email} sortKey="email" sortConfig={sortConfig} onSort={handleSort} />
               <SortableHeader label={UI.position} sortKey="position" sortConfig={sortConfig} onSort={handleSort} />
               <SortableHeader label={UI.category} sortKey="category" sortConfig={sortConfig} onSort={handleSort} />
@@ -633,10 +633,10 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
           <tbody>
             {paged.map((p, index) => (
               <tr key={p.id} className="border-b border-gray-100 transition-colors hover:bg-gray-50/70">
-                <td className="sticky left-0 z-10 bg-white px-4 py-3 text-sm font-medium text-gray-500">
+                <td className="sticky left-0 z-10 bg-white px-4 py-3 text-xs font-medium text-gray-500 sm:text-sm">
                   {(currentPage - 1) * pageSize + index + 1}
                 </td>
-                <td className="sticky left-14 z-10 bg-white px-4 py-3">
+                <td className="px-4 py-3">
                   <div className="relative h-12 w-12 flex-shrink-0">
                     {p.photo_url ? (
                       <button
@@ -669,7 +669,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
                     </button>
                   </div>
                 </td>
-                <td className="sticky left-[136px] z-10 bg-white px-4 py-3 shadow-[1px_0_0_rgba(229,231,235,1)]"><EditableCell p={p} field="full_name" value={getParticipantDisplayName(p)} /></td>
+                <td className="px-4 py-3"><EditableCell p={p} field="full_name" value={getParticipantDisplayName(p)} /></td>
                 <td className="px-4 py-3"><EditableCell p={p} field="email" value={p.email || ''} /></td>
                 <td className="px-4 py-3"><EditableCell p={p} field="position" value={p.position} /></td>
                 <td className="px-4 py-3"><CategoryCell participant={p} /></td>
