@@ -259,6 +259,7 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const firstName = String(cert.first_name || '').trim();
   const middleName = String(cert.middle_name || '').trim();
   const fullName = certificateFullName(cert);
+  const shouldSuppressSeparateNameTokens = template?.docType === 'id_card' && Boolean(fullName);
   const chairman = String(cert.commission_chair || '').trim();
   const courseName = String(cert.course_name || '').trim();
   const usesLongRussianDates = template?.key === 'tpl_03_fire_tech_minimum';
@@ -282,9 +283,9 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const values: Record<string, string> = {
     WORK_PLACE: firstNotEmpty(companyName, cert.employee_status),
     WORKPLACE: firstNotEmpty(companyName, cert.employee_status),
-    LAST_NAME: lastName,
-    NAME: firstName,
-    SEC_NAME: middleName,
+    LAST_NAME: shouldSuppressSeparateNameTokens ? '' : lastName,
+    NAME: shouldSuppressSeparateNameTokens ? '' : firstName,
+    SEC_NAME: shouldSuppressSeparateNameTokens ? '' : middleName,
     FIO: fullName,
     FULLNAME: fullName,
     FULL_NAME: fullName,

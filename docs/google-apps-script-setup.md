@@ -139,10 +139,11 @@ function fillIdCardBatch(body, batch, report) {
 
     const p = normalizePlaceholders(item.placeholders || {});
     const values = buildCommonValues(p);
+    const separateNameValues = separateNameTokensFor(values);
 
-    replaceToken(body, `LAST_NAME_${slot}`, values.LAST_NAME);
-    replaceToken(body, `NAME_${slot}`, values.NAME);
-    replaceToken(body, `SEC_NAME_${slot}`, values.SEC_NAME);
+    replaceToken(body, `LAST_NAME_${slot}`, separateNameValues.LAST_NAME);
+    replaceToken(body, `NAME_${slot}`, separateNameValues.NAME);
+    replaceToken(body, `SEC_NAME_${slot}`, separateNameValues.SEC_NAME);
     replaceToken(body, `FULLNAME_${slot}`, values.FULLNAME);
     replaceToken(body, `FULL_NAME_${slot}`, values.FULLNAME);
     replaceToken(body, `FIO_${slot}`, values.FULLNAME);
@@ -296,6 +297,18 @@ function buildCommonValues(p) {
     COMMISSION_MEMB_2: pick(p, ['COMMISSION_MEMB_2', 'COMMISSION_MEMBER_2']),
     COMMISSION_MEMB_3: pick(p, ['COMMISSION_MEMB_3', 'COMMISSION_MEMBER_3']),
     COMMISSION_MEMB_4: pick(p, ['COMMISSION_MEMB_4', 'COMMISSION_MEMBER_4']),
+  };
+}
+
+function separateNameTokensFor(values) {
+  if (String(values.FULLNAME || '').trim()) {
+    return { LAST_NAME: '', NAME: '', SEC_NAME: '' };
+  }
+
+  return {
+    LAST_NAME: values.LAST_NAME,
+    NAME: values.NAME,
+    SEC_NAME: values.SEC_NAME,
   };
 }
 
