@@ -165,6 +165,47 @@ function certificateFullNameShort(cert: Certificate): string {
   return [lastName, initials].filter(Boolean).join(' ');
 }
 
+function splitFullName(value: string): { lastName: string; firstName: string; middleName: string } {
+  const parts = value.split(/\s+/).map(part => part.trim()).filter(Boolean);
+  return {
+    lastName: parts[0] || '',
+    firstName: parts[1] || '',
+    middleName: parts.slice(2).join(' '),
+  };
+}
+
+function protocolNameTokens(cert: Certificate, templateKey: string | null | undefined): {
+  lastName: string;
+  firstName: string;
+  middleName: string;
+  fullName: string;
+  fullNameShort: string;
+} {
+  const fullName = certificateFullName(cert);
+  const splitName = splitFullName(fullName);
+  const lastName = String(cert.last_name || '').trim() || splitName.lastName;
+  const firstName = String(cert.first_name || '').trim() || splitName.firstName;
+  const middleName = String(cert.middle_name || '').trim() || splitName.middleName;
+
+  if (isElectricalSafetyProtocolTemplate(templateKey)) {
+    return {
+      lastName: '',
+      firstName: '',
+      middleName: '',
+      fullName,
+      fullNameShort: certificateFullNameShort(cert),
+    };
+  }
+
+  return {
+    lastName,
+    firstName,
+    middleName,
+    fullName: '',
+    fullNameShort: certificateFullNameShort(cert),
+  };
+}
+
 function certificateProtocolDiscriminator(cert: Certificate): string {
   const certificateId = String(cert.id || '').trim();
   if (certificateId) return `cert:${certificateId}`;
@@ -825,23 +866,22 @@ export function buildProtocolDocumentPayload(params: {
 }): { placeholders: Record<string, string>; items: GenerateProtocolItem[] } {
   const placeholders = protocolGlobalPlaceholders(params);
   const items = params.certificates.map((cert, index) => {
-    const fullName = certificateFullName(cert);
-    const fullNameShort = certificateFullNameShort(cert);
-    const shouldSuppressSeparateNameTokens = Boolean(fullName);
+    const nameTokens = protocolNameTokens(cert, params.protocol.template_key);
+    const displayFullName = certificateFullName(cert);
     const electricalSafetyAdmission = electricalSafetyAdmissionDocumentText(cert.electrical_safety_admission_protocol);
     const docValid = formatDocValidForProtocolTemplate(params.protocol, cert);
     const rowValues: Record<string, string> = {
       '{{AUTO_N}}': String(index + 1),
       '{{WORK_PLACE}}': String(params.companyName || '').trim(),
-      '{{LAST_NAME}}': shouldSuppressSeparateNameTokens ? '' : String(cert.last_name || '').trim(),
-      '{{NAME}}': shouldSuppressSeparateNameTokens ? '' : String(cert.first_name || '').trim(),
-      '{{SEC_NAME}}': shouldSuppressSeparateNameTokens ? '' : String(cert.middle_name || '').trim(),
-      '{{FULLNAME}}': fullName,
-      '{{FULLNAME_SHORT}}': fullNameShort,
-      '{{FIO}}': fullName,
-      '{{FIO_SHORT}}': fullNameShort,
-      '{{FULL_NAME}}': fullName,
-      '{{FULL_NAME_SHORT}}': fullNameShort,
+      '{{LAST_NAME}}': nameTokens.lastName,
+      '{{NAME}}': nameTokens.firstName,
+      '{{SEC_NAME}}': nameTokens.middleName,
+      '{{FULLNAME}}': nameTokens.fullName,
+      '{{FULLNAME_SHORT}}': nameTokens.fullNameShort,
+      '{{FIO}}': displayFullName,
+      '{{FIO_SHORT}}': nameTokens.fullNameShort,
+      '{{FULL_NAME}}': displayFullName,
+      '{{FULL_NAME_SHORT}}': nameTokens.fullNameShort,
       '{{POS}}': String(cert.position || '').trim(),
       '{{POSITION}}': String(cert.position || '').trim(),
       '{{CATEGORY}}': String(cert.category || '').trim(),
