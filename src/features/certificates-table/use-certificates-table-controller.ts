@@ -15,6 +15,7 @@ import {
 import { resolveCourseOption } from '../../lib/courseOptions';
 import {
   PREVIOUS_ELECTRICAL_SAFETY_GROUP_OPTIONS,
+  electricalSafetyAdmissionDocumentText,
   isElectricalSafetyCourse,
   normalizePreviousElectricalSafetyGroup,
 } from '../../lib/electricalSafety';
@@ -555,6 +556,12 @@ export function useCertificatesTableController({
   const itemValues = [
   item.name,
   item.bitrix_value,
+  ...(listKey === 'ELECTRICAL_SAFETY_ADMISSION'
+  ? [
+  getBitrixListItemDetailValue(item, 'document_text'),
+  electricalSafetyAdmissionDocumentText(item.name),
+  ]
+  : []),
   ...(listKey === 'MY_COMPANIES' ? [] : [item.code]),
   ].map(current => normalizeReferenceLookup(current));
   return itemValues.includes(candidate);
@@ -589,6 +596,10 @@ export function useCertificatesTableController({
   return String(value).trim();
   }
   return '';
+  }
+
+  function getElectricalSafetyAdmissionDocumentText(item: RefBitrixListItem): string {
+  return getBitrixListItemDetailValue(item, 'document_text') || electricalSafetyAdmissionDocumentText(item.name);
   }
 
   function getMyCompanyChairman(item: RefBitrixListItem): string {
@@ -1259,9 +1270,22 @@ export function useCertificatesTableController({
   );
 
   function isReferenceOptionAllowed(value: string, options: string[]): boolean {
-  const normalizedValue = normalizeReferenceLookup(value);
-  if (!normalizedValue) return false;
-  return options.some(option => normalizeReferenceLookup(option) === normalizedValue);
+  const candidates = [
+  value,
+  electricalSafetyAdmissionDocumentText(value),
+  ]
+  .map(option => normalizeReferenceLookup(option))
+  .filter(Boolean);
+  if (candidates.length === 0) return false;
+  return options.some(option => {
+  const optionCandidates = [
+  option,
+  electricalSafetyAdmissionDocumentText(option),
+  ]
+  .map(current => normalizeReferenceLookup(current))
+  .filter(Boolean);
+  return optionCandidates.some(optionCandidate => candidates.includes(optionCandidate));
+  });
   }
 
   function getCommissionMembersProtocolOptions(issuerCompany: string): string[] {
@@ -1276,7 +1300,7 @@ export function useCertificatesTableController({
   });
 
   if (relevantItems.length > 0) {
-  return normalizeSelectValues(relevantItems.map(item => item.name));
+  return normalizeSelectValues(relevantItems.map(getElectricalSafetyAdmissionDocumentText));
   }
 
   if (commissionMembersProtocolReferenceItems.length > 0) {

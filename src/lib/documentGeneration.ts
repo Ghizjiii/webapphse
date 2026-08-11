@@ -1,6 +1,11 @@
 import { supabase } from './supabase';
 import type { Certificate, GeneratedDocumentType } from '../types';
-import { electricalSafetyGroupShort, gradeShort, normalizePreviousElectricalSafetyGroup } from './electricalSafety';
+import {
+  electricalSafetyAdmissionDocumentText,
+  electricalSafetyGroupShort,
+  gradeShort,
+  normalizePreviousElectricalSafetyGroup,
+} from './electricalSafety';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -314,7 +319,7 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
     EL_SAFE_GROUP: String(cert.electrical_safety_group || '').trim(),
     EL_SAFE_GROUP_SHRT: electricalSafetyGroupShort(cert.electrical_safety_group),
     EL_SAFE_GROUP_OLD: usesElectricalSafetyTemplate ? normalizePreviousElectricalSafetyGroup(cert.previous_electrical_safety_group) : '',
-    EL_SAFE_APPROV: String(cert.electrical_safety_admission_protocol || '').trim(),
+    EL_SAFE_APPROV: electricalSafetyAdmissionDocumentText(cert.electrical_safety_admission_protocol),
     LEVEL: String(cert.level || '').trim(),
     MARKER_PASS: String(cert.marker_pass || '').trim(),
     TYPE_LEARN: String(cert.type_learn || '').trim(),

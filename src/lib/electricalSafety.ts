@@ -12,6 +12,8 @@ export const PREVIOUS_ELECTRICAL_SAFETY_GROUP_OPTIONS = [
   ...DEFAULT_ELECTRICAL_SAFETY_GROUPS,
 ];
 
+const ELECTRICAL_SAFETY_ADMISSION_PREFIX = '\u0414\u043e\u043f\u0443\u0449\u0435\u043d \u043a \u0440\u0430\u0431\u043e\u0442\u0435 \u0432 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0435';
+
 export function normalizeElectricalSafetyText(value: string | null | undefined): string {
   return String(value || '')
     .trim()
@@ -61,6 +63,20 @@ export function buildPreviousElectricalSafetyGroupOptions(referenceGroups: strin
 
   for (const group of DEFAULT_ELECTRICAL_SAFETY_GROUPS) result.add(group);
   return PREVIOUS_ELECTRICAL_SAFETY_GROUP_OPTIONS.filter(option => result.has(option));
+}
+
+export function electricalSafetyAdmissionDocumentText(value: string | null | undefined): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const normalizedText = normalizeElectricalSafetyText(text);
+  const normalizedPrefix = normalizeElectricalSafetyText(ELECTRICAL_SAFETY_ADMISSION_PREFIX);
+  if (!normalizedText.startsWith(normalizedPrefix)) return text;
+
+  return text
+    .slice(ELECTRICAL_SAFETY_ADMISSION_PREFIX.length)
+    .replace(/^[:\s-]+/, '')
+    .trim();
 }
 
 export function electricalSafetyGroupShort(value: string | null | undefined): string {

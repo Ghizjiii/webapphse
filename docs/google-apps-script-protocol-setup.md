@@ -291,6 +291,11 @@ function normalizeMap(raw) {
   setToken(out, 'FULLNAME', fullName);
   setToken(out, 'FULL_NAME', fullName);
   setToken(out, 'FIO', fullName);
+  if (fullName) {
+    setToken(out, 'LAST_NAME', '');
+    setToken(out, 'NAME', '');
+    setToken(out, 'SEC_NAME', '');
+  }
 
   const fullNameShort = tokenValue(out, 'FULLNAME_SHORT') ||
     tokenValue(out, 'FULL_NAME_SHORT') ||

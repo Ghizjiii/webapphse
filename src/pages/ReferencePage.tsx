@@ -192,6 +192,7 @@ export default function ReferencePage() {
       .map(item => ({
         id: item.id,
         name: item.name,
+        document_text: getBitrixListItemDetailValue(item, 'document_text'),
         category: getBitrixListItemDetailValue(item, 'category'),
       })),
     [bitrixListItems]
@@ -720,6 +721,7 @@ export default function ReferencePage() {
                 rows={electricalSafetyAdmissionRows}
                 columns={[
                   { key: 'name', label: 'Название' },
+                  { key: 'document_text', label: 'Поле для удв. эл.' },
                   { key: 'category', label: 'Категория' },
                 ]}
               />

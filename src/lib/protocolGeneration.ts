@@ -5,7 +5,12 @@ import type {
   ProtocolCategoryScope,
   RefProtocolNumeratorSetting,
 } from '../types';
-import { electricalSafetyGroupShort, gradeShort, normalizePreviousElectricalSafetyGroup } from './electricalSafety';
+import {
+  electricalSafetyAdmissionDocumentText,
+  electricalSafetyGroupShort,
+  gradeShort,
+  normalizePreviousElectricalSafetyGroup,
+} from './electricalSafety';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -822,14 +827,15 @@ export function buildProtocolDocumentPayload(params: {
   const items = params.certificates.map((cert, index) => {
     const fullName = certificateFullName(cert);
     const fullNameShort = certificateFullNameShort(cert);
-    const electricalSafetyAdmission = String(cert.electrical_safety_admission_protocol || '').trim();
+    const shouldSuppressSeparateNameTokens = Boolean(fullName);
+    const electricalSafetyAdmission = electricalSafetyAdmissionDocumentText(cert.electrical_safety_admission_protocol);
     const docValid = formatDocValidForProtocolTemplate(params.protocol, cert);
     const rowValues: Record<string, string> = {
       '{{AUTO_N}}': String(index + 1),
       '{{WORK_PLACE}}': String(params.companyName || '').trim(),
-      '{{LAST_NAME}}': String(cert.last_name || '').trim(),
-      '{{NAME}}': String(cert.first_name || '').trim(),
-      '{{SEC_NAME}}': String(cert.middle_name || '').trim(),
+      '{{LAST_NAME}}': shouldSuppressSeparateNameTokens ? '' : String(cert.last_name || '').trim(),
+      '{{NAME}}': shouldSuppressSeparateNameTokens ? '' : String(cert.first_name || '').trim(),
+      '{{SEC_NAME}}': shouldSuppressSeparateNameTokens ? '' : String(cert.middle_name || '').trim(),
       '{{FULLNAME}}': fullName,
       '{{FULLNAME_SHORT}}': fullNameShort,
       '{{FIO}}': fullName,

@@ -64,6 +64,7 @@ type BitrixCoursePriceDetails = {
 
 type BitrixElectricalSafetyAdmissionDetails = {
   category: string;
+  document_text: string;
 };
 
 type BitrixElectricalSafetyGroupDetails = {
@@ -1493,10 +1494,31 @@ function findField(
   }) || null;
 }
 
+function findElectricalSafetyAdmissionDocumentTextField(fields: BitrixListFieldDefinition[]): BitrixListFieldDefinition | null {
+  return findField(fields, { code: "POLE_DLYA_UDV_EL" }) ||
+    findField(fields, { code: "POLE_DLYA_UDV_EHL" }) ||
+    findField(fields, { name: "\u041f\u043e\u043b\u0435 \u0434\u043b\u044f \u0443\u0434\u0432. \u044d\u043b." }) ||
+    fields.find(field => {
+      const code = field.code.toLowerCase();
+      const name = field.name.toLowerCase();
+      return (
+        (code.includes("POLE") && code.includes("UDV") && (code.includes("EL") || code.includes("EHL"))) ||
+        (name.includes("\u043f\u043e\u043b\u0435") && name.includes("\u0443\u0434\u0432") && name.includes("\u044d\u043b"))
+      );
+    }) ||
+    null;
+}
+
 function resolveFieldDisplayValue(field: BitrixListFieldDefinition | null, rawValue: unknown): string {
   const scalar = firstScalarValue(rawValue);
   if (!scalar) return "";
   return field?.displayValues[scalar] || scalar;
+}
+
+function electricalSafetyAdmissionDocumentText(value: string): string {
+  return plain(value)
+    .replace(/^\u0414\u043e\u043f\u0443\u0449\u0435\u043d\s+\u043a\s+\u0440\u0430\u0431\u043e\u0442\u0435\s+\u0432\s+\u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0435\s+/i, "")
+    .trim();
 }
 
 function resolveFieldNumberValue(rawValue: unknown): number | null {
@@ -1595,9 +1617,14 @@ function buildElectricalSafetyAdmissionDetails(
   fields: BitrixListFieldDefinition[],
 ): BitrixElectricalSafetyAdmissionDetails {
   const categoryField = findField(fields, { code: "KATEGORIYA", fieldId: "PROPERTY_954" });
+  const documentTextField = findElectricalSafetyAdmissionDocumentTextField(fields);
 
   return {
     category: resolveFieldDisplayValue(categoryField, categoryField ? raw[categoryField.fieldId] : ""),
+    document_text: resolveFieldDisplayValue(
+      documentTextField,
+      documentTextField ? raw[documentTextField.fieldId] : "",
+    ) || electricalSafetyAdmissionDocumentText(plain(raw.NAME)),
   };
 }
 
