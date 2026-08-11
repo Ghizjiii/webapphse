@@ -19,6 +19,8 @@ export interface ProtocolGroup {
   courseName: string;
   categoryScope: ProtocolCategoryScope;
   categoryLabel: string;
+  groupKey: string;
+  personalProtocol: boolean;
   certificates: Certificate[];
   employeesCount: number;
 }
@@ -139,6 +141,33 @@ function certificateFullName(cert: Certificate): string {
     String(cert.middle_name || '').trim(),
   ].filter(Boolean).join(' ');
   return String(cert.full_name || '').trim() || separateFullName;
+}
+
+function isElectricalSafetyProtocolTemplate(templateKey: string | null | undefined): boolean {
+  return String(templateKey || '').trim() === 'tpl_protocol_15_electrical_safety';
+}
+
+function certificateFullNameShort(cert: Certificate): string {
+  const fullName = certificateFullName(cert);
+  const parts = fullName.split(/\s+/).map(part => part.trim()).filter(Boolean);
+  const lastName = String(cert.last_name || '').trim() || parts[0] || '';
+  const firstName = String(cert.first_name || '').trim() || parts[1] || '';
+  const middleName = String(cert.middle_name || '').trim() || parts[2] || '';
+  const initials = [firstName, middleName]
+    .filter(Boolean)
+    .map(value => `${value[0]}.`)
+    .join(' ');
+  return [lastName, initials].filter(Boolean).join(' ');
+}
+
+function certificateProtocolDiscriminator(cert: Certificate): string {
+  const certificateId = String(cert.id || '').trim();
+  if (certificateId) return `cert:${certificateId}`;
+
+  const participantId = String(cert.participant_id || '').trim();
+  if (participantId) return `participant:${participantId}`;
+
+  return `name:${certificateFullName(cert)}:${String(cert.position || '').trim()}`;
 }
 
 function normalizeProtocolSequenceCourseName(value: string | null | undefined): string {
@@ -310,7 +339,7 @@ function buildCertificateProtocolNumberUpdates(
   const protocolMap = new Map<string, Protocol>();
   for (const row of protocols) {
     protocolMap.set(
-      protocolGroupKey({
+      row.group_key || protocolGroupKey({
         templateKey: row.template_key,
         courseName: row.course_name,
         categoryScope: row.category_scope,
@@ -328,10 +357,12 @@ function buildCertificateProtocolNumberUpdates(
           : null;
       }
 
+      const shouldUsePersonalProtocol = isElectricalSafetyProtocolTemplate(resolved.template.key);
       const matchedProtocol = protocolMap.get(protocolGroupKey({
         templateKey: resolved.template.key,
         courseName: String(cert.course_name || '').trim(),
         categoryScope: resolved.scope,
+        discriminator: shouldUsePersonalProtocol ? certificateProtocolDiscriminator(cert) : '',
       }));
       const nextProtocolNumber = String(matchedProtocol?.protocol_number || '').trim();
       return String(cert.protocol_number || '').trim() === nextProtocolNumber
@@ -427,8 +458,11 @@ export function protocolGroupKey(params: {
   templateKey: string;
   courseName: string;
   categoryScope: ProtocolCategoryScope;
+  discriminator?: string | null;
 }): string {
-  return `${params.templateKey}::${params.courseName}::${params.categoryScope}`;
+  const base = `${params.templateKey}::${params.courseName}::${params.categoryScope}`;
+  const discriminator = String(params.discriminator || '').trim();
+  return discriminator ? `${base}::${discriminator}` : base;
 }
 
 export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[] {
@@ -441,10 +475,12 @@ export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[
     const resolved = resolveProtocolTemplate(courseName, cert.category);
     if (!resolved) continue;
 
+    const shouldCreatePersonalProtocol = isElectricalSafetyProtocolTemplate(resolved.template.key);
     const key = protocolGroupKey({
       templateKey: resolved.template.key,
       courseName,
       categoryScope: resolved.scope,
+      discriminator: shouldCreatePersonalProtocol ? certificateProtocolDiscriminator(cert) : '',
     });
 
     const existing = groups.get(key);
@@ -458,6 +494,8 @@ export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[
       courseName,
       categoryScope: resolved.scope,
       categoryLabel: protocolCategoryLabel(resolved.scope),
+      groupKey: key,
+      personalProtocol: shouldCreatePersonalProtocol,
       certificates: [cert],
       employeesCount: 1,
     });
@@ -484,11 +522,7 @@ function buildDraftProtocolRow(params: {
   existing?: Protocol | null;
 }): Protocol {
   const { group, questionnaireId, dealId = null, companyId = null, existing = null } = params;
-  const groupKey = protocolGroupKey({
-    templateKey: group.template.key,
-    courseName: group.courseName,
-    categoryScope: group.categoryScope,
-  });
+  const groupKey = group.groupKey;
   const now = new Date().toISOString();
 
   return {
@@ -531,7 +565,7 @@ export function buildProtocolDraftRows(params: {
 
   for (const row of params.storedProtocols || []) {
     storedMap.set(
-      protocolGroupKey({
+      row.group_key || protocolGroupKey({
         templateKey: row.template_key,
         courseName: row.course_name,
         categoryScope: row.category_scope,
@@ -540,17 +574,23 @@ export function buildProtocolDraftRows(params: {
     );
   }
 
-  return groups.map(group => buildDraftProtocolRow({
-    group,
-    questionnaireId: params.questionnaireId,
-    dealId: params.dealId,
-    companyId: params.companyId,
-    existing: storedMap.get(protocolGroupKey({
+  return groups.map(group => {
+    const legacyGroupKey = protocolGroupKey({
       templateKey: group.template.key,
       courseName: group.courseName,
       categoryScope: group.categoryScope,
-    })) || null,
-  }));
+    });
+
+    return buildDraftProtocolRow({
+      group,
+      questionnaireId: params.questionnaireId,
+      dealId: params.dealId,
+      companyId: params.companyId,
+      existing: group.personalProtocol
+        ? storedMap.get(group.groupKey) || null
+        : storedMap.get(group.groupKey) || storedMap.get(legacyGroupKey) || null,
+    });
+  });
 }
 
 export async function reconcileProtocolsFromCertificates(params: {
@@ -571,7 +611,7 @@ export async function reconcileProtocolsFromCertificates(params: {
   const existingMap = new Map<string, Protocol>();
   for (const row of (existingRows || []) as Protocol[]) {
     existingMap.set(
-      protocolGroupKey({
+      row.group_key || protocolGroupKey({
         templateKey: row.template_key,
         courseName: row.course_name,
         categoryScope: row.category_scope,
@@ -587,7 +627,9 @@ export async function reconcileProtocolsFromCertificates(params: {
       courseName: group.courseName,
       categoryScope: group.categoryScope,
     });
-    const existing = existingMap.get(key);
+    const existing = group.personalProtocol
+      ? existingMap.get(group.groupKey)
+      : existingMap.get(group.groupKey) || existingMap.get(key);
 
     return {
       questionnaire_id: params.questionnaireId,
@@ -609,25 +651,22 @@ export async function reconcileProtocolsFromCertificates(params: {
       generated_at: existing?.generated_at || null,
       sync_status: existing?.sync_status || 'pending',
       sync_error: existing?.sync_error || '',
+      group_key: group.groupKey,
       updated_at: now,
     };
   }));
 
   if (nextRows.length > 0) {
     const { error: upsertError } = await supabase.from('protocols').upsert(nextRows, {
-      onConflict: 'questionnaire_id,template_key,course_name,category_scope',
+      onConflict: 'questionnaire_id,group_key',
     });
     if (upsertError) throw upsertError;
   }
 
-  const nextKeys = new Set(nextRows.map(row => protocolGroupKey({
-    templateKey: row.template_key,
-    courseName: row.course_name,
-    categoryScope: row.category_scope,
-  })));
+  const nextKeys = new Set(nextRows.map(row => row.group_key));
 
   const staleIds = (existingRows || [])
-    .filter(row => !nextKeys.has(protocolGroupKey({
+    .filter(row => !nextKeys.has(row.group_key || protocolGroupKey({
       templateKey: row.template_key,
       courseName: row.course_name,
       categoryScope: row.category_scope,
@@ -668,15 +707,25 @@ export async function reconcileProtocolsFromCertificates(params: {
 }
 
 export function certificatesForProtocolRow(protocol: Protocol, certificates: Certificate[]): Certificate[] {
+  const protocolKey = protocol.group_key || protocolGroupKey({
+    templateKey: protocol.template_key,
+    courseName: protocol.course_name,
+    categoryScope: protocol.category_scope,
+  });
+
   return certificates
     .filter(cert => {
       const resolved = resolveProtocolTemplate(cert.course_name, cert.category);
       if (!resolved) return false;
-      return (
-        resolved.template.key === protocol.template_key &&
-        String(cert.course_name || '').trim() === protocol.course_name &&
-        resolved.scope === protocol.category_scope
-      );
+      const certificateKey = protocolGroupKey({
+        templateKey: resolved.template.key,
+        courseName: String(cert.course_name || '').trim(),
+        categoryScope: resolved.scope,
+        discriminator: isElectricalSafetyProtocolTemplate(resolved.template.key)
+          ? certificateProtocolDiscriminator(cert)
+          : '',
+      });
+      return certificateKey === protocolKey;
     })
     .sort(compareCertificates);
 }
@@ -714,16 +763,24 @@ function formatProtocolDateForTemplate(protocol: Protocol): string {
   return formatProtocolDateRu(protocol.protocol_date);
 }
 
-export function makeProtocolGeneratedFileName(courseName: string, categoryLabel: string): string {
+function formatDocValidForProtocolTemplate(protocol: Protocol, cert: Certificate): string {
+  if (isElectricalSafetyProtocolTemplate(protocol.template_key)) {
+    return formatProtocolDateShortRu(cert.expiry_date);
+  }
+  return formatDateKazRusWords(cert.expiry_date);
+}
+
+export function makeProtocolGeneratedFileName(courseName: string, categoryLabel: string, participantName = ''): string {
   const safeCourseName = String(courseName || '').trim() || 'Протокол';
   const safeCategory = String(categoryLabel || '').trim();
+  const safeParticipant = String(participantName || '').trim();
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const hh = String(now.getHours()).padStart(2, '0');
   const mi = String(now.getMinutes()).padStart(2, '0');
-  return `${safeCourseName}${safeCategory ? ` - ${safeCategory}` : ''} - ${yyyy}-${mm}-${dd} ${hh}-${mi}`;
+  return `${safeCourseName}${safeCategory ? ` - ${safeCategory}` : ''}${safeParticipant ? ` - ${safeParticipant}` : ''} - ${yyyy}-${mm}-${dd} ${hh}-${mi}`;
 }
 
 function protocolGlobalPlaceholders(params: {
@@ -738,6 +795,7 @@ function protocolGlobalPlaceholders(params: {
     '{{WORK_PLACE}}': String(params.companyName || '').trim(),
     '{{COURSE_NAME}}': params.protocol.course_name,
     '{{PROTOCOL_NUM}}': String(params.protocol.protocol_number || '').trim(),
+    '{{PROTOCOL}}': String(params.protocol.protocol_number || '').trim(),
     '{{PROTOCOL_DATE}}': protocolDateRu,
     '{{PROTOCOL_DATE_SHORT}}': formatProtocolDateShortRu(params.protocol.protocol_date),
     '{{PROTOCOL_DATE_DAY}}': normalizeDay(params.protocol.protocol_date),
@@ -763,6 +821,9 @@ export function buildProtocolDocumentPayload(params: {
   const placeholders = protocolGlobalPlaceholders(params);
   const items = params.certificates.map((cert, index) => {
     const fullName = certificateFullName(cert);
+    const fullNameShort = certificateFullNameShort(cert);
+    const electricalSafetyAdmission = String(cert.electrical_safety_admission_protocol || '').trim();
+    const docValid = formatDocValidForProtocolTemplate(params.protocol, cert);
     const rowValues: Record<string, string> = {
       '{{AUTO_N}}': String(index + 1),
       '{{WORK_PLACE}}': String(params.companyName || '').trim(),
@@ -770,23 +831,30 @@ export function buildProtocolDocumentPayload(params: {
       '{{NAME}}': String(cert.first_name || '').trim(),
       '{{SEC_NAME}}': String(cert.middle_name || '').trim(),
       '{{FULLNAME}}': fullName,
+      '{{FULLNAME_SHORT}}': fullNameShort,
       '{{FIO}}': fullName,
+      '{{FIO_SHORT}}': fullNameShort,
       '{{FULL_NAME}}': fullName,
+      '{{FULL_NAME_SHORT}}': fullNameShort,
       '{{POS}}': String(cert.position || '').trim(),
       '{{POSITION}}': String(cert.position || '').trim(),
       '{{CATEGORY}}': String(cert.category || '').trim(),
       '{{COURSE_NAME}}': String(cert.course_name || '').trim(),
       '{{DOC_NUM}}': String(cert.document_number || '').trim(),
       '{{PROTOCOL_NUM}}': String(params.protocol.protocol_number || '').trim(),
+      '{{PROTOCOL}}': String(params.protocol.protocol_number || '').trim(),
       '{{PROTOCOL_DATE}}': formatProtocolDateForTemplate(params.protocol),
       '{{PROTOCOL_DATE_SHORT_YEAR}}': formatProtocolDateShortYear(params.protocol.protocol_date),
       '{{PROTOCOL_DATE_SHORT}}': formatProtocolDateShortRu(params.protocol.protocol_date),
       '{{COURSE_START}}': formatDateKazRusWords(cert.start_date),
-      '{{DOC_VALID}}': formatDateKazRusWords(cert.expiry_date),
+      '{{DOC_VALID}}': docValid,
+      '{{DOC_VALID_SHORT}}': formatProtocolDateShortRu(cert.expiry_date),
+      '{{DOC_VALID_WORDS}}': formatDateKazRusWords(cert.expiry_date),
       '{{EL_SAFE_GROUP}}': String(cert.electrical_safety_group || '').trim(),
       '{{EL_SAFE_GROUP_SHRT}}': electricalSafetyGroupShort(cert.electrical_safety_group),
       '{{EL_SAFE_GROUP_OLD}}': params.protocol.template_key === 'tpl_protocol_15_electrical_safety' ? normalizePreviousElectricalSafetyGroup(cert.previous_electrical_safety_group) : '',
-      '{{EL_SAFE_APPROV}}': String(cert.electrical_safety_admission_protocol || '').trim(),
+      '{{EL_SAFE_APPROV}}': electricalSafetyAdmission,
+      '{{EL_SAFE_APPROV_3}}': electricalSafetyAdmission,
       '{{MARKER_PASS}}': String(cert.marker_pass || '').trim(),
       '{{TYPE_LEARN}}': String(cert.type_learn || '').trim(),
       '{{TYPE_TRAINING}}': String(cert.type_learn || '').trim(),
@@ -808,6 +876,10 @@ export function buildProtocolDocumentPayload(params: {
 
     return { placeholders: rowValues };
   });
+
+  if (items.length === 1) {
+    Object.assign(placeholders, items[0].placeholders);
+  }
 
   return { placeholders, items };
 }

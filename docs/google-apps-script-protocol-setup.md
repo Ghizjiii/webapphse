@@ -204,8 +204,20 @@ function rowHasToken(row) {
   return /\{\{[^}]+\}\}/.test(row.getText());
 }
 
+function replacementKeys(values) {
+  return Object.keys(values || {})
+    .filter(isWrappedToken)
+    .sort(function(a, b) {
+      return b.length - a.length;
+    });
+}
+
+function isWrappedToken(key) {
+  return /^\{\{[^}]+\}\}$/.test(String(key || ''));
+}
+
 function replaceAllBodyTokens(body, values) {
-  const keys = Object.keys(values);
+  const keys = replacementKeys(values);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     body.replaceText(escapeRegex(key), values[key]);
@@ -217,7 +229,7 @@ function replaceTokensInElement(element, values) {
 
   if (type === DocumentApp.ElementType.TEXT) {
     const text = element.asText();
-    const keys = Object.keys(values);
+    const keys = replacementKeys(values);
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       text.replaceText(escapeRegex(key), values[key]);
@@ -264,10 +276,54 @@ function normalizeMap(raw) {
     const key = keys[i];
     const value = String(raw[key] == null ? '' : raw[key]);
     out[key] = value;
-    const bare = key.replace(/^\{\{/, '').replace(/\}\}$/, '');
+    const bare = key.replace(/^\{\{/, '').replace(/\}\}$/, '').trim();
     out['{{' + bare + '}}'] = value;
+    out[bare] = value;
   }
+
+  const fullName = tokenValue(out, 'FULLNAME') ||
+    tokenValue(out, 'FULL_NAME') ||
+    tokenValue(out, 'FIO') ||
+    [tokenValue(out, 'LAST_NAME'), tokenValue(out, 'NAME'), tokenValue(out, 'SEC_NAME')]
+      .filter(Boolean)
+      .join(' ');
+
+  setToken(out, 'FULLNAME', fullName);
+  setToken(out, 'FULL_NAME', fullName);
+  setToken(out, 'FIO', fullName);
+
+  const fullNameShort = tokenValue(out, 'FULLNAME_SHORT') ||
+    tokenValue(out, 'FULL_NAME_SHORT') ||
+    tokenValue(out, 'FIO_SHORT') ||
+    makeFullNameShort(fullName);
+
+  setToken(out, 'FULLNAME_SHORT', fullNameShort);
+  setToken(out, 'FULL_NAME_SHORT', fullNameShort);
+  setToken(out, 'FIO_SHORT', fullNameShort);
+
   return out;
+}
+
+function makeFullNameShort(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+
+  const lastName = parts[0] || '';
+  const initials = [];
+  if (parts[1]) initials.push(parts[1].charAt(0) + '.');
+  if (parts[2]) initials.push(parts[2].charAt(0) + '.');
+
+  return [lastName, initials.join(' ')].filter(Boolean).join(' ');
+}
+
+function tokenValue(map, key) {
+  return String(map[key] || map['{{' + key + '}}'] || '').trim();
+}
+
+function setToken(map, key, value) {
+  const text = String(value || '');
+  map[key] = text;
+  map['{{' + key + '}}'] = text;
 }
 
 function escapeRegex(value) {

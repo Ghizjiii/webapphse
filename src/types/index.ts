@@ -333,7 +333,7 @@ export interface Protocol {
   sync_error: string;
   created_at: string;
   updated_at: string;
-  group_key?: string;
+  group_key: string;
   is_draft?: boolean;
 }
 

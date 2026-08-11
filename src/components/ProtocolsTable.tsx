@@ -285,6 +285,7 @@ export default function ProtocolsTable({
       generated_at: nextRow.generated_at || null,
       sync_status: nextRow.sync_status || 'pending',
       sync_error: nextRow.sync_error || '',
+      group_key: rowKey(nextRow),
       updated_at: nextRow.updated_at,
     };
 
@@ -294,7 +295,7 @@ export default function ProtocolsTable({
 
     const { data, error } = await supabase
       .from('protocols')
-      .upsert(payload, { onConflict: 'questionnaire_id,template_key,course_name,category_scope' })
+      .upsert(payload, { onConflict: 'questionnaire_id,group_key' })
       .select('*')
       .single();
 
@@ -489,7 +490,11 @@ export default function ProtocolsTable({
             key: row.template_key,
             name: row.template_name,
           },
-          fileName: makeProtocolGeneratedFileName(row.course_name, row.category_label),
+          fileName: makeProtocolGeneratedFileName(
+            row.course_name,
+            row.category_label,
+            rowCertificates.length === 1 ? rowCertificates[0]?.full_name : '',
+          ),
           placeholders: payload.placeholders,
           items: payload.items,
         });
