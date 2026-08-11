@@ -19,3 +19,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_protocols_unique_group_key
 
 CREATE INDEX IF NOT EXISTS idx_protocols_group_key
   ON protocols(group_key);
+
+NOTIFY pgrst, 'reload schema';
