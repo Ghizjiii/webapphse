@@ -6,10 +6,25 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const paymentOrdersBucket = Deno.env.get("PAYMENT_ORDERS_BUCKET") || "payment-orders";
 const participantPhotosBucket = Deno.env.get("PARTICIPANT_PHOTOS_BUCKET") || "participant-photos";
+const paymentOrderAllowedMimeTypes = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+  "image/webp",
+  "image/bmp",
+  "image/tiff",
+];
 
 function isBucketNotFoundError(message: string): boolean {
   const m = String(message || "").toLowerCase();
   return m.includes("bucket not found") || m.includes("not found");
+}
+
+function isMimeTypeRejectedError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return m.includes("mime") || m.includes("content type") || m.includes("not allowed");
 }
 
 function isSupportedPaymentOrderFile(contentType: string, fileName: string): boolean {
@@ -21,6 +36,8 @@ function isSupportedPaymentOrderFile(contentType: string, fileName: string): boo
     name.endsWith(".jpg") ||
     name.endsWith(".jpeg") ||
     name.endsWith(".png") ||
+    name.endsWith(".heic") ||
+    name.endsWith(".heif") ||
     name.endsWith(".webp") ||
     name.endsWith(".bmp") ||
     name.endsWith(".tif") ||
@@ -47,6 +64,8 @@ function resolvePaymentOrderContentType(contentType: string, fileName: string): 
   if (name.endsWith(".pdf")) return "application/pdf";
   if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
   if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
   if (name.endsWith(".webp")) return "image/webp";
   if (name.endsWith(".bmp")) return "image/bmp";
   if (name.endsWith(".tif") || name.endsWith(".tiff")) return "image/tiff";
@@ -127,7 +146,7 @@ Deno.serve(async (req: Request) => {
       }
 
       if (!isSupportedPaymentOrderFile(contentType, fileName)) {
-        return jsonResponse(req, 400, { error: "Платежное поручение принимается только в форматах PDF/JPG/PNG" });
+        return jsonResponse(req, 400, { error: "Платежное поручение принимается только в форматах PDF/JPG/PNG/HEIF" });
       }
 
       const uploadContentType = resolvePaymentOrderContentType(contentType, fileName);
@@ -148,17 +167,26 @@ Deno.serve(async (req: Request) => {
         const { error: createBucketError } = await sb.storage.createBucket(paymentOrdersBucket, {
           public: false,
           fileSizeLimit: "20MB",
-          allowedMimeTypes: [
-            "application/pdf",
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/bmp",
-            "image/tiff",
-          ],
+          allowedMimeTypes: paymentOrderAllowedMimeTypes,
         });
 
         if (!createBucketError) {
+          const retry = await sb.storage.from(paymentOrdersBucket).upload(objectPath, bytes, {
+            contentType: uploadContentType,
+            upsert: false,
+          });
+          uploadError = retry.error;
+        }
+      }
+
+      if (uploadError && isMimeTypeRejectedError(uploadError.message || "")) {
+        const { error: updateBucketError } = await sb.storage.updateBucket(paymentOrdersBucket, {
+          public: false,
+          fileSizeLimit: "20MB",
+          allowedMimeTypes: paymentOrderAllowedMimeTypes,
+        });
+
+        if (!updateBucketError) {
           const retry = await sb.storage.from(paymentOrdersBucket).upload(objectPath, bytes, {
             contentType: uploadContentType,
             upsert: false,

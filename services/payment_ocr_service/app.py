@@ -17,7 +17,7 @@ from paddleocr import PaddleOCR
 ALLOWED_ORIGINS = [v.strip() for v in os.getenv("ALLOWED_ORIGINS", "*").split(",") if v.strip()]
 UPSTREAM_TOKEN = os.getenv("PAYMENT_OCR_UPSTREAM_TOKEN", "").strip()
 
-app = FastAPI(title="Payment OCR Service", version="1.2.0")
+app = FastAPI(title="Payment OCR Service", version="1.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS or ["*"],
@@ -81,7 +81,7 @@ def detect_file_type(filename: str, content_type: str) -> str:
         return "pdf"
     if name.endswith((".xls", ".xlsx")) or "excel" in ctype or "spreadsheet" in ctype:
         return "excel"
-    if name.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")) or ctype.startswith("image/"):
+    if name.endswith((".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".bmp", ".tif", ".tiff")) or ctype.startswith("image/"):
         return "image"
     return "unknown"
 
@@ -240,6 +240,29 @@ def _prepare_image_variants(img: np.ndarray) -> list[np.ndarray]:
     return variants
 
 
+def _decode_image_bytes(image_bytes: bytes) -> np.ndarray | None:
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is not None:
+        return img
+
+    try:
+        from PIL import Image, ImageOps
+
+        try:
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+        except Exception:
+            pass
+
+        with Image.open(io.BytesIO(image_bytes)) as pil_img:
+            pil_img = ImageOps.exif_transpose(pil_img).convert("RGB")
+            return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    except Exception:
+        return None
+
+
 def _ocr_lines_from_image(image: np.ndarray) -> list[str]:
     ocr = get_ocr()
     result = ocr.ocr(image)
@@ -255,8 +278,7 @@ def _ocr_lines_from_image(image: np.ndarray) -> list[str]:
 
 
 def ocr_lines_from_bytes(image_bytes: bytes) -> list[str]:
-    arr = np.frombuffer(image_bytes, dtype=np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    img = _decode_image_bytes(image_bytes)
     if img is None:
         return []
 

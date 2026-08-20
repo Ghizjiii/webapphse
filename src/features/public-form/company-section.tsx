@@ -231,7 +231,7 @@ export function CompanySection(props: CompanySectionProps) {
               <input
                 ref={paymentOrderInputRef as RefObject<HTMLInputElement>}
                 type="file"
-                accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif"
                 className="hidden"
                 onChange={event => {
                   const file = event.target.files?.[0];

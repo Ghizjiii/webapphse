@@ -1090,7 +1090,7 @@ export default function QuestionnairePage() {
                       <input
                         ref={paymentOrderInputRef}
                         type="file"
-                        accept=".pdf,image/*"
+                        accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif"
                         className="hidden"
                         onChange={event => {
                           const file = event.target.files?.[0];

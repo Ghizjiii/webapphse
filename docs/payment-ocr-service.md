@@ -2,7 +2,7 @@
 
 ## Current production flow
 
-1. User uploads PDF/JPG/PNG in the public form.
+1. User uploads PDF/JPG/PNG/HEIF in the public form.
 2. Frontend calls Supabase Edge Function `parse-payment-order`.
 3. Edge Function forwards the file to the protected OCR server `POST /parse-payment`.
 4. OCR server extracts:
@@ -58,5 +58,6 @@ VITE_SUPABASE_ANON_KEY=...
 ## Legacy local service
 
 This repository still contains the older local OCR prototype in `services/payment_ocr_service` and the optional Vercel proxy `api/extract-payment-order.js`.
+The local prototype supports PDF, Excel, JPG, PNG, WebP, BMP, TIFF, HEIC and HEIF files. HEIC/HEIF decoding requires the `pillow-heif` package from `services/payment_ocr_service/requirements.txt`.
 
 They are no longer the primary production path and should be treated as legacy/local tooling unless you explicitly decide to keep that route.
