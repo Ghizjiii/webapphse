@@ -9,6 +9,8 @@ type CreateQuestionnairePayload = {
   region_name: string;
   expires_at: string | null;
   payment_order_optional: boolean;
+  is_general_contractor: boolean;
+  object_name: string;
 };
 
 type RegionOption = {
@@ -31,6 +33,8 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
   const [expiryDate, setExpiryDate] = useState('');
   const [requestType, setRequestType] = useState<QuestionnaireRequestType>(hasDefaultRegion ? 'internal' : 'external');
   const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
+  const [isGeneralContractor, setIsGeneralContractor] = useState(false);
+  const [objectName, setObjectName] = useState('');
   const [regions, setRegions] = useState<RegionOption[]>([]);
   const [selectedRegionId, setSelectedRegionId] = useState(defaultRegionId);
   const [loadingRegions, setLoadingRegions] = useState(true);
@@ -121,6 +125,8 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
       region_name: selectedRegion?.name || '',
       expires_at,
       payment_order_optional: paymentOrderOptional,
+      is_general_contractor: isGeneralContractor,
+      object_name: objectName.trim(),
     });
   }
 
@@ -137,7 +143,7 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+      <div className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-100 p-6">
           <h2 className="text-lg font-semibold text-gray-900">Создать анкету</h2>
           <button onClick={onClose} className="text-gray-400 transition-colors hover:text-gray-600">
@@ -245,6 +251,31 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
                 </p>
               </div>
             </label>
+          </div>
+
+          <div>
+            <label className="flex cursor-pointer items-center gap-2.5">
+              <div
+                onClick={() => setIsGeneralContractor((prev) => !prev)}
+                className={`flex h-5.5 w-10 rounded-full px-0.5 transition-colors ${isGeneralContractor ? 'bg-blue-600' : 'bg-gray-300'}`}
+                style={{ height: '22px', width: '40px' }}
+              >
+                <div className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${isGeneralContractor ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+              </div>
+              <span className="text-sm font-medium text-gray-700">Генподряд</span>
+            </label>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">Объект</label>
+            <input
+              type="text"
+              value={objectName}
+              onChange={(event) => setObjectName(event.target.value)}
+              placeholder="Например: Германия, Франкфурт"
+              maxLength={255}
+              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
           {hasExpiry && (

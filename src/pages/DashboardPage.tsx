@@ -23,6 +23,8 @@ interface QuestionnaireRow {
   company: Company | null;
   participantCount: number;
   requestCount: number;
+  courseCounts: Array<{ courseName: string; count: number }>;
+  hasPaymentOrder: boolean;
   totalAmount: number;
   creatorProfile: ProfileDirectoryEntry | null;
   deletedByProfile: ProfileDirectoryEntry | null;
@@ -30,6 +32,8 @@ interface QuestionnaireRow {
 }
 
 type CreatorFilterValue = 'all' | 'mine' | `user:${string}`;
+type PaymentOrderFilterValue = 'all' | 'uploaded' | 'missing';
+type GeneralContractorFilterValue = 'all' | 'yes' | 'no';
 
 interface CreatorFilterOption {
   value: `user:${string}`;
@@ -42,6 +46,7 @@ type ParticipantQuestionnaireRef = {
 
 type ParticipantCourseQuestionnaireRef = {
   questionnaire_id: string | null;
+  course_name: string | null;
 };
 
 type DealQuestionnaireSyncRef = {
@@ -106,6 +111,24 @@ function resolveCompanyRecord(companies: Company[]): Company | null {
   return companies.find(hasMeaningfulCompanyData) || companies[0] || null;
 }
 
+function hasPaymentOrderFile(company: Company | null): boolean {
+  return Boolean(
+    String(company?.payment_order_url || '').trim() ||
+    String(company?.payment_order_uploaded_at || '').trim()
+  );
+}
+
+function getCourseDashboardLabel(courseName: string): string {
+  const normalized = courseName.toLocaleLowerCase('ru-RU');
+  if (normalized.includes('электробез')) return 'Эл. Без';
+  if (normalized.includes('пожар') || normalized.includes('птм')) return 'ПТМ';
+  if (normalized.includes('квалифика')) return 'Квалификация';
+  if (normalized.includes('биот') || (normalized.includes('безопас') && normalized.includes('охран') && normalized.includes('труд'))) {
+    return 'БиОТ';
+  }
+  return courseName || 'Без курса';
+}
+
 function getDashboardStatusConfig(questionnaire: QuestionnaireLink) {
   const workflowStatus = resolveWorkflowStatus(questionnaire);
   if (workflowStatus === 'awaiting_submission') {
@@ -130,6 +153,12 @@ export default function DashboardPage() {
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | QuestionnaireRequestType>('all');
   const [regionFilter, setRegionFilter] = useState('all');
   const [companySearch, setCompanySearch] = useState('');
+  const [createdFromFilter, setCreatedFromFilter] = useState('');
+  const [createdToFilter, setCreatedToFilter] = useState('');
+  const [paymentOrderFilter, setPaymentOrderFilter] = useState<PaymentOrderFilterValue>('all');
+  const [generalContractorFilter, setGeneralContractorFilter] = useState<GeneralContractorFilterValue>('all');
+  const [objectSearch, setObjectSearch] = useState('');
+  const [showCourseDetails, setShowCourseDetails] = useState(true);
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const currentUserId = user?.id || '';
@@ -206,7 +235,7 @@ export default function DashboardPage() {
         .in('questionnaire_id', questionnaireIds),
       supabase
         .from('participant_courses')
-        .select('questionnaire_id')
+        .select('questionnaire_id, course_name')
         .in('questionnaire_id', questionnaireIds),
       supabase
         .from('certificates')
@@ -242,12 +271,19 @@ export default function DashboardPage() {
     }
 
     const requestCountByQuestionnaire = new Map<string, number>();
+    const courseCountsByQuestionnaire = new Map<string, Map<string, number>>();
     for (const course of (participantCoursesRes.data || []) as ParticipantCourseQuestionnaireRef[]) {
       if (!course.questionnaire_id) continue;
       requestCountByQuestionnaire.set(
         course.questionnaire_id,
         (requestCountByQuestionnaire.get(course.questionnaire_id) || 0) + 1
       );
+
+      const rawCourseName = String(course.course_name || '').trim();
+      const courseName = getCourseDashboardLabel(rawCourseName);
+      const courseCounts = courseCountsByQuestionnaire.get(course.questionnaire_id) || new Map<string, number>();
+      courseCounts.set(courseName, (courseCounts.get(courseName) || 0) + 1);
+      courseCountsByQuestionnaire.set(course.questionnaire_id, courseCounts);
     }
 
     const totalAmountByQuestionnaire = new Map<string, number>();
@@ -295,12 +331,18 @@ export default function DashboardPage() {
         : q.status === 'submitted' && syncStatus === 'success'
           ? 'synced'
           : q.status;
+      const company = resolveCompanyRecord(companiesByQuestionnaire.get(q.id) || []);
+      const courseCounts = Array.from((courseCountsByQuestionnaire.get(q.id) || new Map<string, number>()).entries())
+        .sort(([leftName], [rightName]) => leftName.localeCompare(rightName, 'ru-RU'))
+        .map(([courseName, count]) => ({ courseName, count }));
 
       return {
         questionnaire: { ...q, status },
-        company: resolveCompanyRecord(companiesByQuestionnaire.get(q.id) || []),
+        company,
         participantCount: participantCountByQuestionnaire.get(q.id) || 0,
         requestCount: requestCountByQuestionnaire.get(q.id) || 0,
+        courseCounts,
+        hasPaymentOrder: hasPaymentOrderFile(company),
         totalAmount: totalAmountByQuestionnaire.get(q.id) || 0,
         creatorProfile: q.created_by ? creatorByUserId.get(q.created_by) || null : null,
         deletedByProfile: q.deleted_by ? creatorByUserId.get(q.deleted_by) || null : null,
@@ -316,7 +358,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [companySearch, creatorFilter, pageSize, regionFilter, requestTypeFilter, statusFilter, trashMode]);
+  }, [
+    companySearch,
+    createdFromFilter,
+    createdToFilter,
+    creatorFilter,
+    generalContractorFilter,
+    objectSearch,
+    pageSize,
+    paymentOrderFilter,
+    regionFilter,
+    requestTypeFilter,
+    statusFilter,
+    trashMode,
+  ]);
 
   useEffect(() => {
     if (!isAdmin && trashMode) {
@@ -380,8 +435,11 @@ export default function DashboardPage() {
   }, [regionFilter, regionFilterOptions]);
 
   const normalizedCompanySearch = companySearch.trim().toLowerCase();
+  const normalizedObjectSearch = objectSearch.trim().toLowerCase();
+  const createdFromTime = createdFromFilter ? new Date(`${createdFromFilter}T00:00:00`).getTime() : NaN;
+  const createdToTime = createdToFilter ? new Date(`${createdToFilter}T23:59:59`).getTime() : NaN;
   const filteredRows = useMemo(
-    () => rows.filter(({ questionnaire, company }) => {
+    () => rows.filter(({ questionnaire, company, hasPaymentOrder }) => {
       if (creatorFilter === 'mine') {
         if (questionnaire.created_by !== currentUserId) {
           return false;
@@ -405,6 +463,31 @@ export default function DashboardPage() {
         return false;
       }
 
+      const createdAtTime = new Date(questionnaire.created_at).getTime();
+      if (Number.isFinite(createdFromTime) && createdAtTime < createdFromTime) {
+        return false;
+      }
+
+      if (Number.isFinite(createdToTime) && createdAtTime > createdToTime) {
+        return false;
+      }
+
+      if (paymentOrderFilter === 'uploaded' && !hasPaymentOrder) {
+        return false;
+      }
+
+      if (paymentOrderFilter === 'missing' && hasPaymentOrder) {
+        return false;
+      }
+
+      if (generalContractorFilter === 'yes' && !questionnaire.is_general_contractor) {
+        return false;
+      }
+
+      if (generalContractorFilter === 'no' && questionnaire.is_general_contractor) {
+        return false;
+      }
+
       if (normalizedCompanySearch) {
         const companyName = String(company?.name || '').trim().toLowerCase();
         if (!companyName.includes(normalizedCompanySearch)) {
@@ -412,9 +495,29 @@ export default function DashboardPage() {
         }
       }
 
+      if (normalizedObjectSearch) {
+        const objectName = String(questionnaire.object_name || '').trim().toLowerCase();
+        if (!objectName.includes(normalizedObjectSearch)) {
+          return false;
+        }
+      }
+
       return true;
     }),
-    [creatorFilter, currentUserId, normalizedCompanySearch, regionFilter, requestTypeFilter, rows, statusFilter],
+    [
+      createdFromTime,
+      createdToTime,
+      creatorFilter,
+      currentUserId,
+      generalContractorFilter,
+      normalizedCompanySearch,
+      normalizedObjectSearch,
+      paymentOrderFilter,
+      regionFilter,
+      requestTypeFilter,
+      rows,
+      statusFilter,
+    ],
   );
 
   useEffect(() => {
@@ -504,7 +607,29 @@ export default function DashboardPage() {
     return `${value.toLocaleString('ru-RU')} ₸`;
   }
 
-  const hasActiveFilters = creatorFilter !== 'all' || statusFilter !== 'all' || requestTypeFilter !== 'all' || regionFilter !== 'all' || companySearch.trim() !== '';
+  const hasActiveFilters =
+    creatorFilter !== 'all' ||
+    statusFilter !== 'all' ||
+    requestTypeFilter !== 'all' ||
+    regionFilter !== 'all' ||
+    companySearch.trim() !== '' ||
+    createdFromFilter !== '' ||
+    createdToFilter !== '' ||
+    paymentOrderFilter !== 'all' ||
+    generalContractorFilter !== 'all' ||
+    objectSearch.trim() !== '';
+  const filteredTotalAmount = useMemo(
+    () => filteredRows.reduce((sum, row) => sum + row.totalAmount, 0),
+    [filteredRows],
+  );
+  const filteredParticipantCount = useMemo(
+    () => filteredRows.reduce((sum, row) => sum + row.participantCount, 0),
+    [filteredRows],
+  );
+  const filteredRequestCount = useMemo(
+    () => filteredRows.reduce((sum, row) => sum + row.requestCount, 0),
+    [filteredRows],
+  );
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const pagedRows = useMemo(
     () => filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
@@ -519,6 +644,11 @@ export default function DashboardPage() {
     setRequestTypeFilter('all');
     setRegionFilter('all');
     setCompanySearch('');
+    setCreatedFromFilter('');
+    setCreatedToFilter('');
+    setPaymentOrderFilter('all');
+    setGeneralContractorFilter('all');
+    setObjectSearch('');
   }
 
   function renderPaginationControls(borderClassName: string) {
@@ -528,7 +658,8 @@ export default function DashboardPage() {
           {hasActiveFilters && (
             <div className="mb-1 text-xs text-blue-600">После фильтрации: {filteredRows.length}</div>
           )}
-          Показано {paginationStart}-{paginationEnd} из {rows.length}
+          Показано {paginationStart}-{paginationEnd} из {filteredRows.length}
+          {hasActiveFilters ? <span className="ml-1 text-gray-400">(всего {rows.length})</span> : null}
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <label className="flex items-center gap-2 text-sm text-gray-500">
@@ -577,6 +708,8 @@ export default function DashboardPage() {
     region_name: string;
     expires_at: string | null;
     payment_order_optional: boolean;
+    is_general_contractor: boolean;
+    object_name: string;
   }) {
     const isDepartmentHeadScoped = currentProfileRole === 'department_head' && Boolean(currentProfileRegionId);
     const createPayload = isDepartmentHeadScoped
@@ -595,6 +728,8 @@ export default function DashboardPage() {
       region_name: createPayload.region_name,
       expires_at: createPayload.expires_at,
       payment_order_optional: createPayload.payment_order_optional,
+      is_general_contractor: createPayload.is_general_contractor,
+      object_name: createPayload.object_name,
       is_active: true,
       status: 'active',
       created_by: user?.id,
@@ -664,7 +799,7 @@ export default function DashboardPage() {
           <>
           <div className="border-b border-gray-100 px-5 py-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Показывать</span>
                   <select
@@ -736,32 +871,127 @@ export default function DashboardPage() {
                     ))}
                   </select>
                 </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Создана с</span>
+                  <input
+                    type="date"
+                    value={createdFromFilter}
+                    onChange={(event) => setCreatedFromFilter(event.target.value)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Создана по</span>
+                  <input
+                    type="date"
+                    value={createdToFilter}
+                    onChange={(event) => setCreatedToFilter(event.target.value)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Платежка</span>
+                  <select
+                    value={paymentOrderFilter}
+                    onChange={(event) => setPaymentOrderFilter(event.target.value as PaymentOrderFilterValue)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все</option>
+                    <option value="uploaded">Загружена</option>
+                    <option value="missing">Не загружена</option>
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Генподряд</span>
+                  <select
+                    value={generalContractorFilter}
+                    onChange={(event) => setGeneralContractorFilter(event.target.value as GeneralContractorFilterValue)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все</option>
+                    <option value="yes">Да</option>
+                    <option value="no">Нет</option>
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Объект</span>
+                  <input
+                    value={objectSearch}
+                    onChange={(event) => setObjectSearch(event.target.value)}
+                    placeholder="Поиск по объекту"
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </label>
               </div>
 
-              {hasActiveFilters && (
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition-colors hover:border-blue-200 hover:text-blue-600"
-                >
-                  Сбросить фильтры
-                </button>
-              )}
+              <div className="flex flex-col gap-2 sm:flex-row xl:flex-col xl:items-stretch">
+                <label className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={showCourseDetails}
+                    onChange={(event) => setShowCourseDetails(event.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Детали курсов
+                </label>
+
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition-colors hover:border-blue-200 hover:text-blue-600"
+                  >
+                    Сбросить фильтры
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                <div className="text-xs text-gray-500">Найдено заявок</div>
+                <div className="text-sm font-semibold text-gray-900">{filteredRows.length} из {rows.length}</div>
+              </div>
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                <div className="text-xs text-gray-500">Сотрудников / заявок на курсы</div>
+                <div className="text-sm font-semibold text-gray-900">{filteredParticipantCount} / {filteredRequestCount}</div>
+              </div>
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                <div className="text-xs text-gray-500">Сумма по фильтру</div>
+                <div className="text-sm font-semibold text-gray-900">{filteredTotalAmount > 0 ? formatMoney(filteredTotalAmount) : '—'}</div>
+              </div>
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                <div className="text-xs text-gray-500">Период создания</div>
+                <div className="text-sm font-semibold text-gray-900">
+                  {createdFromFilter || createdToFilter ? `${createdFromFilter || '...'} — ${createdToFilter || '...'}` : 'Все даты'}
+                </div>
+              </div>
             </div>
           </div>
           {renderPaginationControls('border-b border-gray-100')}
           <div className="overflow-x-auto overscroll-x-contain">
-          <table className="min-w-[1320px] w-full text-xs sm:text-sm">
+          <table className="min-w-[1840px] w-full text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60">
                 <th className="sticky left-0 z-20 w-16 bg-gray-50 px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">№</th>
                 <th className="min-w-[260px] px-4 py-3.5 text-left text-[10px] font-medium uppercase tracking-wider text-gray-600 sm:text-xs">Заявка / Название компании</th>
+                <th className="min-w-[180px] px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Объект</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Регион / отдел</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Тип</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Генподряд</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">{trashMode ? 'Корзина' : 'Статус'}</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Сотрудников</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Заявок</th>
+                {showCourseDetails && (
+                  <th className="min-w-[240px] px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Детали курсов</th>
+                )}
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Общая сумма</th>
+                <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Платежка</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Создана</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Срок</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">{trashMode ? 'Удалил' : 'Ответственный'}</th>
@@ -771,11 +1001,11 @@ export default function DashboardPage() {
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center text-sm text-gray-500">
+                  <td colSpan={showCourseDetails ? 16 : 15} className="px-4 py-10 text-center text-sm text-gray-500">
                     По выбранным фильтрам анкеты не найдены.
                   </td>
                 </tr>
-              ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId }, index) => {
+              ) : pagedRows.map(({ questionnaire: q, company, participantCount, requestCount, courseCounts, hasPaymentOrder, totalAmount, creatorProfile, deletedByProfile, bitrixDealId }, index) => {
                 const cfg = getDashboardStatusConfig(q);
                 const slaDueAtMs = q.sla_due_at ? new Date(q.sla_due_at).getTime() : NaN;
                 const isWorkflowOverdue = Boolean(
@@ -796,6 +1026,20 @@ export default function DashboardPage() {
                 const requestType = getQuestionnaireRequestType(q);
                 const requestTypeLabel = getQuestionnaireRequestTypeLabel(q);
                 const fallbackSubtitle = String(q.title || '').trim();
+                const objectName = String(q.object_name || '').trim();
+                const isGeneralContractor = Boolean(q.is_general_contractor);
+                const currentRow = {
+                  questionnaire: q,
+                  company,
+                  participantCount,
+                  requestCount,
+                  courseCounts,
+                  hasPaymentOrder,
+                  totalAmount,
+                  creatorProfile,
+                  deletedByProfile,
+                  bitrixDealId,
+                };
                 return (
                   <tr
                     key={q.id}
@@ -816,6 +1060,9 @@ export default function DashboardPage() {
                       ) : null}
                     </td>
                     <td className="px-4 py-4 text-gray-600">
+                      {objectName ? <span className="font-medium text-gray-700">{objectName}</span> : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-4 py-4 text-gray-600">
                       {regionLabel ? (
                         <span className="inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                           {regionLabel}
@@ -831,6 +1078,15 @@ export default function DashboardPage() {
                           : 'border-slate-200 bg-slate-50 text-slate-700'
                       }`}>
                         {requestTypeLabel}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
+                        isGeneralContractor
+                          ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                          : 'border-gray-200 bg-gray-50 text-gray-500'
+                      }`}>
+                        {isGeneralContractor ? 'Да' : 'Нет'}
                       </span>
                     </td>
                     <td className="px-4 py-4">
@@ -859,12 +1115,39 @@ export default function DashboardPage() {
                     </td>
                     <td className="px-4 py-4 text-gray-600">{participantCount}</td>
                     <td className="px-4 py-4 text-gray-600">{requestCount}</td>
+                    {showCourseDetails && (
+                      <td className="px-4 py-4">
+                        <div className="text-xs text-gray-500">
+                          {participantCount} сотрудников, {courseCounts.length} курсов, {requestCount} заявок на курсы
+                        </div>
+                        {courseCounts.length > 0 ? (
+                          <div className="mt-2 flex flex-col gap-1">
+                            {courseCounts.map((course) => (
+                              <span key={course.courseName} className="text-xs text-gray-700">
+                                <span className="font-medium">{course.courseName}:</span> {course.count}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-xs text-gray-400">—</div>
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-4">
                       {totalAmount > 0 ? (
                         <span className="font-medium text-gray-900 whitespace-nowrap">{formatMoney(totalAmount)}</span>
                       ) : (
                         <span className="text-gray-400">—</span>
                       )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
+                        hasPaymentOrder
+                          ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                          : 'border-gray-200 bg-gray-50 text-gray-500'
+                      }`}>
+                        {hasPaymentOrder ? 'Есть' : 'Нет'}
+                      </span>
                     </td>
                     <td className="px-4 py-4 text-gray-500">
                       <div>{formatDate(q.created_at)}</div>
@@ -889,7 +1172,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-1 justify-end">
                         {trashMode ? (
                           <button
-                            onClick={() => setRestoreTarget({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId })}
+                            onClick={() => setRestoreTarget(currentRow)}
                             title="Восстановить"
                             className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-all"
                           >
@@ -912,7 +1195,7 @@ export default function DashboardPage() {
                               {q.is_active ? <PowerOff size={15} /> : <Power size={15} />}
                             </button>
                             <button
-                              onClick={() => setDeleteTarget({ questionnaire: q, company, participantCount, requestCount, totalAmount, creatorProfile, deletedByProfile, bitrixDealId })}
+                              onClick={() => setDeleteTarget(currentRow)}
                               title="Удалить"
                               className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                             >
