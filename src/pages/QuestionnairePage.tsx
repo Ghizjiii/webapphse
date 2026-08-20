@@ -656,6 +656,9 @@ export default function QuestionnairePage() {
   const requestLabel = getQuestionnaireRequestLabel(questionnaire);
   const regionLabel = getQuestionnaireRegionLabel(questionnaire);
   const requestTypeLabel = getQuestionnaireRequestTypeLabel(questionnaire);
+  const objectName = String(questionnaire.object_name || '').trim();
+  const isGeneralContractor = Boolean(questionnaire.is_general_contractor);
+  const generalContractorLabel = isGeneralContractor ? 'Да' : 'Нет';
   const paymentSource = companyEditing ? companyDraft : company;
   const paymentOrderUrl = String(paymentSource?.payment_order_url || '').trim();
   const paymentOrderName = String(paymentSource?.payment_order_name || '').trim();
@@ -905,12 +908,26 @@ export default function QuestionnairePage() {
                   <Clock size={12} />
                   {questionnaire.expires_at ? `Срок: ${formatDate(questionnaire.expires_at)}` : 'Без срока'}
                 </span>
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  isGeneralContractor
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                }`}>
+                  Генподряд: {generalContractorLabel}
+                </span>
+                {objectName ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
+                    Объект: {objectName}
+                  </span>
+                ) : null}
               </div>
 
-              <div className="grid max-w-5xl gap-2 sm:grid-cols-2 xl:grid-cols-6">
+              <div className="grid max-w-6xl gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
                 <SummaryBadge label="Номер заявки" value={questionnaire.request_number || '—'} />
                 <SummaryBadge label="Регион / отдел" value={regionLabel || '—'} />
                 <SummaryBadge label="Тип заявки" value={requestTypeLabel} />
+                <SummaryBadge label="Объект" value={objectName || '—'} />
+                <SummaryBadge label="Генподряд" value={generalContractorLabel} />
                 <SummaryBadge label="Сотрудники" value={participants.length} />
                 <SummaryBadge label="Курсы" value={uniqueCoursesCount} />
                 <SummaryBadge label="Заявки" value={totalCourseRequests} />
