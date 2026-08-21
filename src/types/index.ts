@@ -70,6 +70,17 @@ export interface QuestionnaireEvent {
   created_at: string;
 }
 
+export interface CommentAttachment {
+  id?: string;
+  name: string;
+  url: string;
+  storage_bucket?: string;
+  storage_path?: string;
+  size?: number;
+  content_type?: string;
+  uploaded_at?: string;
+}
+
 export interface Company {
   id: string;
   questionnaire_id: string;
@@ -81,6 +92,7 @@ export interface Company {
   address: string;
   city: string;
   comments?: string;
+  comment_attachments?: CommentAttachment[];
   bitrix_company_id: string;
   source_ref_company_id?: string | null;
   has_contract?: boolean;

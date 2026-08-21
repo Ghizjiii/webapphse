@@ -6,6 +6,8 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const paymentOrdersBucket = Deno.env.get("PAYMENT_ORDERS_BUCKET") || "payment-orders";
 const participantPhotosBucket = Deno.env.get("PARTICIPANT_PHOTOS_BUCKET") || "participant-photos";
+const commentAttachmentsBucket = Deno.env.get("COMMENT_ATTACHMENTS_BUCKET") || "comment-attachments";
+const commentAttachmentMaxBytes = 5 * 1024 * 1024;
 const paymentOrderAllowedMimeTypes = [
   "application/pdf",
   "image/jpeg",
@@ -69,6 +71,24 @@ function resolvePaymentOrderContentType(contentType: string, fileName: string): 
   if (name.endsWith(".webp")) return "image/webp";
   if (name.endsWith(".bmp")) return "image/bmp";
   if (name.endsWith(".tif") || name.endsWith(".tiff")) return "image/tiff";
+  return "application/octet-stream";
+}
+
+function resolveGenericContentType(contentType: string, fileName: string): string {
+  const ct = String(contentType || "").toLowerCase();
+  const name = String(fileName || "").toLowerCase();
+  if (ct) return ct;
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".txt")) return "text/plain";
+  if (name.endsWith(".doc")) return "application/msword";
+  if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (name.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   return "application/octet-stream";
 }
 
@@ -139,6 +159,7 @@ Deno.serve(async (req: Request) => {
     const contentType = String(file.type || "").toLowerCase();
     const isPdf = contentType === "application/pdf" || fileName.endsWith(".pdf");
     const isPaymentOrderUpload = mode === "payment_order" || folder === "hse-payment-orders";
+    const isCommentAttachmentUpload = mode === "comment_attachment" || folder === "hse-comment-attachments";
 
     if (isPaymentOrderUpload) {
       if (!supabaseUrl || !supabaseServiceRoleKey) {
@@ -214,6 +235,71 @@ Deno.serve(async (req: Request) => {
         secure_url: signed?.signedUrl || "",
         storage_bucket: paymentOrdersBucket,
         storage_path: objectPath,
+      });
+    }
+
+    if (isCommentAttachmentUpload) {
+      if (!supabaseUrl || !supabaseServiceRoleKey) {
+        return jsonResponse(req, 500, { error: "Supabase env vars are not configured for comment attachments" });
+      }
+
+      if (file.size > commentAttachmentMaxBytes) {
+        return jsonResponse(req, 400, { error: "Размер одного вложения не должен превышать 5 МБ" });
+      }
+
+      const uploadContentType = resolveGenericContentType(contentType, fileName);
+      const objectFolder = safePathPart(folder, "hse-comment-attachments");
+      const objectName = safeFileName(String(file.name || ""), `comment-attachment-${Date.now()}`);
+      const objectPath = `${objectFolder}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}_${objectName}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+
+      const sb = createClient(supabaseUrl, supabaseServiceRoleKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      let { error: uploadError } = await sb.storage.from(commentAttachmentsBucket).upload(objectPath, bytes, {
+        contentType: uploadContentType,
+        upsert: false,
+      });
+
+      if (uploadError && isBucketNotFoundError(uploadError.message || "")) {
+        const { error: createBucketError } = await sb.storage.createBucket(commentAttachmentsBucket, {
+          public: false,
+          fileSizeLimit: "5MB",
+        });
+
+        if (!createBucketError) {
+          const retry = await sb.storage.from(commentAttachmentsBucket).upload(objectPath, bytes, {
+            contentType: uploadContentType,
+            upsert: false,
+          });
+          uploadError = retry.error;
+        }
+      }
+
+      if (uploadError) {
+        return jsonResponse(req, 500, {
+          error: uploadError.message || "Storage upload failed",
+          bucket: commentAttachmentsBucket,
+        });
+      }
+
+      const { data: signed, error: signedError } = await sb.storage
+        .from(commentAttachmentsBucket)
+        .createSignedUrl(objectPath, 60 * 60 * 24 * 14);
+
+      if (signedError) {
+        return jsonResponse(req, 500, { error: signedError.message || "Failed to create signed URL" });
+      }
+
+      return jsonResponse(req, 200, {
+        secure_url: signed?.signedUrl || "",
+        storage_bucket: commentAttachmentsBucket,
+        storage_path: objectPath,
+        name: String(file.name || ""),
+        size: file.size,
+        content_type: uploadContentType,
+        uploaded_at: new Date().toISOString(),
       });
     }
 

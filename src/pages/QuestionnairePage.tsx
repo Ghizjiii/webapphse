@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { uploadPaymentOrder } from '../lib/cloudinary';
-import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock, Pencil, Check, X, Link2 } from 'lucide-react';
+import { RefreshCw, ExternalLink, Building2, Users, FileText, Copy, Power, PowerOff, Clock, Pencil, Check, X, Link2, Paperclip } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import ParticipantsTable from '../components/ParticipantsTable';
 import CertificatesTable from '../components/CertificatesTable';
@@ -33,13 +33,41 @@ import {
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
-import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol, QuestionnaireEvent } from '../types';
+import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol, QuestionnaireEvent, CommentAttachment } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
 
 type Tab = 'participants' | 'certificates' | 'course_costs' | 'protocols' | 'printed_documents';
 
 function getRecordValue(record: unknown, key: string): string {
   return String((record as Record<string, unknown>)[key] ?? '');
+}
+
+function normalizeCommentAttachments(value: unknown): CommentAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map<CommentAttachment | null>((item, index) => {
+      const record = item as Record<string, unknown>;
+      const url = String(record.url || record.secure_url || '').trim();
+      const name = String(record.name || '').trim();
+      if (!url || !name) return null;
+      return {
+        id: String(record.id || record.storage_path || `${index}-${name}`),
+        name,
+        url,
+        storage_bucket: String(record.storage_bucket || ''),
+        storage_path: String(record.storage_path || ''),
+        size: typeof record.size === 'number' ? record.size : Number(record.size || 0),
+        content_type: String(record.content_type || ''),
+        uploaded_at: String(record.uploaded_at || ''),
+      };
+    })
+    .filter((item): item is CommentAttachment => Boolean(item));
+}
+
+function formatAttachmentSize(size: number | undefined): string {
+  if (!size || !Number.isFinite(size)) return '';
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} КБ`;
+  return `${(size / 1024 / 1024).toFixed(1).replace('.', ',')} МБ`;
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -150,6 +178,34 @@ function CompactField({
       <div className="text-[11px] leading-4 text-gray-500">{label}</div>
       <div className={`mt-1.5 text-sm font-medium leading-5 text-gray-900 ${valueClassName}`.trim()}>
         {children}
+      </div>
+    </div>
+  );
+}
+
+function CommentAttachmentList({ attachments }: { attachments: CommentAttachment[] }) {
+  if (attachments.length === 0) return null;
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-600">
+        <Paperclip size={13} />
+        Вложения
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {attachments.map(attachment => (
+          <a
+            key={attachment.id || attachment.storage_path || attachment.name}
+            href={attachment.url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-blue-700 hover:border-blue-200 hover:bg-blue-50"
+            title={attachment.name}
+          >
+            <span className="min-w-0 truncate font-medium">{attachment.name}</span>
+            <span className="shrink-0 text-[11px] text-gray-400">{formatAttachmentSize(attachment.size)}</span>
+          </a>
+        ))}
       </div>
     </div>
   );
@@ -660,6 +716,7 @@ export default function QuestionnairePage() {
   const isGeneralContractor = Boolean(questionnaire.is_general_contractor);
   const generalContractorLabel = isGeneralContractor ? 'Да' : 'Нет';
   const paymentSource = companyEditing ? companyDraft : company;
+  const companyCommentAttachments = normalizeCommentAttachments(paymentSource?.comment_attachments);
   const paymentOrderUrl = String(paymentSource?.payment_order_url || '').trim();
   const paymentOrderName = String(paymentSource?.payment_order_name || '').trim();
   const paymentOrderNumber = String(paymentSource?.payment_order_number || '').trim();
@@ -830,16 +887,24 @@ export default function QuestionnairePage() {
           ))}
           <CompactField label="Комментарии" className="sm:col-span-2" valueClassName="whitespace-pre-wrap break-words">
             {companyEditing ? (
-              <textarea
-                value={getRecordValue(companyDraft, 'comments')}
-                onChange={e => setCompanyDraft(prev => ({ ...prev, comments: e.target.value }))}
-                rows={3}
-                className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
+              <div>
+                <textarea
+                  value={getRecordValue(companyDraft, 'comments')}
+                  onChange={e => setCompanyDraft(prev => ({ ...prev, comments: e.target.value }))}
+                  rows={3}
+                  className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+                <CommentAttachmentList attachments={companyCommentAttachments} />
+              </div>
             ) : (
               getRecordValue(company, 'comments') || '—'
             )}
           </CompactField>
+          {!companyEditing && companyCommentAttachments.length > 0 && (
+            <CompactField label="Вложения к комментарию" className="sm:col-span-2" valueClassName="break-words">
+              <CommentAttachmentList attachments={companyCommentAttachments} />
+            </CompactField>
+          )}
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50/70 px-4 py-5 text-sm text-gray-500">

@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import { Building2, Loader2, Search } from 'lucide-react';
-import type { RefCompanyDirectory } from '../../types';
+import { Building2, Loader2, Paperclip, Search, X } from 'lucide-react';
+import type { CommentAttachment, RefCompanyDirectory } from '../../types';
 import type { PaymentOrderStage, ValidationErrors } from './model';
 
 interface CompanySectionProps {
@@ -11,6 +11,7 @@ interface CompanySectionProps {
   companyBin: string;
   companyCity: string;
   companyComments: string;
+  commentAttachments: CommentAttachment[];
   directoryMatch: RefCompanyDirectory | null;
   lookupLoading: boolean;
   lookupTouched: boolean;
@@ -24,6 +25,7 @@ interface CompanySectionProps {
   paymentBeneficiaryHint: string;
   uploadingPaymentOrder: boolean;
   paymentOrderStage: PaymentOrderStage;
+  uploadingCommentAttachments: boolean;
   errors: ValidationErrors;
   lockCompanyFields: boolean;
   canConfirmNoContract: boolean;
@@ -31,12 +33,15 @@ interface CompanySectionProps {
   paymentStagePercent: number;
   paymentStageLabel: string;
   paymentOrderInputRef: RefObject<HTMLInputElement | null>;
+  commentAttachmentInputRef: RefObject<HTMLInputElement | null>;
   onCompanyNameChange: (value: string) => void;
   onCompanyPhoneChange: (value: string) => void;
   onCompanyEmailChange: (value: string) => void;
   onCompanyBinChange: (value: string) => void;
   onCompanyCityChange: (value: string) => void;
   onCompanyCommentsChange: (value: string) => void;
+  onCommentAttachmentPick: (files: FileList | File[]) => void;
+  onCommentAttachmentRemove: (attachmentId: string) => void;
   onLookupCompany: () => void;
   onEnableCompanyCreateMode: () => void;
   onNoContractConfirmedChange: (value: boolean) => void;
@@ -44,6 +49,12 @@ interface CompanySectionProps {
   onPaymentOrderNumberChange: (value: string) => void;
   onPaymentOrderDateChange: (value: string) => void;
   onPaymentOrderAmountChange: (value: string) => void;
+}
+
+function formatAttachmentSize(size: number | undefined): string {
+  if (!size || !Number.isFinite(size)) return '';
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} КБ`;
+  return `${(size / 1024 / 1024).toFixed(1).replace('.', ',')} МБ`;
 }
 
 export function CompanySection(props: CompanySectionProps) {
@@ -55,6 +66,7 @@ export function CompanySection(props: CompanySectionProps) {
     companyBin,
     companyCity,
     companyComments,
+    commentAttachments,
     directoryMatch,
     lookupLoading,
     lookupTouched,
@@ -68,6 +80,7 @@ export function CompanySection(props: CompanySectionProps) {
     paymentBeneficiaryHint,
     uploadingPaymentOrder,
     paymentOrderStage,
+    uploadingCommentAttachments,
     errors,
     lockCompanyFields,
     canConfirmNoContract,
@@ -75,12 +88,15 @@ export function CompanySection(props: CompanySectionProps) {
     paymentStagePercent,
     paymentStageLabel,
     paymentOrderInputRef,
+    commentAttachmentInputRef,
     onCompanyNameChange,
     onCompanyPhoneChange,
     onCompanyEmailChange,
     onCompanyBinChange,
     onCompanyCityChange,
     onCompanyCommentsChange,
+    onCommentAttachmentPick,
+    onCommentAttachmentRemove,
     onLookupCompany,
     onEnableCompanyCreateMode,
     onNoContractConfirmedChange,
@@ -324,6 +340,57 @@ export function CompanySection(props: CompanySectionProps) {
             placeholder="Дополнительная информация для координатора"
             className="w-full resize-y rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
+          <div className="mt-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3">
+            <input
+              ref={commentAttachmentInputRef as RefObject<HTMLInputElement>}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={event => {
+                const files = event.target.files;
+                if (files?.length) onCommentAttachmentPick(files);
+              }}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-gray-500">Можно прикрепить несколько файлов, до 5 МБ каждый.</div>
+              <button
+                type="button"
+                onClick={() => commentAttachmentInputRef.current?.click()}
+                disabled={uploadingCommentAttachments}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {uploadingCommentAttachments ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+                {uploadingCommentAttachments ? 'Загрузка...' : 'Прикрепить файлы'}
+              </button>
+            </div>
+            {commentAttachments.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {commentAttachments.map(attachment => (
+                  <div key={attachment.id || attachment.storage_path || attachment.name} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
+                    <a
+                      href={attachment.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1 truncate text-xs font-medium text-blue-700 hover:underline"
+                      title={attachment.name}
+                    >
+                      {attachment.name}
+                    </a>
+                    <span className="shrink-0 text-[11px] text-gray-400">{formatAttachmentSize(attachment.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => onCommentAttachmentRemove(String(attachment.id || ''))}
+                      className="shrink-0 rounded-md p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                      aria-label="Удалить вложение"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {errors.comment_attachments && <p className="mt-2 text-xs text-red-500">{errors.comment_attachments}</p>}
+          </div>
         </div>
       </div>
     </div>

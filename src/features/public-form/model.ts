@@ -27,6 +27,7 @@ export interface ValidationErrors {
   payment_order_number?: string;
   payment_order_date?: string;
   payment_order_amount?: string;
+  comment_attachments?: string;
   participants?: string;
 }
 

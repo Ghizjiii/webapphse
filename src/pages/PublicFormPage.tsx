@@ -84,6 +84,7 @@ export default function PublicFormPage() {
             companyBin={controller.companyBin}
             companyCity={controller.companyCity}
             companyComments={controller.companyComments}
+            commentAttachments={controller.commentAttachments}
             directoryMatch={controller.directoryMatch}
             lookupLoading={controller.lookupLoading}
             lookupTouched={controller.lookupTouched}
@@ -96,6 +97,7 @@ export default function PublicFormPage() {
             paymentAutofillHint={controller.paymentAutofillHint}
             paymentBeneficiaryHint={controller.paymentBeneficiaryHint}
             uploadingPaymentOrder={controller.uploadingPaymentOrder}
+            uploadingCommentAttachments={controller.uploadingCommentAttachments}
             paymentOrderStage={controller.paymentOrderStage}
             errors={controller.errors}
             lockCompanyFields={controller.lockCompanyFields}
@@ -104,12 +106,17 @@ export default function PublicFormPage() {
             paymentStagePercent={controller.paymentStagePercent}
             paymentStageLabel={controller.paymentStageLabel}
             paymentOrderInputRef={controller.paymentOrderInputRef}
+            commentAttachmentInputRef={controller.commentAttachmentInputRef}
             onCompanyNameChange={controller.setCompanyName}
             onCompanyPhoneChange={controller.setCompanyPhone}
             onCompanyEmailChange={controller.setCompanyEmail}
             onCompanyBinChange={controller.handleCompanyBinChange}
             onCompanyCityChange={controller.setCompanyCity}
             onCompanyCommentsChange={controller.setCompanyComments}
+            onCommentAttachmentPick={files => {
+              void controller.handleCommentAttachmentSelect(files);
+            }}
+            onCommentAttachmentRemove={controller.removeCommentAttachment}
             onLookupCompany={controller.handleLookupCompany}
             onEnableCompanyCreateMode={controller.enableCompanyCreateMode}
             onNoContractConfirmedChange={controller.setNoContractConfirmed}

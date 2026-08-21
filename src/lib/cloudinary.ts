@@ -19,6 +19,16 @@ export interface UploadedPaymentOrder {
   storage_path?: string;
 }
 
+export interface UploadedCommentAttachment {
+  secure_url: string;
+  storage_bucket?: string;
+  storage_path?: string;
+  name?: string;
+  size?: number;
+  content_type?: string;
+  uploaded_at?: string;
+}
+
 const PARTICIPANT_PHOTO_WIDTH = 600;
 const PARTICIPANT_PHOTO_HEIGHT = 800;
 const PARTICIPANT_PHOTO_TYPE = 'image/jpeg';
@@ -153,5 +163,36 @@ export async function uploadPaymentOrder(file: File): Promise<UploadedPaymentOrd
     secure_url: String(data.secure_url || ''),
     storage_bucket: String(data.storage_bucket || ''),
     storage_path: String(data.storage_path || ''),
+  };
+}
+
+export async function uploadCommentAttachment(file: File): Promise<UploadedCommentAttachment> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('folder', 'hse-comment-attachments');
+  formData.append('mode', 'comment_attachment');
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/upload-photo`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: formData,
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || data.error) {
+    throw new Error(data.error || 'Не удалось загрузить вложение');
+  }
+
+  return {
+    secure_url: String(data.secure_url || ''),
+    storage_bucket: String(data.storage_bucket || ''),
+    storage_path: String(data.storage_path || ''),
+    name: String(data.name || file.name || ''),
+    size: Number(data.size || file.size || 0),
+    content_type: String(data.content_type || file.type || ''),
+    uploaded_at: String(data.uploaded_at || ''),
   };
 }

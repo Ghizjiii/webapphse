@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import { prepareParticipantPhotoFile, uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
+import { prepareParticipantPhotoFile, uploadCommentAttachment, uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
 import { extractPaymentOrderFields } from '../../lib/paymentOcr';
 import { fetchCoursesList } from '../../lib/bitrix';
 import { buildCourseOptions, normalizeCourseOptionValue, resolveCourseOption } from '../../lib/courseOptions';
@@ -15,7 +15,7 @@ import {
 import { logger } from '../../lib/logger';
 import { getParticipantDisplayName } from '../../lib/participantName';
 import { parseParticipantImportFile } from '../../lib/participantImport';
-import type { Company, Participant, QuestionnaireRequestType, RefCompanyDirectory, RefCoursePrice } from '../../types';
+import type { CommentAttachment, Company, Participant, QuestionnaireRequestType, RefCompanyDirectory, RefCoursePrice } from '../../types';
 import {
  applyDirectoryMatchToCompany,
  createLocalParticipant,
@@ -36,16 +36,47 @@ import {
  type ValidationErrors,
 } from './model';
 
-function isMissingCompanyCommentsColumnError(error: unknown): boolean {
+const COMMENT_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+
+function isMissingCompanyColumnError(error: unknown, column: string): boolean {
  const err = error as { code?: string; message?: string };
+ const message = String(err?.message || '').toLowerCase();
  return String(err?.code || '') === 'PGRST204' &&
- String(err?.message || '').toLowerCase().includes("'comments' column");
+ (message.includes(`'${column}' column`) || message.includes(column.toLowerCase()));
 }
 
-function omitCompanyComments<T extends Record<string, unknown>>(payload: T): Omit<T, 'comments'> {
+function omitCompanyColumn<T extends Record<string, unknown>>(payload: T, column: string): T {
  const next = { ...payload };
- delete next.comments;
- return next;
+ delete next[column];
+ return next as T;
+}
+
+function normalizeCommentAttachments(value: unknown): CommentAttachment[] {
+ if (!Array.isArray(value)) return [];
+ return value
+ .map<CommentAttachment | null>((item, index) => {
+ const record = item as Record<string, unknown>;
+ const url = String(record.url || record.secure_url || '').trim();
+ const name = String(record.name || '').trim();
+ if (!url || !name) return null;
+ return {
+ id: String(record.id || record.storage_path || `${index}-${name}`),
+ name,
+ url,
+ storage_bucket: String(record.storage_bucket || ''),
+ storage_path: String(record.storage_path || ''),
+ size: typeof record.size === 'number' ? record.size : Number(record.size || 0),
+ content_type: String(record.content_type || ''),
+ uploaded_at: String(record.uploaded_at || ''),
+ };
+ })
+ .filter((item): item is CommentAttachment => Boolean(item));
+}
+
+function createCommentAttachmentId(): string {
+ return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+ ? crypto.randomUUID()
+ : Math.random().toString(36).slice(2);
 }
 
 export function usePublicFormController(token: string | undefined) {
@@ -61,6 +92,8 @@ export function usePublicFormController(token: string | undefined) {
  const [companyBin, setCompanyBin] = useState('');
  const [companyCity, setCompanyCity] = useState('');
  const [companyComments, setCompanyComments] = useState('');
+ const [commentAttachments, setCommentAttachments] = useState<CommentAttachment[]>([]);
+ const [uploadingCommentAttachments, setUploadingCommentAttachments] = useState(false);
  const [directoryMatch, setDirectoryMatch] = useState<RefCompanyDirectory | null>(null);
  const [lookupLoading, setLookupLoading] = useState(false);
  const [lookupTouched, setLookupTouched] = useState(false);
@@ -80,6 +113,7 @@ export function usePublicFormController(token: string | undefined) {
  const [paymentOrderDuplicate, setPaymentOrderDuplicate] = useState(false);
  const [paymentBeneficiaryValid, setPaymentBeneficiaryValid] = useState<boolean | null>(null);
  const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
+ const commentAttachmentInputRef = useRef<HTMLInputElement | null>(null);
 
  const [participants, setParticipants] = useState<LocalParticipant[]>([createLocalParticipant()]);
  const [availableCourses, setAvailableCourses] = useState<string[]>([]);
@@ -349,6 +383,7 @@ export function usePublicFormController(token: string | undefined) {
  setCompanyBin(company.bin_iin || '');
  setCompanyCity(company.city || '');
  setCompanyComments(String(company.comments || ''));
+ setCommentAttachments(normalizeCommentAttachments(company.comment_attachments));
  setNoContractConfirmed(Boolean(company.no_contract_confirmed));
  setPaymentOrderUrl(company.payment_order_url || '');
  setPaymentOrderName(company.payment_order_name || '');
@@ -660,6 +695,53 @@ export function usePublicFormController(token: string | undefined) {
  questionnaireId,
  ]);
 
+ const handleCommentAttachmentSelect = useCallback(async (files: FileList | File[]) => {
+ const selectedFiles = Array.from(files);
+ if (selectedFiles.length === 0) return;
+
+ const oversizedFile = selectedFiles.find(file => file.size > COMMENT_ATTACHMENT_MAX_BYTES);
+ if (oversizedFile) {
+ setErrors(prev => ({
+ ...prev,
+ comment_attachments: `Файл "${oversizedFile.name}" больше 5 МБ. Загрузите файл меньшего размера.`,
+ }));
+ if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = '';
+ return;
+ }
+
+ setUploadingCommentAttachments(true);
+ setErrors(prev => ({ ...prev, comment_attachments: undefined }));
+
+ try {
+ const uploadedAttachments = await Promise.all(selectedFiles.map(async file => {
+ const uploaded = await uploadCommentAttachment(file);
+ return {
+ id: createCommentAttachmentId(),
+ name: uploaded.name || file.name,
+ url: uploaded.secure_url,
+ storage_bucket: uploaded.storage_bucket || '',
+ storage_path: uploaded.storage_path || '',
+ size: uploaded.size || file.size,
+ content_type: uploaded.content_type || file.type || '',
+ uploaded_at: uploaded.uploaded_at || new Date().toISOString(),
+ } satisfies CommentAttachment;
+ }));
+
+ setCommentAttachments(current => [...current, ...uploadedAttachments]);
+ } catch (error) {
+ logger.error('PublicFormPage', 'Comment attachment upload failed', error);
+ const message = error instanceof Error ? error.message : 'Не удалось загрузить вложение';
+ setErrors(prev => ({ ...prev, comment_attachments: message }));
+ } finally {
+ setUploadingCommentAttachments(false);
+ if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = '';
+ }
+ }, []);
+
+ const removeCommentAttachment = useCallback((attachmentId: string) => {
+ setCommentAttachments(current => current.filter(attachment => attachment.id !== attachmentId));
+ }, []);
+
  const submitQuestionnaire = useCallback(async () => {
  if (!questionnaireId) return;
 
@@ -695,6 +777,7 @@ export function usePublicFormController(token: string | undefined) {
  bin_iin: companyBin,
  city: companyCity,
  comments: companyComments.trim(),
+ comment_attachments: commentAttachments,
  source_ref_company_id: directoryMatch?.id || null,
  has_contract: Boolean(directoryMatch?.has_contract),
  contract_bitrix_id: directoryMatch?.contract_bitrix_id || '',
@@ -717,40 +800,65 @@ export function usePublicFormController(token: string | undefined) {
  updated_at: new Date().toISOString(),
  };
 
- async function updateCompanyWithCommentsFallback(companyId: string) {
+ async function updateCompanyWithOptionalColumnFallback(companyId: string) {
+ let payload = { ...companyPayload };
+
+ for (let attempt = 0; attempt < 3; attempt += 1) {
  const { data, error } = await supabase
  .from('companies')
- .update(companyPayload)
+ .update(payload)
  .eq('id', companyId)
  .select()
  .maybeSingle();
 
- if (!error || !isMissingCompanyCommentsColumnError(error)) return { data, error };
+ if (!error) return { data, error };
+ if (isMissingCompanyColumnError(error, 'comments') && 'comments' in payload) {
+ payload = omitCompanyColumn(payload, 'comments');
+ continue;
+ }
+ if (isMissingCompanyColumnError(error, 'comment_attachments') && 'comment_attachments' in payload) {
+ payload = omitCompanyColumn(payload, 'comment_attachments');
+ continue;
+ }
+ return { data, error };
+ }
 
  return await supabase
  .from('companies')
- .update(omitCompanyComments(companyPayload))
+ .update(payload)
  .eq('id', companyId)
  .select()
  .maybeSingle();
  }
 
- async function insertCompanyWithCommentsFallback() {
- const payload = {
+ async function insertCompanyWithOptionalColumnFallback() {
+ let payload = {
  questionnaire_id: questionnaireId,
  ...companyPayload,
  };
+
+ for (let attempt = 0; attempt < 3; attempt += 1) {
  const { data, error } = await supabase
  .from('companies')
  .insert(payload)
  .select()
  .maybeSingle();
 
- if (!error || !isMissingCompanyCommentsColumnError(error)) return { data, error };
+ if (!error) return { data, error };
+ if (isMissingCompanyColumnError(error, 'comments') && 'comments' in payload) {
+ payload = omitCompanyColumn(payload, 'comments');
+ continue;
+ }
+ if (isMissingCompanyColumnError(error, 'comment_attachments') && 'comment_attachments' in payload) {
+ payload = omitCompanyColumn(payload, 'comment_attachments');
+ continue;
+ }
+ return { data, error };
+ }
 
  return await supabase
  .from('companies')
- .insert(omitCompanyComments(payload))
+ .insert(payload)
  .select()
  .maybeSingle();
  }
@@ -758,7 +866,7 @@ export function usePublicFormController(token: string | undefined) {
  let companyId = existingCompany?.id;
 
  if (existingCompany?.id) {
- const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithCommentsFallback(existingCompany.id);
+ const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithOptionalColumnFallback(existingCompany.id);
 
  if (updateCompanyError) throw updateCompanyError;
  if (updatedCompany) {
@@ -775,7 +883,7 @@ export function usePublicFormController(token: string | undefined) {
  if (currentCompanyError) throw currentCompanyError;
 
  if (currentCompany?.id) {
- const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithCommentsFallback(currentCompany.id);
+ const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithOptionalColumnFallback(currentCompany.id);
 
  if (updateCompanyError) throw updateCompanyError;
  if (updatedCompany) {
@@ -785,7 +893,7 @@ export function usePublicFormController(token: string | undefined) {
  companyId = currentCompany.id;
  }
  } else {
- const { data: newCompany, error } = await insertCompanyWithCommentsFallback();
+ const { data: newCompany, error } = await insertCompanyWithOptionalColumnFallback();
 
  if (error) {
  if (String((error as { code?: string }).code || '') !== '23505') throw error;
@@ -798,7 +906,7 @@ export function usePublicFormController(token: string | undefined) {
 
  if (fallbackCompanyError || !fallbackCompany?.id) throw fallbackCompanyError || error;
 
- const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithCommentsFallback(fallbackCompany.id);
+ const { data: updatedCompany, error: updateCompanyError } = await updateCompanyWithOptionalColumnFallback(fallbackCompany.id);
 
  if (updateCompanyError) throw updateCompanyError;
  if (updatedCompany) {
@@ -949,6 +1057,7 @@ export function usePublicFormController(token: string | undefined) {
  companyBin,
  companyCity,
  companyComments,
+ commentAttachments,
  companyEmail,
  companyName,
  companyPhone,
@@ -1177,6 +1286,7 @@ export function usePublicFormController(token: string | undefined) {
  companyBin,
  companyCity,
  companyComments,
+ commentAttachments,
  directoryMatch,
  lookupLoading,
  lookupTouched,
@@ -1190,6 +1300,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentAutofillHint,
  paymentBeneficiaryHint,
  uploadingPaymentOrder,
+ uploadingCommentAttachments,
  paymentOrderStage,
  participants,
  availableCourses,
@@ -1205,6 +1316,7 @@ export function usePublicFormController(token: string | undefined) {
  totalCourses,
  totalCourseRequests,
  paymentOrderInputRef,
+ commentAttachmentInputRef,
  fileInputRefs,
  hasActiveContract,
  canConfirmNoContract,
@@ -1230,6 +1342,8 @@ export function usePublicFormController(token: string | undefined) {
  enableCompanyCreateMode,
  handlePhotoSelect,
  handlePaymentOrderSelect,
+ handleCommentAttachmentSelect,
+ removeCommentAttachment,
  handleSubmit,
  validateForm,
  submitQuestionnaire,
