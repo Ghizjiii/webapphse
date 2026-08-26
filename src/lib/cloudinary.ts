@@ -11,6 +11,24 @@ export interface PaymentOrderExtractedFields {
   payment_order_beneficiary_bin?: string;
   payment_order_beneficiary_account?: string;
   payment_order_beneficiary_name?: string;
+  payment_order_beneficiary_bin_matched?: boolean;
+  payment_order_beneficiary_account_matched?: boolean;
+  payment_order_beneficiary_reason?: string;
+  payment_order_detected_bins?: string[];
+  payment_order_detected_accounts?: string[];
+  payment_order_beneficiary_checks?: PaymentOrderBeneficiaryCheck[];
+  payment_order_accepted_beneficiaries?: PaymentOrderAcceptedBeneficiary[];
+}
+
+export interface PaymentOrderAcceptedBeneficiary {
+  name: string;
+  bin: string;
+  accounts: string[];
+}
+
+export interface PaymentOrderBeneficiaryCheck extends PaymentOrderAcceptedBeneficiary {
+  bin_matched?: boolean;
+  account_matched?: boolean;
 }
 
 export interface UploadedPaymentOrder {

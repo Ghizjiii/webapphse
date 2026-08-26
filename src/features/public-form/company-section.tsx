@@ -1,7 +1,7 @@
 import type { RefObject } from 'react';
 import { Building2, Loader2, Paperclip, Search, X } from 'lucide-react';
 import type { CommentAttachment, RefCompanyDirectory } from '../../types';
-import type { PaymentOrderStage, ValidationErrors } from './model';
+import type { PaymentOrderRecognitionDetails, PaymentOrderStage, ValidationErrors } from './model';
 
 interface CompanySectionProps {
   paymentOrderOptional: boolean;
@@ -23,6 +23,7 @@ interface CompanySectionProps {
   paymentOrderAmount: string;
   paymentAutofillHint: string;
   paymentBeneficiaryHint: string;
+  paymentRecognitionDetails: PaymentOrderRecognitionDetails | null;
   uploadingPaymentOrder: boolean;
   paymentOrderStage: PaymentOrderStage;
   uploadingCommentAttachments: boolean;
@@ -57,6 +58,106 @@ function formatAttachmentSize(size: number | undefined): string {
   return `${(size / 1024 / 1024).toFixed(1).replace('.', ',')} МБ`;
 }
 
+function formatRecognitionValue(value: string | undefined): string {
+  const normalized = String(value || '').trim();
+  return normalized || '—';
+}
+
+function formatRecognitionDate(value: string | undefined): string {
+  const normalized = String(value || '').trim();
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return formatRecognitionValue(normalized);
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function renderMatchStatus(value: boolean | undefined) {
+  if (value === true) {
+    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Совпало</span>;
+  }
+  if (value === false) {
+    return <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">Не совпало</span>;
+  }
+  return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">Не определено</span>;
+}
+
+function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecognitionDetails }) {
+  const boxClass = details.beneficiaryValid === false
+    ? 'border-red-200 bg-red-50'
+    : details.beneficiaryValid === true
+      ? 'border-emerald-200 bg-emerald-50'
+      : 'border-amber-200 bg-amber-50';
+  const title = details.beneficiaryValid === false
+    ? 'Платеж не принят'
+    : details.beneficiaryValid === true
+      ? 'Платеж принят'
+      : 'Реквизиты не определены автоматически';
+
+  return (
+    <div className={`mt-3 rounded-xl border p-3 text-xs ${boxClass}`}>
+      <div className="font-semibold text-gray-900">{title}</div>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div>
+          <div className="text-gray-500">Номер</div>
+          <div className="font-medium text-gray-900">{formatRecognitionValue(details.number)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Дата</div>
+          <div className="font-medium text-gray-900">{formatRecognitionDate(details.date)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Сумма</div>
+          <div className="font-medium text-gray-900">{formatRecognitionValue(details.amount)}</div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded-lg border border-white/70 bg-white/70 p-2">
+          <div className="text-gray-500">Получатель</div>
+          <div className="mt-1 font-medium text-gray-900">{formatRecognitionValue(details.beneficiaryName)}</div>
+          <div className="mt-1 text-gray-600">БИН: {formatRecognitionValue(details.beneficiaryBin)}</div>
+          <div className="text-gray-600">Счет: {formatRecognitionValue(details.beneficiaryAccount)}</div>
+        </div>
+        <div className="rounded-lg border border-white/70 bg-white/70 p-2">
+          <div className="text-gray-500">Проверка условий</div>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span>БИН получателя</span>
+            {renderMatchStatus(details.beneficiaryBinMatched)}
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span>Счет получателя</span>
+            {renderMatchStatus(details.beneficiaryAccountMatched)}
+          </div>
+          <div className="mt-1 text-gray-600">Нужно совпадение БИН и счета одной разрешенной компании.</div>
+        </div>
+      </div>
+
+      {(details.detectedBins?.length || details.detectedAccounts?.length) && (
+        <div className="mt-3 rounded-lg border border-white/70 bg-white/70 p-2 text-gray-600">
+          <div>Найденные БИН: {details.detectedBins?.join(', ') || '—'}</div>
+          <div>Найденные счета: {details.detectedAccounts?.join(', ') || '—'}</div>
+        </div>
+      )}
+
+      {details.beneficiaryReason && (
+        <div className="mt-2 font-medium text-red-700">Причина: {details.beneficiaryReason}</div>
+      )}
+
+      {details.acceptedBeneficiaries?.length ? (
+        <div className="mt-3 rounded-lg border border-white/70 bg-white/70 p-2">
+          <div className="font-medium text-gray-900">Разрешенные получатели</div>
+          <div className="mt-1 space-y-1 text-gray-600">
+            {details.acceptedBeneficiaries.map(item => (
+              <div key={`${item.bin}-${item.name}`}>
+                {item.name}: БИН {item.bin}, счет {item.accounts.join(', ')}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function CompanySection(props: CompanySectionProps) {
   const {
     companyName,
@@ -78,6 +179,7 @@ export function CompanySection(props: CompanySectionProps) {
     paymentOrderAmount,
     paymentAutofillHint,
     paymentBeneficiaryHint,
+    paymentRecognitionDetails,
     uploadingPaymentOrder,
     paymentOrderStage,
     uploadingCommentAttachments,
@@ -288,6 +390,7 @@ export function CompanySection(props: CompanySectionProps) {
             {paymentAutofillHint && <p className="text-xs text-gray-500 mt-1">{paymentAutofillHint}</p>}
             {paymentBeneficiaryHint && <p className="text-xs font-medium text-emerald-600 mt-1">{paymentBeneficiaryHint}</p>}
             {errors.payment_order && <p className="text-xs text-red-500 mt-1">{errors.payment_order}</p>}
+            {paymentRecognitionDetails && <PaymentRecognitionDetailsBox details={paymentRecognitionDetails} />}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Номер платежного поручения</label>

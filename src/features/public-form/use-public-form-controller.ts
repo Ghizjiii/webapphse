@@ -32,6 +32,7 @@ import {
  PARTICIPANT_REQUIRED_FIELD_LABELS,
  type LinkStatus,
  type LocalParticipant,
+ type PaymentOrderRecognitionDetails,
  type PaymentOrderStage,
  type ValidationErrors,
 } from './model';
@@ -108,6 +109,7 @@ export function usePublicFormController(token: string | undefined) {
  const [paymentOrderAmount, setPaymentOrderAmount] = useState('');
  const [paymentAutofillHint, setPaymentAutofillHint] = useState('');
  const [paymentBeneficiaryHint, setPaymentBeneficiaryHint] = useState('');
+ const [paymentRecognitionDetails, setPaymentRecognitionDetails] = useState<PaymentOrderRecognitionDetails | null>(null);
  const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
  const [paymentOrderStage, setPaymentOrderStage] = useState<PaymentOrderStage>('idle');
  const [paymentOrderDuplicate, setPaymentOrderDuplicate] = useState(false);
@@ -593,6 +595,7 @@ export function usePublicFormController(token: string | undefined) {
  setPaymentOrderStage('uploading');
  setPaymentAutofillHint('');
  setPaymentBeneficiaryHint('');
+ setPaymentRecognitionDetails(null);
  setPaymentOrderDuplicate(false);
  setPaymentBeneficiaryValid(null);
  setErrors(prev => ({ ...prev, payment_order: undefined }));
@@ -614,6 +617,13 @@ export function usePublicFormController(token: string | undefined) {
  payment_order_beneficiary_bin?: string;
  payment_order_beneficiary_account?: string;
  payment_order_beneficiary_name?: string;
+ payment_order_beneficiary_bin_matched?: boolean;
+ payment_order_beneficiary_account_matched?: boolean;
+ payment_order_beneficiary_reason?: string;
+ payment_order_detected_bins?: string[];
+ payment_order_detected_accounts?: string[];
+ payment_order_beneficiary_checks?: PaymentOrderRecognitionDetails['beneficiaryChecks'];
+ payment_order_accepted_beneficiaries?: PaymentOrderRecognitionDetails['acceptedBeneficiaries'];
  } = {};
  let ocrErrorMessage = '';
 
@@ -626,11 +636,15 @@ export function usePublicFormController(token: string | undefined) {
  const nextNumber = normalizePaymentOrderNumber(String(extracted.payment_order_number || ''));
  const nextDate = normalizePaymentOrderDate(String(extracted.payment_order_date || '').trim());
  const nextAmount = String(extracted.payment_order_amount || '').trim();
- const nextBeneficiaryValid = extracted.payment_order_beneficiary_valid === true;
+ const nextBeneficiaryValid = typeof extracted.payment_order_beneficiary_valid === 'boolean'
+ ? extracted.payment_order_beneficiary_valid
+ : null;
  const nextBeneficiaryName = String(extracted.payment_order_beneficiary_name || '').trim();
+ const nextBeneficiaryBin = String(extracted.payment_order_beneficiary_bin || '').trim();
+ const nextBeneficiaryAccount = String(extracted.payment_order_beneficiary_account || '').trim();
  setPaymentBeneficiaryValid(nextBeneficiaryValid);
  setPaymentBeneficiaryHint(
- nextBeneficiaryValid
+ nextBeneficiaryValid === true
  ? `Оплата проведена на ${nextBeneficiaryName || 'разрешенные реквизиты'}.`
  : ''
  );
@@ -648,10 +662,29 @@ export function usePublicFormController(token: string | undefined) {
  : 'Автозаполнение не нашло ключевые поля. Заполните номер, дату и сумму вручную.'
  );
 
- if (!nextBeneficiaryValid) {
+ setPaymentRecognitionDetails({
+ number: nextNumber,
+ date: nextDate,
+ amount: nextAmount,
+ payerBin: String(extracted.payment_order_bin_iin || '').trim(),
+ beneficiaryValid: nextBeneficiaryValid,
+ beneficiaryName: nextBeneficiaryName,
+ beneficiaryBin: nextBeneficiaryBin,
+ beneficiaryAccount: nextBeneficiaryAccount,
+ beneficiaryBinMatched: extracted.payment_order_beneficiary_bin_matched,
+ beneficiaryAccountMatched: extracted.payment_order_beneficiary_account_matched,
+ beneficiaryReason: String(extracted.payment_order_beneficiary_reason || '').trim(),
+ detectedBins: extracted.payment_order_detected_bins,
+ detectedAccounts: extracted.payment_order_detected_accounts,
+ acceptedBeneficiaries: extracted.payment_order_accepted_beneficiaries,
+ beneficiaryChecks: extracted.payment_order_beneficiary_checks,
+ ocrError: ocrErrorMessage,
+ });
+
+ if (nextBeneficiaryValid === false) {
  setErrors(prev => ({
  ...prev,
- payment_order: INVALID_PAYMENT_BENEFICIARY_ERROR,
+ payment_order: extracted.payment_order_beneficiary_reason || INVALID_PAYMENT_BENEFICIARY_ERROR,
  }));
  }
 
@@ -1299,6 +1332,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderAmount,
  paymentAutofillHint,
  paymentBeneficiaryHint,
+ paymentRecognitionDetails,
  uploadingPaymentOrder,
  uploadingCommentAttachments,
  paymentOrderStage,

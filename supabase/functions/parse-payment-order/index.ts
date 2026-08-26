@@ -28,6 +28,22 @@ function asBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map(item => String(item ?? "").trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((item): item is Record<string, unknown> => (
+    item !== null && typeof item === "object" && !Array.isArray(item)
+  ));
+  return items.length > 0 ? items : undefined;
+}
+
 function getRecordValue(record: Record<string, unknown>, keys: string[]): unknown {
   for (const key of keys) {
     const value = record[key];
@@ -150,6 +166,13 @@ Deno.serve(async (req: Request) => {
         payment_order_beneficiary_bin: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_bin", "beneficiary_bin"])),
         payment_order_beneficiary_account: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_account", "beneficiary_account"])),
         payment_order_beneficiary_name: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_name", "beneficiary_name"])),
+        payment_order_beneficiary_bin_matched: asBoolean(getRecordValue(extracted, ["payment_order_beneficiary_bin_matched", "beneficiary_bin_matched"])),
+        payment_order_beneficiary_account_matched: asBoolean(getRecordValue(extracted, ["payment_order_beneficiary_account_matched", "beneficiary_account_matched"])),
+        payment_order_beneficiary_reason: asTrimmedString(getRecordValue(extracted, ["payment_order_beneficiary_reason", "beneficiary_reason"])),
+        payment_order_detected_bins: asStringArray(getRecordValue(extracted, ["payment_order_detected_bins", "detected_bins"])),
+        payment_order_detected_accounts: asStringArray(getRecordValue(extracted, ["payment_order_detected_accounts", "detected_accounts"])),
+        payment_order_beneficiary_checks: asRecordArray(getRecordValue(extracted, ["payment_order_beneficiary_checks", "beneficiary_checks"])),
+        payment_order_accepted_beneficiaries: asRecordArray(getRecordValue(extracted, ["payment_order_accepted_beneficiaries", "accepted_beneficiaries"])),
       },
     });
   } catch (error) {

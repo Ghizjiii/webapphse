@@ -96,6 +96,7 @@ export default function PublicFormPage() {
             paymentOrderAmount={controller.paymentOrderAmount}
             paymentAutofillHint={controller.paymentAutofillHint}
             paymentBeneficiaryHint={controller.paymentBeneficiaryHint}
+            paymentRecognitionDetails={controller.paymentRecognitionDetails}
             uploadingPaymentOrder={controller.uploadingPaymentOrder}
             uploadingCommentAttachments={controller.uploadingCommentAttachments}
             paymentOrderStage={controller.paymentOrderStage}

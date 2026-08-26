@@ -1,4 +1,5 @@
 import type { RefCompanyDirectory } from '../../types';
+import type { PaymentOrderAcceptedBeneficiary, PaymentOrderBeneficiaryCheck } from '../../lib/cloudinary';
 
 export interface LocalParticipant {
   id: string;
@@ -45,6 +46,25 @@ export interface ParticipantValidationOptions {
 
 export type LinkStatus = 'loading' | 'valid' | 'invalid' | 'expired' | 'inactive' | 'submitted';
 export type PaymentOrderStage = 'idle' | 'uploading' | 'recognizing' | 'checking' | 'done' | 'error';
+
+export interface PaymentOrderRecognitionDetails {
+  number?: string;
+  date?: string;
+  amount?: string;
+  payerBin?: string;
+  beneficiaryValid?: boolean | null;
+  beneficiaryName?: string;
+  beneficiaryBin?: string;
+  beneficiaryAccount?: string;
+  beneficiaryBinMatched?: boolean;
+  beneficiaryAccountMatched?: boolean;
+  beneficiaryReason?: string;
+  detectedBins?: string[];
+  detectedAccounts?: string[];
+  acceptedBeneficiaries?: PaymentOrderAcceptedBeneficiary[];
+  beneficiaryChecks?: PaymentOrderBeneficiaryCheck[];
+  ocrError?: string;
+}
 
 export const DUPLICATE_PAYMENT_ORDER_ERROR =
   'Этот чек или платежное поручение уже были загружены ранее (номер, дата и сумма совпадают). Загрузите другой документ.';

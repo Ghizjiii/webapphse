@@ -49,6 +49,10 @@ TRUSTED_BENEFICIARIES = [
     },
 ]
 
+AMOUNT_PATTERN = (
+    r"(?:\d{1,3}(?:[ \u00A0.,]\d{3})+(?:[\.,]\d{2})|\d+[\.,]\d{2})"
+)
+
 RU_MONTHS = {
     "января": 1,
     "февраля": 2,
@@ -173,6 +177,54 @@ def normalize_digits_ocr(value: str) -> str:
         "з": "3",
     }))
     return re.sub(r"\D+", "", digitish)
+
+
+def find_bin_candidates(source: str) -> list[str]:
+    digitish = str(source or "").translate(str.maketrans({
+        "О": "0",
+        "о": "0",
+        "O": "0",
+        "o": "0",
+        "З": "3",
+        "з": "3",
+    }))
+    return re.findall(r"(?<!\d)(\d{12})(?!\d)", digitish)
+
+
+def find_account_candidates(source: str) -> list[str]:
+    normalized = normalize_account(source)
+    # Kazakhstan IBAN starts with KZ and two check digits. This avoids matching BIK
+    # suffixes like CASPKZKA or HSBKKZKX as a fake account.
+    candidates = re.findall(r"KZ\d{2}[0-9A-Z]{16}", normalized)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique.append(candidate)
+    return unique
+
+
+def beneficiary_accounts(beneficiary: dict[str, Any]) -> list[str]:
+    accounts = beneficiary.get("accounts")
+    if isinstance(accounts, list):
+        return [normalize_account(str(account)) for account in accounts if str(account or "").strip()]
+    account = beneficiary.get("account")
+    if account:
+        return [normalize_account(str(account))]
+    return []
+
+
+def accepted_beneficiary_options() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": beneficiary["name"],
+            "bin": beneficiary["bin"],
+            "accounts": beneficiary_accounts(beneficiary),
+        }
+        for beneficiary in TRUSTED_BENEFICIARIES
+    ]
 
 
 def hamming_distance(left: str, right: str) -> int:
@@ -477,7 +529,7 @@ def pick_amount(source: str) -> str:
 
     if bank == "kaspi":
         m = re.search(
-            r"(?:п\w*)?лат\w*[\s\S]{0,60}(?:усп\w*|сп\w*|снеш\w*)[\s\S]{0,60}соверш\w*[\s\S]{0,80}?([0-9oOоОзЗ]{1,3}(?:[ \u00A0][0-9oOоОзЗ]{3})*(?:[\.,][0-9oOоОзЗ]{2})|[0-9oOоОзЗ]+[\.,][0-9oOоОзЗ]{2})",
+            rf"(?:п\w*)?лат\w*[\s\S]{{0,60}}(?:усп\w*|сп\w*|снеш\w*)[\s\S]{{0,60}}соверш\w*[\s\S]{{0,80}}?({AMOUNT_PATTERN})",
             source,
             flags=re.IGNORECASE,
         )
@@ -489,7 +541,7 @@ def pick_amount(source: str) -> str:
 
     if bank == "bcc":
         m = re.search(
-            r"(?:сома[сы]?|сумма)[^\d]{0,40}(\d{1,3}(?:[ \u00A0]\d{3})*(?:[\.,]\d{2})|\d+[\.,]\d{2})",
+            rf"(?:сома[сы]?|сумма)[^\d]{{0,40}}({AMOUNT_PATTERN})",
             source,
             flags=re.IGNORECASE,
         )
@@ -500,7 +552,7 @@ def pick_amount(source: str) -> str:
 
     # Priority: amount near keywords.
     m = re.search(
-        r"(?:сумма\s*прописью\s*:|сумма\s*:|сумма|итого|amount|total)[^\d]{0,30}(\d{1,3}(?:[ \u00A0]\d{3})*(?:[\.,]\d{2})|\d+[\.,]\d{2})",
+        rf"(?:сумма\s*прописью\s*:|сумма\s*:|сумма|итого|amount|total)[^\d]{{0,30}}({AMOUNT_PATTERN})",
         source,
         flags=re.IGNORECASE,
     )
@@ -510,7 +562,7 @@ def pick_amount(source: str) -> str:
             return amount
 
     # Fallback: pick the largest plausible decimal amount.
-    candidates = re.findall(r"\d{1,3}(?:[ \u00A0]\d{3})*(?:[\.,]\d{2})|\d+[\.,]\d{2}", source)
+    candidates = re.findall(AMOUNT_PATTERN, source)
     values: list[tuple[float, str]] = []
     for c in candidates:
         norm = normalize_amount(c)
@@ -523,38 +575,78 @@ def pick_amount(source: str) -> str:
     return values[0][1]
 
 
-def pick_trusted_beneficiary(source: str) -> dict[str, str]:
+def pick_trusted_beneficiary(source: str) -> dict[str, Any]:
     source_accounts = normalize_account(source)
-    source_account_candidates = re.findall(r"KZ[0-9A-Z]{18}", source_accounts)
+    source_account_candidates = find_account_candidates(source)
     source_digits = normalize_digits_ocr(source)
+    source_bin_candidates = find_bin_candidates(source)
+    checks: list[dict[str, Any]] = []
 
     for beneficiary in TRUSTED_BENEFICIARIES:
         bin_digits = beneficiary["bin"]
-        account = normalize_account(beneficiary["account"])
-        account_matches = account in source_accounts or any(
-            hamming_distance(candidate, account) <= 2
-            for candidate in source_account_candidates
-        )
+        accounts = beneficiary_accounts(beneficiary)
+        bin_matches = bin_digits in source_digits
+        matched_account = ""
+        for account in accounts:
+            if account in source_accounts or any(
+                hamming_distance(candidate, account) <= 2
+                for candidate in source_account_candidates
+            ):
+                matched_account = account
+                break
+        account_matches = bool(matched_account)
+        checks.append({
+            "name": beneficiary["name"],
+            "bin": beneficiary["bin"],
+            "accounts": accounts,
+            "bin_matched": bin_matches,
+            "account_matched": account_matches,
+        })
+
         if bin_digits in source_digits and account_matches:
             return {
-                "payment_order_beneficiary_valid": "true",
+                "payment_order_beneficiary_valid": True,
                 "payment_order_beneficiary_name": beneficiary["name"],
                 "payment_order_beneficiary_bin": beneficiary["bin"],
-                "payment_order_beneficiary_account": beneficiary["account"],
+                "payment_order_beneficiary_account": matched_account,
+                "payment_order_beneficiary_bin_matched": True,
+                "payment_order_beneficiary_account_matched": True,
+                "payment_order_detected_bins": source_bin_candidates,
+                "payment_order_detected_accounts": source_account_candidates,
+                "payment_order_beneficiary_checks": checks,
+                "payment_order_accepted_beneficiaries": accepted_beneficiary_options(),
             }
 
-    bins = re.findall(r"\d{12}", source_digits)
-    accounts = source_account_candidates
+    any_bin_match = any(check["bin_matched"] for check in checks)
+    any_account_match = any(check["account_matched"] for check in checks)
+    if not any_bin_match and not any_account_match:
+        reason = "Не найдено совпадение БИН и счета с разрешенными реквизитами."
+    elif not any_bin_match:
+        reason = "Счет похож на разрешенный, но БИН получателя не совпал."
+    elif not any_account_match:
+        reason = "БИН получателя совпал, но счет получателя не найден среди разрешенных."
+    else:
+        reason = "БИН и счет найдены, но не относятся к одной разрешенной компании."
+
+    matched_bin = next((str(check["bin"]) for check in checks if check["bin_matched"]), "")
+
     return {
-        "payment_order_beneficiary_valid": "false",
-        "payment_order_beneficiary_bin": bins[-1] if bins else "",
-        "payment_order_beneficiary_account": accounts[-1] if accounts else "",
+        "payment_order_beneficiary_valid": False,
+        "payment_order_beneficiary_bin": matched_bin or (source_bin_candidates[-1] if source_bin_candidates else ""),
+        "payment_order_beneficiary_account": source_account_candidates[-1] if source_account_candidates else "",
+        "payment_order_beneficiary_bin_matched": any_bin_match,
+        "payment_order_beneficiary_account_matched": any_account_match,
+        "payment_order_beneficiary_reason": reason,
+        "payment_order_detected_bins": source_bin_candidates,
+        "payment_order_detected_accounts": source_account_candidates,
+        "payment_order_beneficiary_checks": checks,
+        "payment_order_accepted_beneficiaries": accepted_beneficiary_options(),
     }
 
 
-def extract_fields(text: str) -> dict[str, str]:
+def extract_fields(text: str) -> dict[str, Any]:
     source = normalize_spaces(text)
-    out: dict[str, str] = {}
+    out: dict[str, Any] = {}
 
     bin_iin = pick_sender_bin(source)
     if bin_iin:
@@ -570,7 +662,11 @@ def extract_fields(text: str) -> dict[str, str]:
     if amount:
         out["payment_order_amount"] = amount
 
-    out.update({k: v for k, v in pick_trusted_beneficiary(source).items() if v})
+    out.update({
+        k: v
+        for k, v in pick_trusted_beneficiary(source).items()
+        if v is not None and v != ""
+    })
 
     return out
 
