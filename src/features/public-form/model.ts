@@ -28,6 +28,8 @@ export interface ValidationErrors {
   payment_order_number?: string;
   payment_order_date?: string;
   payment_order_amount?: string;
+  payment_order_beneficiary_bin?: string;
+  payment_order_beneficiary_account?: string;
   comment_attachments?: string;
   participants?: string;
 }
@@ -63,6 +65,9 @@ export interface PaymentOrderRecognitionDetails {
   detectedAccounts?: string[];
   acceptedBeneficiaries?: PaymentOrderAcceptedBeneficiary[];
   beneficiaryChecks?: PaymentOrderBeneficiaryCheck[];
+  manualCorrection?: boolean;
+  correctedFields?: string[];
+  verificationSource?: 'ocr' | 'user_corrected' | '';
   ocrError?: string;
 }
 

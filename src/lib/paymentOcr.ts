@@ -60,6 +60,36 @@ function asBeneficiaryChecks(value: unknown): PaymentOrderBeneficiaryCheck[] | u
   return items.length > 0 ? items : undefined;
 }
 
+function mapPaymentOrderExtractedFields(extracted: Record<string, unknown>): PaymentOrderExtractedFields {
+  return {
+    payment_order_bin_iin: String(extracted.payment_order_bin_iin || '').trim() || undefined,
+    payment_order_payer_name: String(extracted.payment_order_payer_name || '').trim() || undefined,
+    payment_order_number: String(extracted.payment_order_number || '').trim() || undefined,
+    payment_order_date: String(extracted.payment_order_date || '').trim() || undefined,
+    payment_order_amount: String(extracted.payment_order_amount || '').trim() || undefined,
+    payment_order_beneficiary_valid:
+      typeof extracted.payment_order_beneficiary_valid === 'boolean'
+        ? extracted.payment_order_beneficiary_valid
+        : undefined,
+    payment_order_beneficiary_bin: String(extracted.payment_order_beneficiary_bin || '').trim() || undefined,
+    payment_order_beneficiary_account: String(extracted.payment_order_beneficiary_account || '').trim() || undefined,
+    payment_order_beneficiary_name: String(extracted.payment_order_beneficiary_name || '').trim() || undefined,
+    payment_order_beneficiary_bin_matched:
+      typeof extracted.payment_order_beneficiary_bin_matched === 'boolean'
+        ? extracted.payment_order_beneficiary_bin_matched
+        : undefined,
+    payment_order_beneficiary_account_matched:
+      typeof extracted.payment_order_beneficiary_account_matched === 'boolean'
+        ? extracted.payment_order_beneficiary_account_matched
+        : undefined,
+    payment_order_beneficiary_reason: String(extracted.payment_order_beneficiary_reason || '').trim() || undefined,
+    payment_order_detected_bins: asStringArray(extracted.payment_order_detected_bins),
+    payment_order_detected_accounts: asStringArray(extracted.payment_order_detected_accounts),
+    payment_order_beneficiary_checks: asBeneficiaryChecks(extracted.payment_order_beneficiary_checks),
+    payment_order_accepted_beneficiaries: asAcceptedBeneficiaries(extracted.payment_order_accepted_beneficiaries),
+  };
+}
+
 export async function extractPaymentOrderFields(file: File): Promise<PaymentOrderExtractedFields> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     throw new Error('Supabase OCR proxy is not configured');
@@ -95,31 +125,42 @@ export async function extractPaymentOrderFields(file: File): Promise<PaymentOrde
   }
 
   const extracted = (data?.extracted || {}) as Record<string, unknown>;
-  return {
-    payment_order_bin_iin: String(extracted.payment_order_bin_iin || '').trim() || undefined,
-    payment_order_payer_name: String(extracted.payment_order_payer_name || '').trim() || undefined,
-    payment_order_number: String(extracted.payment_order_number || '').trim() || undefined,
-    payment_order_date: String(extracted.payment_order_date || '').trim() || undefined,
-    payment_order_amount: String(extracted.payment_order_amount || '').trim() || undefined,
-    payment_order_beneficiary_valid:
-      typeof extracted.payment_order_beneficiary_valid === 'boolean'
-        ? extracted.payment_order_beneficiary_valid
-        : undefined,
-    payment_order_beneficiary_bin: String(extracted.payment_order_beneficiary_bin || '').trim() || undefined,
-    payment_order_beneficiary_account: String(extracted.payment_order_beneficiary_account || '').trim() || undefined,
-    payment_order_beneficiary_name: String(extracted.payment_order_beneficiary_name || '').trim() || undefined,
-    payment_order_beneficiary_bin_matched:
-      typeof extracted.payment_order_beneficiary_bin_matched === 'boolean'
-        ? extracted.payment_order_beneficiary_bin_matched
-        : undefined,
-    payment_order_beneficiary_account_matched:
-      typeof extracted.payment_order_beneficiary_account_matched === 'boolean'
-        ? extracted.payment_order_beneficiary_account_matched
-        : undefined,
-    payment_order_beneficiary_reason: String(extracted.payment_order_beneficiary_reason || '').trim() || undefined,
-    payment_order_detected_bins: asStringArray(extracted.payment_order_detected_bins),
-    payment_order_detected_accounts: asStringArray(extracted.payment_order_detected_accounts),
-    payment_order_beneficiary_checks: asBeneficiaryChecks(extracted.payment_order_beneficiary_checks),
-    payment_order_accepted_beneficiaries: asAcceptedBeneficiaries(extracted.payment_order_accepted_beneficiaries),
-  };
+  return mapPaymentOrderExtractedFields(extracted);
+}
+
+export async function validatePaymentOrderFields(fields: {
+  payment_order_beneficiary_bin: string;
+  payment_order_beneficiary_account: string;
+}): Promise<PaymentOrderExtractedFields> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('Supabase OCR proxy is not configured');
+  }
+
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/parse-payment-order`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      apikey: SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({
+      mode: 'validate',
+      ...fields,
+    }),
+  });
+
+  const responseText = await res.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = responseText ? JSON.parse(responseText) as Record<string, unknown> : {};
+  } catch {
+    data = {};
+  }
+
+  if (!res.ok) {
+    const detail = String(data?.detail || data?.error || responseText || `Payment validation failed (HTTP ${res.status})`).trim();
+    throw new Error(detail.slice(0, 400));
+  }
+
+  return mapPaymentOrderExtractedFields((data?.extracted || {}) as Record<string, unknown>);
 }

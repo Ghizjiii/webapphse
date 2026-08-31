@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Building2, Loader2, Paperclip, Search, X } from 'lucide-react';
+import { Building2, CheckCircle2, Loader2, Paperclip, Search, X } from 'lucide-react';
 import type { CommentAttachment, RefCompanyDirectory } from '../../types';
 import type { PaymentOrderRecognitionDetails, PaymentOrderStage, ValidationErrors } from './model';
 
@@ -21,6 +21,11 @@ interface CompanySectionProps {
   paymentOrderNumber: string;
   paymentOrderDate: string;
   paymentOrderAmount: string;
+  paymentBeneficiaryBin: string;
+  paymentBeneficiaryAccount: string;
+  paymentValidationLoading: boolean;
+  paymentManualCorrection: boolean;
+  paymentCorrectedFields: string[];
   paymentAutofillHint: string;
   paymentBeneficiaryHint: string;
   paymentRecognitionDetails: PaymentOrderRecognitionDetails | null;
@@ -50,6 +55,9 @@ interface CompanySectionProps {
   onPaymentOrderNumberChange: (value: string) => void;
   onPaymentOrderDateChange: (value: string) => void;
   onPaymentOrderAmountChange: (value: string) => void;
+  onPaymentBeneficiaryBinChange: (value: string) => void;
+  onPaymentBeneficiaryAccountChange: (value: string) => void;
+  onValidatePaymentBeneficiary: () => void;
 }
 
 function formatAttachmentSize(size: number | undefined): string {
@@ -95,6 +103,12 @@ function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecogn
   return (
     <div className={`mt-3 rounded-xl border p-3 text-xs ${boxClass}`}>
       <div className="font-semibold text-gray-900">{title}</div>
+      {details.manualCorrection && (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-white/80 px-2 py-1.5 text-amber-700">
+          Данные платежного поручения исправлены пользователем
+          {details.correctedFields?.length ? `: ${details.correctedFields.join(', ')}` : ''}
+        </div>
+      )}
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
         <div>
           <div className="text-gray-500">Номер</div>
@@ -177,6 +191,11 @@ export function CompanySection(props: CompanySectionProps) {
     paymentOrderNumber,
     paymentOrderDate,
     paymentOrderAmount,
+    paymentBeneficiaryBin,
+    paymentBeneficiaryAccount,
+    paymentValidationLoading,
+    paymentManualCorrection,
+    paymentCorrectedFields,
     paymentAutofillHint,
     paymentBeneficiaryHint,
     paymentRecognitionDetails,
@@ -206,6 +225,9 @@ export function CompanySection(props: CompanySectionProps) {
     onPaymentOrderNumberChange,
     onPaymentOrderDateChange,
     onPaymentOrderAmountChange,
+    onPaymentBeneficiaryBinChange,
+    onPaymentBeneficiaryAccountChange,
+    onValidatePaymentBeneficiary,
   } = props;
 
   return (
@@ -391,6 +413,57 @@ export function CompanySection(props: CompanySectionProps) {
             {paymentBeneficiaryHint && <p className="text-xs font-medium text-emerald-600 mt-1">{paymentBeneficiaryHint}</p>}
             {errors.payment_order && <p className="text-xs text-red-500 mt-1">{errors.payment_order}</p>}
             {paymentRecognitionDetails && <PaymentRecognitionDetailsBox details={paymentRecognitionDetails} />}
+            {paymentOrderUrl && (
+              <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">Реквизиты получателя платежа</div>
+                    <div className="text-xs text-gray-600">Можно исправить ошибку OCR, затем повторно проверить по разрешенному списку.</div>
+                  </div>
+                  {paymentManualCorrection && (
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      <CheckCircle2 size={13} />
+                      Исправлено: {paymentCorrectedFields.join(', ') || 'реквизиты'}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] md:items-start">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">БИН получателя</label>
+                    <input
+                      value={paymentBeneficiaryBin}
+                      onChange={event => onPaymentBeneficiaryBinChange(event.target.value)}
+                      placeholder="211040027532"
+                      className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                        errors.payment_order_beneficiary_bin ? 'border-red-400 bg-red-50' : 'border-gray-300 bg-white'
+                      }`}
+                    />
+                    {errors.payment_order_beneficiary_bin && <p className="text-xs text-red-500 mt-1">{errors.payment_order_beneficiary_bin}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Счет получателя IBAN</label>
+                    <input
+                      value={paymentBeneficiaryAccount}
+                      onChange={event => onPaymentBeneficiaryAccountChange(event.target.value)}
+                      placeholder="KZ30601A871001584291"
+                      className={`w-full px-3 py-2 border rounded-lg text-sm uppercase focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                        errors.payment_order_beneficiary_account ? 'border-red-400 bg-red-50' : 'border-gray-300 bg-white'
+                      }`}
+                    />
+                    {errors.payment_order_beneficiary_account && <p className="text-xs text-red-500 mt-1">{errors.payment_order_beneficiary_account}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onValidatePaymentBeneficiary}
+                    disabled={paymentValidationLoading || uploadingPaymentOrder}
+                    className="inline-flex min-h-[38px] items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 md:mt-5"
+                  >
+                    {paymentValidationLoading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    Проверить
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Номер платежного поручения</label>

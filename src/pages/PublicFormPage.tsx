@@ -94,6 +94,11 @@ export default function PublicFormPage() {
             paymentOrderNumber={controller.paymentOrderNumber}
             paymentOrderDate={controller.paymentOrderDate}
             paymentOrderAmount={controller.paymentOrderAmount}
+            paymentBeneficiaryBin={controller.paymentBeneficiaryBin}
+            paymentBeneficiaryAccount={controller.paymentBeneficiaryAccount}
+            paymentValidationLoading={controller.paymentValidationLoading}
+            paymentManualCorrection={controller.paymentManualCorrection}
+            paymentCorrectedFields={controller.paymentCorrectedFields}
             paymentAutofillHint={controller.paymentAutofillHint}
             paymentBeneficiaryHint={controller.paymentBeneficiaryHint}
             paymentRecognitionDetails={controller.paymentRecognitionDetails}
@@ -124,9 +129,14 @@ export default function PublicFormPage() {
             onPaymentOrderPick={file => {
               void controller.handlePaymentOrderSelect(file);
             }}
-            onPaymentOrderNumberChange={controller.setPaymentOrderNumber}
-            onPaymentOrderDateChange={controller.setPaymentOrderDate}
-            onPaymentOrderAmountChange={controller.setPaymentOrderAmount}
+            onPaymentOrderNumberChange={controller.handlePaymentOrderNumberChange}
+            onPaymentOrderDateChange={controller.handlePaymentOrderDateChange}
+            onPaymentOrderAmountChange={controller.handlePaymentOrderAmountChange}
+            onPaymentBeneficiaryBinChange={controller.handlePaymentBeneficiaryBinChange}
+            onPaymentBeneficiaryAccountChange={controller.handlePaymentBeneficiaryAccountChange}
+            onValidatePaymentBeneficiary={() => {
+              void controller.handleValidatePaymentBeneficiary();
+            }}
           />
 
           <ParticipantsSection

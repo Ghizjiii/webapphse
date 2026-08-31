@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { prepareParticipantPhotoFile, uploadCommentAttachment, uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
-import { extractPaymentOrderFields } from '../../lib/paymentOcr';
+import type { PaymentOrderExtractedFields } from '../../lib/cloudinary';
+import { extractPaymentOrderFields, validatePaymentOrderFields } from '../../lib/paymentOcr';
 import { fetchCoursesList } from '../../lib/bitrix';
 import { buildCourseOptions, normalizeCourseOptionValue, resolveCourseOption } from '../../lib/courseOptions';
 import {
@@ -38,6 +39,87 @@ import {
 } from './model';
 
 const COMMENT_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const OPTIONAL_COMPANY_COLUMNS = [
+ 'comments',
+ 'comment_attachments',
+ 'payment_order_beneficiary_valid',
+ 'payment_order_beneficiary_bin',
+ 'payment_order_beneficiary_account',
+ 'payment_order_beneficiary_name',
+ 'payment_ocr_original',
+ 'payment_final_data',
+ 'payment_manual_correction',
+ 'payment_corrected_fields',
+ 'payment_verification_source',
+ 'payment_verification_reason',
+];
+
+function normalizePaymentBeneficiaryBin(value: string): string {
+ return String(value || '').replace(/\D+/g, '');
+}
+
+function normalizePaymentBeneficiaryAccount(value: string): string {
+ return String(value || '').toUpperCase().replace(/[^A-Z0-9]+/g, '');
+}
+
+function getPaymentCorrectedFields(original: PaymentOrderExtractedFields | null, current: {
+ number: string;
+ date: string;
+ amount: string;
+ beneficiaryBin: string;
+ beneficiaryAccount: string;
+}): string[] {
+ if (!original) return [];
+
+ const checks: Array<[string, string, string]> = [
+ ['Номер', normalizePaymentOrderNumber(String(original.payment_order_number || '')), normalizePaymentOrderNumber(current.number)],
+ ['Дата', normalizePaymentOrderDate(String(original.payment_order_date || '')), normalizePaymentOrderDate(current.date)],
+ ['Сумма', String(parsePaymentOrderAmount(String(original.payment_order_amount || '')) ?? ''), String(parsePaymentOrderAmount(current.amount) ?? '')],
+ ['БИН получателя', normalizePaymentBeneficiaryBin(String(original.payment_order_beneficiary_bin || '')), normalizePaymentBeneficiaryBin(current.beneficiaryBin)],
+ ['Счет получателя', normalizePaymentBeneficiaryAccount(String(original.payment_order_beneficiary_account || '')), normalizePaymentBeneficiaryAccount(current.beneficiaryAccount)],
+ ];
+
+ return checks
+ .filter(([, before, after]) => before !== after)
+ .map(([label]) => label);
+}
+
+function buildRecognitionDetailsFromExtracted(
+ extracted: PaymentOrderExtractedFields,
+ current: {
+ number: string;
+ date: string;
+ amount: string;
+ ocrError?: string;
+ manualCorrection?: boolean;
+ correctedFields?: string[];
+ verificationSource?: 'ocr' | 'user_corrected' | '';
+ },
+): PaymentOrderRecognitionDetails {
+ return {
+ number: current.number,
+ date: current.date,
+ amount: current.amount,
+ payerBin: String(extracted.payment_order_bin_iin || '').trim(),
+ beneficiaryValid: typeof extracted.payment_order_beneficiary_valid === 'boolean'
+ ? extracted.payment_order_beneficiary_valid
+ : null,
+ beneficiaryName: String(extracted.payment_order_beneficiary_name || '').trim(),
+ beneficiaryBin: String(extracted.payment_order_beneficiary_bin || '').trim(),
+ beneficiaryAccount: String(extracted.payment_order_beneficiary_account || '').trim(),
+ beneficiaryBinMatched: extracted.payment_order_beneficiary_bin_matched,
+ beneficiaryAccountMatched: extracted.payment_order_beneficiary_account_matched,
+ beneficiaryReason: String(extracted.payment_order_beneficiary_reason || '').trim(),
+ detectedBins: extracted.payment_order_detected_bins,
+ detectedAccounts: extracted.payment_order_detected_accounts,
+ acceptedBeneficiaries: extracted.payment_order_accepted_beneficiaries,
+ beneficiaryChecks: extracted.payment_order_beneficiary_checks,
+ manualCorrection: current.manualCorrection,
+ correctedFields: current.correctedFields,
+ verificationSource: current.verificationSource,
+ ocrError: current.ocrError,
+ };
+}
 
 function isMissingCompanyColumnError(error: unknown, column: string): boolean {
  const err = error as { code?: string; message?: string };
@@ -114,6 +196,14 @@ export function usePublicFormController(token: string | undefined) {
  const [paymentOrderStage, setPaymentOrderStage] = useState<PaymentOrderStage>('idle');
  const [paymentOrderDuplicate, setPaymentOrderDuplicate] = useState(false);
  const [paymentBeneficiaryValid, setPaymentBeneficiaryValid] = useState<boolean | null>(null);
+ const [paymentBeneficiaryBin, setPaymentBeneficiaryBin] = useState('');
+ const [paymentBeneficiaryAccount, setPaymentBeneficiaryAccount] = useState('');
+ const [paymentBeneficiaryName, setPaymentBeneficiaryName] = useState('');
+ const [paymentOcrOriginal, setPaymentOcrOriginal] = useState<PaymentOrderExtractedFields | null>(null);
+ const [paymentValidationLoading, setPaymentValidationLoading] = useState(false);
+ const [paymentManualCorrection, setPaymentManualCorrection] = useState(false);
+ const [paymentCorrectedFields, setPaymentCorrectedFields] = useState<string[]>([]);
+ const [paymentVerificationSource, setPaymentVerificationSource] = useState<'ocr' | 'user_corrected' | ''>('');
  const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
  const commentAttachmentInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -272,7 +362,7 @@ export function usePublicFormController(token: string | undefined) {
  normalizePaymentOrderDate(paymentOrderDate) &&
  paymentOrderAmountParsed !== null
  );
- const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && paymentBeneficiaryValid !== false && !paymentOrderDuplicate;
+ const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && paymentBeneficiaryValid === true && !paymentOrderDuplicate;
  const isInternalRequest = requestType === 'internal';
  const photoRequired = isInternalRequest;
  const canEditParticipants = canFillParticipants && (paymentOrderOptional || paymentOrderReady);
@@ -394,6 +484,15 @@ export function usePublicFormController(token: string | undefined) {
  setPaymentOrderNumber(String(company.payment_order_number || ''));
  setPaymentOrderDate(String(company.payment_order_date || ''));
  setPaymentOrderAmount(typeof company.payment_order_amount === 'number' ? String(company.payment_order_amount) : '');
+ setPaymentBeneficiaryValid(typeof company.payment_order_beneficiary_valid === 'boolean' ? company.payment_order_beneficiary_valid : null);
+ setPaymentBeneficiaryBin(String(company.payment_order_beneficiary_bin || ''));
+ setPaymentBeneficiaryAccount(String(company.payment_order_beneficiary_account || ''));
+ setPaymentBeneficiaryName(String(company.payment_order_beneficiary_name || ''));
+ setPaymentOcrOriginal((company.payment_ocr_original || null) as PaymentOrderExtractedFields | null);
+ setPaymentManualCorrection(Boolean(company.payment_manual_correction));
+ setPaymentCorrectedFields(Array.isArray(company.payment_corrected_fields) ? company.payment_corrected_fields.map(String).filter(Boolean) : []);
+ const existingVerificationSource = String(company.payment_verification_source || '').trim();
+ setPaymentVerificationSource(existingVerificationSource === 'user_corrected' ? 'user_corrected' : existingVerificationSource === 'ocr' ? 'ocr' : '');
 
  if (company.source_ref_company_id) {
  const { data: refCompany } = await supabase
@@ -533,7 +632,7 @@ export function usePublicFormController(token: string | undefined) {
  ) {
  nextErrors.payment_order_amount = `Сумма выбранных курсов ${selectedCoursesTotal.total.toLocaleString('ru-RU')} ₸ больше суммы платежного документа ${amountParsed.toLocaleString('ru-RU')} ₸.`;
  }
- if (paymentBeneficiaryValid === false) nextErrors.payment_order = INVALID_PAYMENT_BENEFICIARY_ERROR;
+ if (paymentOrderUrl && paymentBeneficiaryValid !== true) nextErrors.payment_order = paymentRecognitionDetails?.beneficiaryReason || INVALID_PAYMENT_BENEFICIARY_ERROR;
  if (paymentOrderDuplicate) nextErrors.payment_order = DUPLICATE_PAYMENT_ORDER_ERROR;
  }
 
@@ -578,6 +677,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderOptional,
  paymentOrderNumber,
  paymentOrderUrl,
+ paymentRecognitionDetails,
  photoRequired,
  selectedCoursesTotal,
  ]);
@@ -598,6 +698,13 @@ export function usePublicFormController(token: string | undefined) {
  setPaymentRecognitionDetails(null);
  setPaymentOrderDuplicate(false);
  setPaymentBeneficiaryValid(null);
+ setPaymentBeneficiaryBin('');
+ setPaymentBeneficiaryAccount('');
+ setPaymentBeneficiaryName('');
+ setPaymentOcrOriginal(null);
+ setPaymentManualCorrection(false);
+ setPaymentCorrectedFields([]);
+ setPaymentVerificationSource('');
  setErrors(prev => ({ ...prev, payment_order: undefined }));
 
  try {
@@ -608,23 +715,7 @@ export function usePublicFormController(token: string | undefined) {
  setPaymentOrderStorageBucket(String(uploaded.storage_bucket || ''));
  setPaymentOrderStoragePath(String(uploaded.storage_path || ''));
 
- let extracted: {
- payment_order_number?: string;
- payment_order_date?: string;
- payment_order_amount?: string;
- payment_order_bin_iin?: string;
- payment_order_beneficiary_valid?: boolean;
- payment_order_beneficiary_bin?: string;
- payment_order_beneficiary_account?: string;
- payment_order_beneficiary_name?: string;
- payment_order_beneficiary_bin_matched?: boolean;
- payment_order_beneficiary_account_matched?: boolean;
- payment_order_beneficiary_reason?: string;
- payment_order_detected_bins?: string[];
- payment_order_detected_accounts?: string[];
- payment_order_beneficiary_checks?: PaymentOrderRecognitionDetails['beneficiaryChecks'];
- payment_order_accepted_beneficiaries?: PaymentOrderRecognitionDetails['acceptedBeneficiaries'];
- } = {};
+ let extracted: PaymentOrderExtractedFields = {};
  let ocrErrorMessage = '';
 
  try {
@@ -643,6 +734,19 @@ export function usePublicFormController(token: string | undefined) {
  const nextBeneficiaryBin = String(extracted.payment_order_beneficiary_bin || '').trim();
  const nextBeneficiaryAccount = String(extracted.payment_order_beneficiary_account || '').trim();
  setPaymentBeneficiaryValid(nextBeneficiaryValid);
+ setPaymentBeneficiaryName(nextBeneficiaryName);
+ setPaymentBeneficiaryBin(nextBeneficiaryBin);
+ setPaymentBeneficiaryAccount(nextBeneficiaryAccount);
+ setPaymentOcrOriginal({
+ ...extracted,
+ payment_order_number: nextNumber,
+ payment_order_date: nextDate,
+ payment_order_amount: nextAmount,
+ payment_order_beneficiary_bin: nextBeneficiaryBin,
+ payment_order_beneficiary_account: nextBeneficiaryAccount,
+ payment_order_beneficiary_name: nextBeneficiaryName,
+ });
+ setPaymentVerificationSource(nextBeneficiaryValid === true ? 'ocr' : '');
  setPaymentBeneficiaryHint(
  nextBeneficiaryValid === true
  ? `Оплата проведена на ${nextBeneficiaryName || 'разрешенные реквизиты'}.`
@@ -662,24 +766,13 @@ export function usePublicFormController(token: string | undefined) {
  : 'Автозаполнение не нашло ключевые поля. Заполните номер, дату и сумму вручную.'
  );
 
- setPaymentRecognitionDetails({
+ setPaymentRecognitionDetails(buildRecognitionDetailsFromExtracted(extracted, {
  number: nextNumber,
  date: nextDate,
  amount: nextAmount,
- payerBin: String(extracted.payment_order_bin_iin || '').trim(),
- beneficiaryValid: nextBeneficiaryValid,
- beneficiaryName: nextBeneficiaryName,
- beneficiaryBin: nextBeneficiaryBin,
- beneficiaryAccount: nextBeneficiaryAccount,
- beneficiaryBinMatched: extracted.payment_order_beneficiary_bin_matched,
- beneficiaryAccountMatched: extracted.payment_order_beneficiary_account_matched,
- beneficiaryReason: String(extracted.payment_order_beneficiary_reason || '').trim(),
- detectedBins: extracted.payment_order_detected_bins,
- detectedAccounts: extracted.payment_order_detected_accounts,
- acceptedBeneficiaries: extracted.payment_order_accepted_beneficiaries,
- beneficiaryChecks: extracted.payment_order_beneficiary_checks,
  ocrError: ocrErrorMessage,
- });
+ verificationSource: nextBeneficiaryValid === true ? 'ocr' : '',
+ }));
 
  if (nextBeneficiaryValid === false) {
  setErrors(prev => ({
@@ -726,6 +819,163 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderDate,
  paymentOrderNumber,
  questionnaireId,
+ ]);
+
+ const updatePaymentManualCorrectionState = useCallback((nextValues: {
+ number?: string;
+ date?: string;
+ amount?: string;
+ beneficiaryBin?: string;
+ beneficiaryAccount?: string;
+ }) => {
+ const correctedFields = getPaymentCorrectedFields(paymentOcrOriginal, {
+ number: nextValues.number ?? paymentOrderNumber,
+ date: nextValues.date ?? paymentOrderDate,
+ amount: nextValues.amount ?? paymentOrderAmount,
+ beneficiaryBin: nextValues.beneficiaryBin ?? paymentBeneficiaryBin,
+ beneficiaryAccount: nextValues.beneficiaryAccount ?? paymentBeneficiaryAccount,
+ });
+ setPaymentCorrectedFields(correctedFields);
+ setPaymentManualCorrection(correctedFields.length > 0);
+ return correctedFields;
+ }, [paymentBeneficiaryAccount, paymentBeneficiaryBin, paymentOcrOriginal, paymentOrderAmount, paymentOrderDate, paymentOrderNumber]);
+
+ const handlePaymentOrderNumberChange = useCallback((value: string) => {
+ setPaymentOrderNumber(value);
+ const correctedFields = updatePaymentManualCorrectionState({ number: value });
+ setPaymentRecognitionDetails(current => current ? {
+ ...current,
+ number: value,
+ correctedFields,
+ manualCorrection: correctedFields.length > 0,
+ } : current);
+ }, [updatePaymentManualCorrectionState]);
+
+ const handlePaymentOrderDateChange = useCallback((value: string) => {
+ setPaymentOrderDate(value);
+ const correctedFields = updatePaymentManualCorrectionState({ date: value });
+ setPaymentRecognitionDetails(current => current ? {
+ ...current,
+ date: value,
+ correctedFields,
+ manualCorrection: correctedFields.length > 0,
+ } : current);
+ }, [updatePaymentManualCorrectionState]);
+
+ const handlePaymentOrderAmountChange = useCallback((value: string) => {
+ setPaymentOrderAmount(value);
+ const correctedFields = updatePaymentManualCorrectionState({ amount: value });
+ setPaymentRecognitionDetails(current => current ? {
+ ...current,
+ amount: value,
+ correctedFields,
+ manualCorrection: correctedFields.length > 0,
+ } : current);
+ }, [updatePaymentManualCorrectionState]);
+
+ const handlePaymentBeneficiaryBinChange = useCallback((value: string) => {
+ setPaymentBeneficiaryBin(value);
+ setPaymentBeneficiaryValid(null);
+ setPaymentBeneficiaryHint('');
+ setPaymentVerificationSource('');
+ const correctedFields = updatePaymentManualCorrectionState({ beneficiaryBin: value });
+ setPaymentRecognitionDetails(current => current ? {
+ ...current,
+ beneficiaryBin: value,
+ beneficiaryValid: null,
+ beneficiaryReason: 'Проверьте исправленные реквизиты получателя.',
+ correctedFields,
+ manualCorrection: correctedFields.length > 0,
+ verificationSource: '',
+ } : current);
+ setErrors(prev => ({ ...prev, payment_order: undefined, payment_order_beneficiary_bin: undefined }));
+ }, [updatePaymentManualCorrectionState]);
+
+ const handlePaymentBeneficiaryAccountChange = useCallback((value: string) => {
+ setPaymentBeneficiaryAccount(value);
+ setPaymentBeneficiaryValid(null);
+ setPaymentBeneficiaryHint('');
+ setPaymentVerificationSource('');
+ const correctedFields = updatePaymentManualCorrectionState({ beneficiaryAccount: value });
+ setPaymentRecognitionDetails(current => current ? {
+ ...current,
+ beneficiaryAccount: value,
+ beneficiaryValid: null,
+ beneficiaryReason: 'Проверьте исправленные реквизиты получателя.',
+ correctedFields,
+ manualCorrection: correctedFields.length > 0,
+ verificationSource: '',
+ } : current);
+ setErrors(prev => ({ ...prev, payment_order: undefined, payment_order_beneficiary_account: undefined }));
+ }, [updatePaymentManualCorrectionState]);
+
+ const handleValidatePaymentBeneficiary = useCallback(async (): Promise<PaymentOrderExtractedFields | null> => {
+ const nextBin = normalizePaymentBeneficiaryBin(paymentBeneficiaryBin);
+ const nextAccount = normalizePaymentBeneficiaryAccount(paymentBeneficiaryAccount);
+ const nextErrors: ValidationErrors = {};
+ if (!nextBin || nextBin.length !== 12) nextErrors.payment_order_beneficiary_bin = 'Укажите БИН получателя, ровно 12 цифр.';
+ if (!nextAccount) nextErrors.payment_order_beneficiary_account = 'Укажите счет получателя IBAN.';
+ if (Object.keys(nextErrors).length > 0) {
+ setErrors(prev => ({ ...prev, ...nextErrors }));
+ return null;
+ }
+
+ setPaymentValidationLoading(true);
+ try {
+ const extracted = await validatePaymentOrderFields({
+ payment_order_beneficiary_bin: nextBin,
+ payment_order_beneficiary_account: nextAccount,
+ });
+ const isValid = extracted.payment_order_beneficiary_valid === true;
+ const correctedFields = getPaymentCorrectedFields(paymentOcrOriginal, {
+ number: paymentOrderNumber,
+ date: paymentOrderDate,
+ amount: paymentOrderAmount,
+ beneficiaryBin: nextBin,
+ beneficiaryAccount: nextAccount,
+ });
+ const verificationSource = correctedFields.length > 0 ? 'user_corrected' : 'ocr';
+ const beneficiaryName = String(extracted.payment_order_beneficiary_name || '').trim();
+
+ setPaymentBeneficiaryValid(isValid);
+ setPaymentBeneficiaryBin(String(extracted.payment_order_beneficiary_bin || nextBin));
+ setPaymentBeneficiaryAccount(String(extracted.payment_order_beneficiary_account || nextAccount));
+ setPaymentBeneficiaryName(beneficiaryName);
+ setPaymentCorrectedFields(correctedFields);
+ setPaymentManualCorrection(correctedFields.length > 0);
+ setPaymentVerificationSource(isValid ? verificationSource : '');
+ setPaymentRecognitionDetails(buildRecognitionDetailsFromExtracted(extracted, {
+ number: paymentOrderNumber,
+ date: paymentOrderDate,
+ amount: paymentOrderAmount,
+ manualCorrection: correctedFields.length > 0,
+ correctedFields,
+ verificationSource: isValid ? verificationSource : '',
+ }));
+ setPaymentBeneficiaryHint(isValid ? `Оплата проведена на ${beneficiaryName || 'разрешенные реквизиты'}.` : '');
+ setErrors(prev => ({
+ ...prev,
+ payment_order: isValid ? undefined : extracted.payment_order_beneficiary_reason || INVALID_PAYMENT_BENEFICIARY_ERROR,
+ payment_order_beneficiary_bin: undefined,
+ payment_order_beneficiary_account: undefined,
+ }));
+ return extracted;
+ } catch (error) {
+ logger.error('PublicFormPage', 'Manual payment beneficiary validation failed', error);
+ const message = error instanceof Error ? error.message : 'Не удалось проверить реквизиты получателя.';
+ setPaymentBeneficiaryValid(false);
+ setErrors(prev => ({ ...prev, payment_order: message }));
+ return null;
+ } finally {
+ setPaymentValidationLoading(false);
+ }
+ }, [
+ paymentBeneficiaryAccount,
+ paymentBeneficiaryBin,
+ paymentOcrOriginal,
+ paymentOrderAmount,
+ paymentOrderDate,
+ paymentOrderNumber,
  ]);
 
  const handleCommentAttachmentSelect = useCallback(async (files: FileList | File[]) => {
@@ -784,6 +1034,44 @@ export function usePublicFormController(token: string | undefined) {
  const paymentOrderNumberValue = normalizePaymentOrderNumber(paymentOrderNumber);
  const paymentOrderDateValue = normalizePaymentOrderDate(paymentOrderDate) || null;
  const paymentBinDigits = normalizeDigits(companyBin);
+ let finalBeneficiaryValid = paymentBeneficiaryValid === true;
+ let finalBeneficiaryBin = normalizePaymentBeneficiaryBin(paymentBeneficiaryBin);
+ let finalBeneficiaryAccount = normalizePaymentBeneficiaryAccount(paymentBeneficiaryAccount);
+ let finalBeneficiaryName = paymentBeneficiaryName;
+ let finalVerificationReason = paymentRecognitionDetails?.beneficiaryReason || '';
+ let finalCorrectedFields = getPaymentCorrectedFields(paymentOcrOriginal, {
+ number: paymentOrderNumberValue,
+ date: paymentOrderDateValue || '',
+ amount: paymentOrderAmount,
+ beneficiaryBin: finalBeneficiaryBin,
+ beneficiaryAccount: finalBeneficiaryAccount,
+ });
+ let finalVerificationSource: 'ocr' | 'user_corrected' | '' = finalBeneficiaryValid
+ ? (finalCorrectedFields.length > 0 ? 'user_corrected' : paymentVerificationSource || 'ocr')
+ : '';
+
+ if (!paymentOrderOptional && paymentOrderUrl) {
+ const validatedBeneficiary = await handleValidatePaymentBeneficiary();
+ finalBeneficiaryValid = validatedBeneficiary?.payment_order_beneficiary_valid === true;
+ finalBeneficiaryBin = normalizePaymentBeneficiaryBin(String(validatedBeneficiary?.payment_order_beneficiary_bin || finalBeneficiaryBin));
+ finalBeneficiaryAccount = normalizePaymentBeneficiaryAccount(String(validatedBeneficiary?.payment_order_beneficiary_account || finalBeneficiaryAccount));
+ finalBeneficiaryName = String(validatedBeneficiary?.payment_order_beneficiary_name || finalBeneficiaryName || '').trim();
+ finalVerificationReason = String(validatedBeneficiary?.payment_order_beneficiary_reason || '').trim();
+ finalCorrectedFields = getPaymentCorrectedFields(paymentOcrOriginal, {
+ number: paymentOrderNumberValue,
+ date: paymentOrderDateValue || '',
+ amount: paymentOrderAmount,
+ beneficiaryBin: finalBeneficiaryBin,
+ beneficiaryAccount: finalBeneficiaryAccount,
+ });
+ finalVerificationSource = finalBeneficiaryValid ? (finalCorrectedFields.length > 0 ? 'user_corrected' : 'ocr') : '';
+
+ if (!finalBeneficiaryValid) {
+ setErrors(prev => ({ ...prev, payment_order: finalVerificationReason || INVALID_PAYMENT_BENEFICIARY_ERROR }));
+ setSubmitting(false);
+ return;
+ }
+ }
 
  if (paymentOrderUrl && paymentOrderDateValue && paymentOrderAmountValue !== null && paymentOrderNumberValue) {
  const isDuplicate = await checkPaymentOrderDuplicate({
@@ -830,13 +1118,30 @@ export function usePublicFormController(token: string | undefined) {
  payment_order_number: paymentOrderNumberValue || '',
  payment_order_date: paymentOrderDateValue,
  payment_order_amount: paymentOrderAmountValue,
+ payment_order_beneficiary_valid: paymentOrderUrl ? finalBeneficiaryValid : null,
+ payment_order_beneficiary_bin: paymentOrderUrl ? finalBeneficiaryBin : '',
+ payment_order_beneficiary_account: paymentOrderUrl ? finalBeneficiaryAccount : '',
+ payment_order_beneficiary_name: paymentOrderUrl ? finalBeneficiaryName : '',
+ payment_ocr_original: paymentOrderUrl ? paymentOcrOriginal : null,
+ payment_final_data: paymentOrderUrl ? {
+ payment_order_number: paymentOrderNumberValue || '',
+ payment_order_date: paymentOrderDateValue,
+ payment_order_amount: paymentOrderAmountValue,
+ payment_order_beneficiary_bin: finalBeneficiaryBin,
+ payment_order_beneficiary_account: finalBeneficiaryAccount,
+ payment_order_beneficiary_name: finalBeneficiaryName,
+ } : null,
+ payment_manual_correction: paymentOrderUrl ? finalCorrectedFields.length > 0 : false,
+ payment_corrected_fields: paymentOrderUrl ? finalCorrectedFields : [],
+ payment_verification_source: paymentOrderUrl ? finalVerificationSource : '',
+ payment_verification_reason: paymentOrderUrl ? finalVerificationReason : '',
  updated_at: new Date().toISOString(),
  };
 
  async function updateCompanyWithOptionalColumnFallback(companyId: string) {
  let payload = { ...companyPayload };
 
- for (let attempt = 0; attempt < 3; attempt += 1) {
+ for (let attempt = 0; attempt < OPTIONAL_COMPANY_COLUMNS.length + 1; attempt += 1) {
  const { data, error } = await supabase
  .from('companies')
  .update(payload)
@@ -845,12 +1150,11 @@ export function usePublicFormController(token: string | undefined) {
  .maybeSingle();
 
  if (!error) return { data, error };
- if (isMissingCompanyColumnError(error, 'comments') && 'comments' in payload) {
- payload = omitCompanyColumn(payload, 'comments');
- continue;
- }
- if (isMissingCompanyColumnError(error, 'comment_attachments') && 'comment_attachments' in payload) {
- payload = omitCompanyColumn(payload, 'comment_attachments');
+ const missingOptionalColumn = OPTIONAL_COMPANY_COLUMNS.find(column => (
+ column in payload && isMissingCompanyColumnError(error, column)
+ ));
+ if (missingOptionalColumn) {
+ payload = omitCompanyColumn(payload, missingOptionalColumn);
  continue;
  }
  return { data, error };
@@ -870,7 +1174,7 @@ export function usePublicFormController(token: string | undefined) {
  ...companyPayload,
  };
 
- for (let attempt = 0; attempt < 3; attempt += 1) {
+ for (let attempt = 0; attempt < OPTIONAL_COMPANY_COLUMNS.length + 1; attempt += 1) {
  const { data, error } = await supabase
  .from('companies')
  .insert(payload)
@@ -878,12 +1182,11 @@ export function usePublicFormController(token: string | undefined) {
  .maybeSingle();
 
  if (!error) return { data, error };
- if (isMissingCompanyColumnError(error, 'comments') && 'comments' in payload) {
- payload = omitCompanyColumn(payload, 'comments');
- continue;
- }
- if (isMissingCompanyColumnError(error, 'comment_attachments') && 'comment_attachments' in payload) {
- payload = omitCompanyColumn(payload, 'comment_attachments');
+ const missingOptionalColumn = OPTIONAL_COMPANY_COLUMNS.find(column => (
+ column in payload && isMissingCompanyColumnError(error, column)
+ ));
+ if (missingOptionalColumn) {
+ payload = omitCompanyColumn(payload, missingOptionalColumn);
  continue;
  }
  return { data, error };
@@ -1096,8 +1399,14 @@ export function usePublicFormController(token: string | undefined) {
  companyPhone,
  directoryMatch,
  existingCompany,
+ handleValidatePaymentBeneficiary,
  noContractConfirmed,
  participants,
+ paymentBeneficiaryAccount,
+ paymentBeneficiaryName,
+ paymentBeneficiaryValid,
+ paymentBeneficiaryBin,
+ paymentOcrOriginal,
  paymentOrderAmount,
  paymentOrderDate,
  paymentOrderName,
@@ -1105,6 +1414,8 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderStorageBucket,
  paymentOrderStoragePath,
  paymentOrderUrl,
+ paymentRecognitionDetails,
+ paymentVerificationSource,
  questionnaireId,
  ]);
 
@@ -1333,6 +1644,12 @@ export function usePublicFormController(token: string | undefined) {
  paymentAutofillHint,
  paymentBeneficiaryHint,
  paymentRecognitionDetails,
+ paymentBeneficiaryBin,
+ paymentBeneficiaryAccount,
+ paymentValidationLoading,
+ paymentManualCorrection,
+ paymentCorrectedFields,
+ paymentVerificationSource,
  uploadingPaymentOrder,
  uploadingCommentAttachments,
  paymentOrderStage,
@@ -1365,9 +1682,6 @@ export function usePublicFormController(token: string | undefined) {
  setCompanyCity,
  setCompanyComments,
  setNoContractConfirmed,
- setPaymentOrderNumber,
- setPaymentOrderDate,
- setPaymentOrderAmount,
  setOpenCourseSelect,
  setCourseSearch,
  setCurrentPage,
@@ -1376,6 +1690,12 @@ export function usePublicFormController(token: string | undefined) {
  enableCompanyCreateMode,
  handlePhotoSelect,
  handlePaymentOrderSelect,
+ handlePaymentOrderNumberChange,
+ handlePaymentOrderDateChange,
+ handlePaymentOrderAmountChange,
+ handlePaymentBeneficiaryBinChange,
+ handlePaymentBeneficiaryAccountChange,
+ handleValidatePaymentBeneficiary,
  handleCommentAttachmentSelect,
  removeCommentAttachment,
  handleSubmit,

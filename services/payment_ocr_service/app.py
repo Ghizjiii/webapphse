@@ -33,19 +33,40 @@ TRUSTED_BENEFICIARIES = [
         "name": 'ТОО "HSE Company"',
         "alias": "Учебный центр БиОТ",
         "bin": "211040027532",
-        "account": "KZ73601A871003898131",
+        "accounts": [
+            "KZ30601A871001584291",
+            "KZ73601A871003898131",
+            "KZ09601A871002455341",
+            "KZ26601A871041267451",
+            "KZ64601A871013330961",
+            "KZ82601A871040285191",
+        ],
+    },
+    {
+        "name": 'ТОО "HSE Engineering"',
+        "alias": "",
+        "bin": "160440025655",
+        "accounts": [
+            "KZ966017161000000922",
+        ],
     },
     {
         "name": 'ТОО "Safety construction"',
         "alias": "Учебный центр",
         "bin": "201140011964",
-        "account": "KZ18601A871019926431",
+        "accounts": [
+            "KZ67601A871016447711",
+            "KZ18601A871019926431",
+            "KZ29601A871060679231",
+        ],
     },
     {
         "name": 'ТОО "Safety Education Group"',
         "alias": "",
         "bin": "251240022279",
-        "account": "KZ97722S000050501340",
+        "accounts": [
+            "KZ97722S000050501340",
+        ],
     },
 ]
 
@@ -154,17 +175,7 @@ def normalize_date(raw: str) -> str:
 
 
 def normalize_account(value: str) -> str:
-    accountish = str(value or "").translate(str.maketrans({
-        "О": "0",
-        "о": "0",
-        "O": "0",
-        "o": "0",
-        "С": "0",
-        "с": "0",
-        "C": "0",
-        "c": "0",
-    }))
-    return re.sub(r"[^A-Z0-9]", "", accountish.upper())
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
 
 def normalize_digits_ocr(value: str) -> str:
@@ -180,14 +191,7 @@ def normalize_digits_ocr(value: str) -> str:
 
 
 def find_bin_candidates(source: str) -> list[str]:
-    digitish = str(source or "").translate(str.maketrans({
-        "О": "0",
-        "о": "0",
-        "O": "0",
-        "o": "0",
-        "З": "3",
-        "з": "3",
-    }))
+    digitish = re.sub(r"\D+", "", str(source or ""))
     return re.findall(r"(?<!\d)(\d{12})(?!\d)", digitish)
 
 
@@ -225,12 +229,6 @@ def accepted_beneficiary_options() -> list[dict[str, Any]]:
         }
         for beneficiary in TRUSTED_BENEFICIARIES
     ]
-
-
-def hamming_distance(left: str, right: str) -> int:
-    if len(left) != len(right):
-        return max(len(left), len(right))
-    return sum(1 for a, b in zip(left, right) if a != b)
 
 
 def clean_payment_number(value: str) -> str:
@@ -578,7 +576,7 @@ def pick_amount(source: str) -> str:
 def pick_trusted_beneficiary(source: str) -> dict[str, Any]:
     source_accounts = normalize_account(source)
     source_account_candidates = find_account_candidates(source)
-    source_digits = normalize_digits_ocr(source)
+    source_digits = re.sub(r"\D+", "", str(source or ""))
     source_bin_candidates = find_bin_candidates(source)
     checks: list[dict[str, Any]] = []
 
@@ -588,10 +586,7 @@ def pick_trusted_beneficiary(source: str) -> dict[str, Any]:
         bin_matches = bin_digits in source_digits
         matched_account = ""
         for account in accounts:
-            if account in source_accounts or any(
-                hamming_distance(candidate, account) <= 2
-                for candidate in source_account_candidates
-            ):
+            if account in source_accounts or account in source_account_candidates:
                 matched_account = account
                 break
         account_matches = bool(matched_account)

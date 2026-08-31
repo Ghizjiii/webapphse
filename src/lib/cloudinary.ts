@@ -18,6 +18,7 @@ export interface PaymentOrderExtractedFields {
   payment_order_detected_accounts?: string[];
   payment_order_beneficiary_checks?: PaymentOrderBeneficiaryCheck[];
   payment_order_accepted_beneficiaries?: PaymentOrderAcceptedBeneficiary[];
+  payment_verification_source?: 'ocr' | 'user_corrected';
 }
 
 export interface PaymentOrderAcceptedBeneficiary {

@@ -111,6 +111,16 @@ export interface Company {
   payment_order_number?: string;
   payment_order_date?: string | null;
   payment_order_amount?: number | null;
+  payment_order_beneficiary_valid?: boolean | null;
+  payment_order_beneficiary_bin?: string;
+  payment_order_beneficiary_account?: string;
+  payment_order_beneficiary_name?: string;
+  payment_ocr_original?: Record<string, unknown> | null;
+  payment_final_data?: Record<string, unknown> | null;
+  payment_manual_correction?: boolean;
+  payment_corrected_fields?: string[];
+  payment_verification_source?: 'ocr' | 'user_corrected' | string | null;
+  payment_verification_reason?: string;
   payment_order_storage_bucket?: string;
   payment_order_storage_path?: string;
   payment_is_paid?: boolean;

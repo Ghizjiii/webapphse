@@ -724,6 +724,15 @@ export default function QuestionnairePage() {
   const paymentOrderAmount = paymentSource?.payment_order_amount ?? null;
   const paymentUploadedAt = String(paymentSource?.payment_order_uploaded_at || '').trim();
   const paymentIsPaid = Boolean(paymentSource?.payment_is_paid);
+  const paymentBeneficiaryName = String(paymentSource?.payment_order_beneficiary_name || '').trim();
+  const paymentBeneficiaryBin = String(paymentSource?.payment_order_beneficiary_bin || '').trim();
+  const paymentBeneficiaryAccount = String(paymentSource?.payment_order_beneficiary_account || '').trim();
+  const paymentManualCorrection = Boolean(paymentSource?.payment_manual_correction);
+  const paymentCorrectedFields = Array.isArray(paymentSource?.payment_corrected_fields)
+    ? paymentSource.payment_corrected_fields.map(String).filter(Boolean)
+    : [];
+  const paymentVerificationSource = String(paymentSource?.payment_verification_source || '').trim();
+  const paymentVerificationReason = String(paymentSource?.payment_verification_reason || '').trim();
   const requiredProtocolCount = protocols.filter(protocol => Number(protocol.employees_count || 0) > 0).length;
   const generatedProtocolCount = protocols.filter(protocol => (
     Number(protocol.employees_count || 0) > 0 &&
@@ -1206,6 +1215,31 @@ export default function QuestionnairePage() {
                     </span>
                   )}
                 </CompactField>
+
+                {paymentManualCorrection && (
+                  <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    <div className="font-semibold">Данные платежного поручения исправлены пользователем</div>
+                    {paymentCorrectedFields.length > 0 && (
+                      <div className="mt-1 text-xs">Измененные поля: {paymentCorrectedFields.join(', ')}</div>
+                    )}
+                  </div>
+                )}
+
+                {(paymentBeneficiaryName || paymentBeneficiaryBin || paymentBeneficiaryAccount || paymentVerificationSource || paymentVerificationReason) && (
+                  <CompactField label="Получатель платежа" className="sm:col-span-2" valueClassName="break-words">
+                    <div className="space-y-1">
+                      <div>{paymentBeneficiaryName || '—'}</div>
+                      <div className="text-xs text-gray-600">БИН: {paymentBeneficiaryBin || '—'}</div>
+                      <div className="text-xs text-gray-600">Счет: {paymentBeneficiaryAccount || '—'}</div>
+                      {paymentVerificationSource && (
+                        <div className="text-xs text-gray-500">
+                          Источник проверки: {paymentVerificationSource === 'user_corrected' ? 'ручная корректировка клиента' : 'OCR'}
+                        </div>
+                      )}
+                      {paymentVerificationReason && <div className="text-xs text-gray-500">Причина/результат: {paymentVerificationReason}</div>}
+                    </div>
+                  </CompactField>
+                )}
 
                 <CompactField label="Номер, дата и сумма">
                   {companyEditing ? (

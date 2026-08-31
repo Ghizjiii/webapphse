@@ -5,6 +5,48 @@ const OCR_API_URL = String(Deno.env.get("PAYMENT_OCR_API_URL") || "").trim().rep
 const OCR_API_TOKEN = String(Deno.env.get("PAYMENT_OCR_API_TOKEN") || "").trim();
 const LOCAL_OCR_API_URL = String(Deno.env.get("LOCAL_PAYMENT_OCR_API_URL") || "http://ocr-api:8000").trim().replace(/\/+$/, "");
 
+const TRUSTED_BENEFICIARIES = [
+  {
+    name: 'ТОО "HSE Company"',
+    bin: "211040027532",
+    accounts: [
+      "KZ30601A871001584291",
+      "KZ73601A871003898131",
+      "KZ09601A871002455341",
+      "KZ26601A871041267451",
+      "KZ64601A871013330961",
+      "KZ82601A871040285191",
+    ],
+  },
+  {
+    name: 'ТОО "HSE Engineering"',
+    bin: "160440025655",
+    accounts: ["KZ966017161000000922"],
+  },
+  {
+    name: 'ТОО "Safety construction"',
+    bin: "201140011964",
+    accounts: [
+      "KZ67601A871016447711",
+      "KZ18601A871019926431",
+      "KZ29601A871060679231",
+    ],
+  },
+  {
+    name: 'ТОО "Safety Education Group"',
+    bin: "251240022279",
+    accounts: ["KZ97722S000050501340"],
+  },
+];
+
+function normalizeBin(value: unknown): string {
+  return String(value ?? "").replace(/\D+/g, "");
+}
+
+function normalizeIban(value: unknown): string {
+  return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
 function extractErrorMessage(payload: unknown, fallback: string): string {
   if (payload && typeof payload === "object") {
     const record = payload as Record<string, unknown>;
@@ -52,6 +94,67 @@ function getRecordValue(record: Record<string, unknown>, keys: string[]): unknow
   return undefined;
 }
 
+function validateBeneficiaryFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const bin = normalizeBin(getRecordValue(fields, ["payment_order_beneficiary_bin", "beneficiary_bin", "bin"]));
+  const account = normalizeIban(getRecordValue(fields, ["payment_order_beneficiary_account", "beneficiary_account", "account", "iban"]));
+  const checks = TRUSTED_BENEFICIARIES.map(beneficiary => ({
+    name: beneficiary.name,
+    bin: beneficiary.bin,
+    accounts: beneficiary.accounts,
+    bin_matched: beneficiary.bin === bin,
+    account_matched: beneficiary.accounts.includes(account),
+  }));
+
+  const matchedBeneficiary = TRUSTED_BENEFICIARIES.find(beneficiary => (
+    beneficiary.bin === bin && beneficiary.accounts.includes(account)
+  ));
+
+  if (matchedBeneficiary) {
+    return {
+      payment_order_beneficiary_valid: true,
+      payment_order_beneficiary_name: matchedBeneficiary.name,
+      payment_order_beneficiary_bin: matchedBeneficiary.bin,
+      payment_order_beneficiary_account: account,
+      payment_order_beneficiary_bin_matched: true,
+      payment_order_beneficiary_account_matched: true,
+      payment_order_detected_bins: bin ? [bin] : undefined,
+      payment_order_detected_accounts: account ? [account] : undefined,
+      payment_order_beneficiary_checks: checks,
+      payment_order_accepted_beneficiaries: TRUSTED_BENEFICIARIES,
+    };
+  }
+
+  const anyBinMatch = checks.some(check => check.bin_matched);
+  const anyAccountMatch = checks.some(check => check.account_matched);
+  let reason = "Не найдено совпадение БИН и счета с разрешенными реквизитами.";
+  if (bin && bin.length !== 12) {
+    reason = "БИН получателя должен содержать ровно 12 цифр.";
+  } else if (!account) {
+    reason = "Укажите счет получателя IBAN.";
+  } else if (!anyBinMatch && !anyAccountMatch) {
+    reason = "БИН и счет получателя не найдены в разрешенном списке.";
+  } else if (!anyBinMatch) {
+    reason = "Счет найден в разрешенном списке, но БИН получателя не совпал.";
+  } else if (!anyAccountMatch) {
+    reason = "БИН получателя совпал, но счет получателя не найден среди разрешенных.";
+  } else {
+    reason = "БИН и счет найдены, но относятся к разным разрешенным компаниям.";
+  }
+
+  return {
+    payment_order_beneficiary_valid: false,
+    payment_order_beneficiary_bin: bin,
+    payment_order_beneficiary_account: account,
+    payment_order_beneficiary_bin_matched: anyBinMatch,
+    payment_order_beneficiary_account_matched: anyAccountMatch,
+    payment_order_beneficiary_reason: reason,
+    payment_order_detected_bins: bin ? [bin] : undefined,
+    payment_order_detected_accounts: account ? [account] : undefined,
+    payment_order_beneficiary_checks: checks,
+    payment_order_accepted_beneficiaries: TRUSTED_BENEFICIARIES,
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return preflightResponse(req);
@@ -64,6 +167,26 @@ Deno.serve(async (req: Request) => {
 
   if (req.method !== "POST") {
     return jsonResponse(req, 405, { error: "Method not allowed" });
+  }
+
+  const contentType = String(req.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = await req.json();
+      const record = payload && typeof payload === "object"
+        ? payload as Record<string, unknown>
+        : {};
+      if (String(record.mode || "").trim() === "validate") {
+        return jsonResponse(req, 200, {
+          ok: true,
+          source: "manual",
+          extracted: validateBeneficiaryFields(record),
+        });
+      }
+      return jsonResponse(req, 400, { error: "Unsupported JSON mode" });
+    } catch {
+      return jsonResponse(req, 400, { error: "Invalid JSON payload" });
+    }
   }
 
   if (!OCR_API_URL) {
