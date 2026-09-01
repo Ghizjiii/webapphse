@@ -16,6 +16,27 @@ export function getParticipantDisplayName(parts: Partial<ParticipantNameParts> &
   return String(parts.full_name || '').trim() || buildParticipantFullName(parts);
 }
 
+function normalizeNameToken(token: string): string {
+  return token
+    .split('-')
+    .map(part => {
+      const trimmed = part.trim();
+      if (!trimmed) return trimmed;
+      return trimmed.charAt(0).toLocaleUpperCase('ru-RU') + trimmed.slice(1).toLocaleLowerCase('ru-RU');
+    })
+    .join('-');
+}
+
+export function normalizeParticipantFullName(value: string | null | undefined): string {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map(normalizeNameToken)
+    .join(' ');
+}
+
 export function splitParticipantFullName(value: string): ParticipantNameParts {
   const tokens = String(value || '')
     .trim()

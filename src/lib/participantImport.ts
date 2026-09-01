@@ -1,4 +1,4 @@
-import { buildParticipantFullName } from './participantName';
+import { buildParticipantFullName, normalizeParticipantFullName } from './participantName';
 
 export interface ParticipantImportRow {
   full_name: string;
@@ -204,14 +204,14 @@ export async function parseParticipantImportFile(file: File, availableCourses: s
       first_name: normalizeText(values.first_name),
       patronymic: normalizeText(values.patronymic),
     };
-    const normalizedFullName = fullName || buildParticipantFullName(separateName);
+    const normalizedFullName = normalizeParticipantFullName(fullName || buildParticipantFullName(separateName));
     const courses = splitCourses(String(values.courses || ''), resolveCourse);
 
     const item: ParticipantImportRow = {
       full_name: normalizedFullName,
-      last_name: separateName.last_name,
-      first_name: separateName.first_name,
-      patronymic: separateName.patronymic,
+      last_name: normalizeParticipantFullName(separateName.last_name),
+      first_name: normalizeParticipantFullName(separateName.first_name),
+      patronymic: normalizeParticipantFullName(separateName.patronymic),
       email: normalizeText(values.email),
       position: normalizeText(values.position),
       category: normalizeText(values.category),

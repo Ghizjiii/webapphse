@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Link as LinkIcon, Copy, Power, PowerOff, Clock, CheckCircle2, Archive, RefreshCw, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, Link as LinkIcon, Copy, Power, PowerOff, Clock, CheckCircle2, Archive, RefreshCw, Trash2, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
 import { getFreshAccessToken, supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -161,6 +161,10 @@ export default function DashboardPage() {
   const [showCourseDetails, setShowCourseDetails] = useState(true);
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
+  const topTableScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableElementRef = useRef<HTMLTableElement | null>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(1840);
   const currentUserId = user?.id || '';
   const currentUserEmail = user?.email || '';
   const currentProfileEmail = profile?.email || '';
@@ -185,6 +189,26 @@ export default function DashboardPage() {
     } : null,
     currentProfileEmail || currentUserEmail,
   );
+
+  const updateTableScrollWidth = useCallback(() => {
+    setTableScrollWidth(tableElementRef.current?.scrollWidth || tableScrollRef.current?.scrollWidth || 1840);
+  }, []);
+
+  const syncTableScroll = useCallback((source: 'top' | 'body') => {
+    const from = source === 'top' ? topTableScrollRef.current : tableScrollRef.current;
+    const to = source === 'top' ? tableScrollRef.current : topTableScrollRef.current;
+    if (!from || !to || Math.abs(to.scrollLeft - from.scrollLeft) < 1) return;
+    to.scrollLeft = from.scrollLeft;
+  }, []);
+
+  const scrollTable = useCallback((direction: 'left' | 'right') => {
+    const target = tableScrollRef.current;
+    if (!target) return;
+    target.scrollBy({
+      left: direction === 'right' ? 520 : -520,
+      behavior: 'smooth',
+    });
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -526,6 +550,22 @@ export default function DashboardPage() {
       setCurrentPage(nextTotalPages);
     }
   }, [filteredRows.length, pageSize, currentPage]);
+
+  useEffect(() => {
+    updateTableScrollWidth();
+
+    const tableElement = tableElementRef.current;
+    if (!tableElement) return;
+
+    const resizeObserver = new ResizeObserver(updateTableScrollWidth);
+    resizeObserver.observe(tableElement);
+    window.addEventListener('resize', updateTableScrollWidth);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateTableScrollWidth);
+    };
+  }, [currentPage, filteredRows.length, pageSize, showCourseDetails, updateTableScrollWidth]);
 
   function getFormUrl(token: string) {
     return getPublicFormUrl(token);
@@ -974,8 +1014,40 @@ export default function DashboardPage() {
             </div>
           </div>
           {renderPaginationControls('border-b border-gray-100')}
-          <div className="overflow-x-auto overscroll-x-contain">
-          <table className="min-w-[1840px] w-full text-xs sm:text-sm">
+          <div className="relative">
+            <div
+              ref={topTableScrollRef}
+              onScroll={() => syncTableScroll('top')}
+              className="overflow-x-auto overscroll-x-contain border-b border-gray-100 bg-white"
+            >
+              <div className="h-3" style={{ width: tableScrollWidth }} />
+            </div>
+            <div className="pointer-events-none sticky top-20 z-30 -mb-12 flex justify-between px-3 pt-3">
+              <button
+                type="button"
+                onClick={() => scrollTable('left')}
+                className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-500 shadow-lg shadow-slate-900/10 transition-colors hover:border-blue-200 hover:text-blue-600"
+                aria-label="Прокрутить таблицу влево"
+                title="Прокрутить таблицу влево"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTable('right')}
+                className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-500 shadow-lg shadow-slate-900/10 transition-colors hover:border-blue-200 hover:text-blue-600"
+                aria-label="Прокрутить таблицу вправо"
+                title="Прокрутить таблицу вправо"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+            <div
+              ref={tableScrollRef}
+              onScroll={() => syncTableScroll('body')}
+              className="overflow-x-auto overscroll-x-contain"
+            >
+          <table ref={tableElementRef} className="min-w-[1840px] w-full text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60">
                 <th className="sticky left-0 z-20 w-16 bg-gray-50 px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">№</th>
@@ -1210,6 +1282,7 @@ export default function DashboardPage() {
               })}
             </tbody>
           </table>
+            </div>
           </div>
           {renderPaginationControls('border-t border-gray-100')}
           </>

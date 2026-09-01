@@ -410,13 +410,22 @@ def pick_number_and_date(source: str) -> tuple[str, str]:
     bank = source_bank(source)
 
     if bank == "kaspi":
-        m_num = re.search(
-            r"(?:№|no|nо|n\?)\s*квитанц\w*\s+([a-zа-я0-9\-/]{2,60})",
-            source,
-            flags=re.IGNORECASE,
-        )
-        if m_num:
-            number = clean_payment_number(m_num.group(1))
+        receipt_patterns = [
+            r"(?:№|no|nо|n\.?|n\?|номер)\s*квитанц\w*[\s:№#-]*(q\s*r\s*\d[\d\s]{5,24})",
+            r"квитанц\w*[\s:№#-]*(q\s*r\s*\d[\d\s]{5,24})",
+            r"(?:№|no|nо|n\.?|n\?|номер)\s*квитанц\w*[\s:№#-]*([a-zа-я0-9\-/]{2,60})",
+            r"квитанц\w*[\s:№#-]*([a-zа-я0-9\-/]{2,60})",
+        ]
+        for pattern in receipt_patterns:
+            m_num = re.search(pattern, source, flags=re.IGNORECASE)
+            if m_num:
+                number = clean_payment_number(m_num.group(1))
+                if number:
+                    break
+        if not number:
+            m_qr = re.search(r"\b(?:q|o|о|0)r\s*\d[\d\s]{7,24}\b", source, flags=re.IGNORECASE)
+            if m_qr:
+                number = clean_payment_number(m_qr.group(0))
 
         m_date = re.search(
             r"дата\s+и\s+время(?:\s+по\s+астане)?\s+(\d{2}[.\-/]\d{2}[.\-/]\d{4})",

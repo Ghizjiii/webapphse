@@ -14,7 +14,7 @@ import {
  normalizePreviousElectricalSafetyGroup,
 } from '../../lib/electricalSafety';
 import { logger } from '../../lib/logger';
-import { getParticipantDisplayName } from '../../lib/participantName';
+import { getParticipantDisplayName, normalizeParticipantFullName } from '../../lib/participantName';
 import { parseParticipantImportFile } from '../../lib/participantImport';
 import type { CommentAttachment, Company, Participant, QuestionnaireRequestType, RefCompanyDirectory, RefCoursePrice } from '../../types';
 import {
@@ -524,10 +524,10 @@ export function usePublicFormController(token: string | undefined) {
         setParticipants(loadedParticipants.map((participant: Participant) => ({
           id: participant.id,
           isPersisted: true,
-          full_name: getParticipantDisplayName(participant),
-          last_name: participant.last_name || '',
-          first_name: participant.first_name || '',
-          patronymic: participant.patronymic || '',
+          full_name: normalizeParticipantFullName(getParticipantDisplayName(participant)),
+          last_name: normalizeParticipantFullName(participant.last_name),
+          first_name: normalizeParticipantFullName(participant.first_name),
+          patronymic: normalizeParticipantFullName(participant.patronymic),
           email: participant.email || '',
  position: participant.position || '',
  category: participant.category || '',
@@ -1260,7 +1260,12 @@ export function usePublicFormController(token: string | undefined) {
 
  for (let index = 0; index < participantsToSubmit.length; index++) {
  const participant = participantsToSubmit[index];
- const fullName = getParticipantDisplayName(participant);
+ const normalizedNameParts = {
+ last_name: normalizeParticipantFullName(participant.last_name),
+ first_name: normalizeParticipantFullName(participant.first_name),
+ patronymic: normalizeParticipantFullName(participant.patronymic),
+ };
+ const fullName = normalizeParticipantFullName(getParticipantDisplayName({ ...participant, ...normalizedNameParts }));
 
  let photoUrl = participant.photo_url;
  if (participant.photoFile) {
@@ -1281,9 +1286,9 @@ export function usePublicFormController(token: string | undefined) {
  if (existingParticipant) {
  await supabase.from('participants').update({
  full_name: fullName,
- last_name: participant.last_name || '',
- first_name: participant.first_name || '',
- patronymic: participant.patronymic || '',
+ last_name: normalizedNameParts.last_name,
+ first_name: normalizedNameParts.first_name,
+ patronymic: normalizedNameParts.patronymic,
  email: participant.email.trim(),
  position: participant.position,
  category: participant.category,
@@ -1309,9 +1314,9 @@ export function usePublicFormController(token: string | undefined) {
  questionnaire_id: questionnaireId,
  company_id: companyId,
  full_name: fullName,
- last_name: participant.last_name || '',
- first_name: participant.first_name || '',
- patronymic: participant.patronymic || '',
+ last_name: normalizedNameParts.last_name,
+ first_name: normalizedNameParts.first_name,
+ patronymic: normalizedNameParts.patronymic,
  email: participant.email.trim(),
  position: participant.position,
  category: participant.category,

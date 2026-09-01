@@ -4,7 +4,7 @@ import SortableHeader from './SortableHeader';
 import ResizableTableContainer from './ResizableTableContainer';
 import { supabase } from '../lib/supabase';
 import { uploadPhoto } from '../lib/cloudinary';
-import { getParticipantDisplayName } from '../lib/participantName';
+import { getParticipantDisplayName, normalizeParticipantFullName } from '../lib/participantName';
 import { parseParticipantImportFile } from '../lib/participantImport';
 import { PARTICIPANT_IMPORT_HELP_URL, PARTICIPANT_IMPORT_TEMPLATE_URL } from '../lib/participantImportAssets';
 import {
@@ -38,6 +38,15 @@ function sortParticipants(list: Participant[], cfg: SortConfig | null): Particip
     const cmp = aVal.localeCompare(bVal, 'ru');
     return cfg.direction === 'asc' ? cmp : -cmp;
   });
+}
+
+function normalizeParticipantPatch(patch: Partial<Participant>): Partial<Participant> {
+  const next = { ...patch };
+  if ('full_name' in next) next.full_name = normalizeParticipantFullName(next.full_name);
+  if ('last_name' in next) next.last_name = normalizeParticipantFullName(next.last_name);
+  if ('first_name' in next) next.first_name = normalizeParticipantFullName(next.first_name);
+  if ('patronymic' in next) next.patronymic = normalizeParticipantFullName(next.patronymic);
+  return next;
 }
 
 interface EditCell {
@@ -174,9 +183,9 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
         ? getParticipantDisplayName(currentParticipant)
         : String((currentParticipant as unknown as Record<string, unknown>)[currentCell.field] ?? '')
       : '';
-    const optimisticPatch = currentCell.field === 'full_name'
+    const optimisticPatch = normalizeParticipantPatch(currentCell.field === 'full_name'
       ? { full_name: editValue } as Partial<Participant>
-      : { [currentCell.field]: editValue } as Partial<Participant>;
+      : { [currentCell.field]: editValue } as Partial<Participant>);
 
     applyParticipantPatch(currentCell.participantId, optimisticPatch);
     setSaving(true);
@@ -199,12 +208,13 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
   }
 
   async function saveParticipantPatch(participantId: string, patch: Partial<Participant>) {
+    const normalizedPatch = normalizeParticipantPatch(patch);
     const previousParticipant = localParticipants.find(participant => participant.id === participantId) || null;
-    applyParticipantPatch(participantId, patch);
+    applyParticipantPatch(participantId, normalizedPatch);
     setSaving(true);
     const { error } = await supabase
       .from('participants')
-      .update({ ...patch, updated_at: new Date().toISOString() })
+      .update({ ...normalizedPatch, updated_at: new Date().toISOString() })
       .eq('id', participantId);
     if (error) {
       showToast('error', UI.saveError);
@@ -264,7 +274,7 @@ export default function ParticipantsTable({ questionnaireId, companyId, particip
           .insert({
             questionnaire_id: questionnaireId,
             company_id: companyId,
-            full_name: row.full_name,
+            full_name: normalizeParticipantFullName(row.full_name),
             last_name: '',
             first_name: '',
             patronymic: '',
