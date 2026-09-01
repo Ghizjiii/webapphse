@@ -362,7 +362,7 @@ export function usePublicFormController(token: string | undefined) {
  normalizePaymentOrderDate(paymentOrderDate) &&
  paymentOrderAmountParsed !== null
  );
- const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && paymentBeneficiaryValid === true && !paymentOrderDuplicate;
+ const paymentOrderReady = Boolean(paymentOrderUrl) && paymentOrderMetaReady && paymentBeneficiaryValid !== false && !paymentOrderDuplicate;
  const isInternalRequest = requestType === 'internal';
  const photoRequired = isInternalRequest;
  const canEditParticipants = canFillParticipants && (paymentOrderOptional || paymentOrderReady);
@@ -632,7 +632,7 @@ export function usePublicFormController(token: string | undefined) {
  ) {
  nextErrors.payment_order_amount = `Сумма выбранных курсов ${selectedCoursesTotal.total.toLocaleString('ru-RU')} ₸ больше суммы платежного документа ${amountParsed.toLocaleString('ru-RU')} ₸.`;
  }
- if (paymentOrderUrl && paymentBeneficiaryValid !== true) nextErrors.payment_order = paymentRecognitionDetails?.beneficiaryReason || INVALID_PAYMENT_BENEFICIARY_ERROR;
+ if (paymentBeneficiaryValid === false) nextErrors.payment_order = paymentRecognitionDetails?.beneficiaryReason || INVALID_PAYMENT_BENEFICIARY_ERROR;
  if (paymentOrderDuplicate) nextErrors.payment_order = DUPLICATE_PAYMENT_ORDER_ERROR;
  }
 
@@ -1050,7 +1050,7 @@ export function usePublicFormController(token: string | undefined) {
  ? (finalCorrectedFields.length > 0 ? 'user_corrected' : paymentVerificationSource || 'ocr')
  : '';
 
- if (!paymentOrderOptional && paymentOrderUrl) {
+ if (!paymentOrderOptional && paymentOrderUrl && paymentManualCorrection) {
  const validatedBeneficiary = await handleValidatePaymentBeneficiary();
  finalBeneficiaryValid = validatedBeneficiary?.payment_order_beneficiary_valid === true;
  finalBeneficiaryBin = normalizePaymentBeneficiaryBin(String(validatedBeneficiary?.payment_order_beneficiary_bin || finalBeneficiaryBin));
