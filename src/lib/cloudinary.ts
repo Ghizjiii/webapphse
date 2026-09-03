@@ -1,6 +1,22 @@
 ﻿const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
+function externalizeReturnedSupabaseUrl(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = new URL(raw);
+    const publicOrigin = String(SUPABASE_URL || '').trim().replace(/\/+$/, '');
+    if (publicOrigin && ['kong', 'localhost', '127.0.0.1'].includes(parsed.hostname)) {
+      return `${publicOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 export interface PaymentOrderExtractedFields {
   payment_order_number?: string;
   payment_order_date?: string;
@@ -155,7 +171,7 @@ export async function uploadPhoto(file: File, folder = 'hse-participants'): Prom
     throw new Error(data.error || 'Не удалось загрузить файл');
   }
 
-  return String(data.secure_url || '');
+  return externalizeReturnedSupabaseUrl(data.secure_url);
 }
 
 export async function uploadPaymentOrder(file: File): Promise<UploadedPaymentOrder> {
@@ -179,7 +195,7 @@ export async function uploadPaymentOrder(file: File): Promise<UploadedPaymentOrd
   }
 
   return {
-    secure_url: String(data.secure_url || ''),
+    secure_url: externalizeReturnedSupabaseUrl(data.secure_url),
     storage_bucket: String(data.storage_bucket || ''),
     storage_path: String(data.storage_path || ''),
   };
@@ -206,7 +222,7 @@ export async function uploadCommentAttachment(file: File): Promise<UploadedComme
   }
 
   return {
-    secure_url: String(data.secure_url || ''),
+    secure_url: externalizeReturnedSupabaseUrl(data.secure_url),
     storage_bucket: String(data.storage_bucket || ''),
     storage_path: String(data.storage_path || ''),
     name: String(data.name || file.name || ''),

@@ -135,6 +135,34 @@ function publicStorageUrl(req: Request, bucket: string, objectPath: string): str
     .join("/")}`;
 }
 
+function publicSupabaseOrigin(req: Request): string {
+  const configuredOrigin =
+    Deno.env.get("PUBLIC_SUPABASE_URL") ||
+    Deno.env.get("SUPABASE_PUBLIC_URL") ||
+    Deno.env.get("EXTERNAL_SUPABASE_URL") ||
+    "";
+  const forwardedProto = req.headers.get("x-forwarded-proto") || "https";
+  const forwardedHost = req.headers.get("x-forwarded-host") || "";
+  const forwardedOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : "";
+  return (configuredOrigin || forwardedOrigin || new URL(req.url).origin).replace(/\/+$/, "");
+}
+
+function externalizeSupabaseUrl(req: Request, value: string | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw);
+    const publicOrigin = publicSupabaseOrigin(req);
+    if (parsed.hostname === "kong" || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+      return `${publicOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return preflightResponse(req);
@@ -232,7 +260,7 @@ Deno.serve(async (req: Request) => {
       }
 
       return jsonResponse(req, 200, {
-        secure_url: signed?.signedUrl || "",
+        secure_url: externalizeSupabaseUrl(req, signed?.signedUrl),
         storage_bucket: paymentOrdersBucket,
         storage_path: objectPath,
       });
@@ -293,7 +321,7 @@ Deno.serve(async (req: Request) => {
       }
 
       return jsonResponse(req, 200, {
-        secure_url: signed?.signedUrl || "",
+        secure_url: externalizeSupabaseUrl(req, signed?.signedUrl),
         storage_bucket: commentAttachmentsBucket,
         storage_path: objectPath,
         name: String(file.name || ""),

@@ -16,6 +16,7 @@ import {
 import { logger } from '../../lib/logger';
 import { getParticipantDisplayName, normalizeParticipantFullName } from '../../lib/participantName';
 import { parseParticipantImportFile } from '../../lib/participantImport';
+import { externalizeSupabaseStorageUrl } from '../../lib/supabaseStorageUrl';
 import type { CommentAttachment, Company, Participant, QuestionnaireRequestType, RefCompanyDirectory, RefCoursePrice } from '../../types';
 import {
  applyDirectoryMatchToCompany,
@@ -139,7 +140,7 @@ function normalizeCommentAttachments(value: unknown): CommentAttachment[] {
  return value
  .map<CommentAttachment | null>((item, index) => {
  const record = item as Record<string, unknown>;
- const url = String(record.url || record.secure_url || '').trim();
+ const url = externalizeSupabaseStorageUrl(String(record.url || record.secure_url || '').trim());
  const name = String(record.name || '').trim();
  if (!url || !name) return null;
  return {
@@ -477,7 +478,7 @@ export function usePublicFormController(token: string | undefined) {
  setCompanyComments(String(company.comments || ''));
  setCommentAttachments(normalizeCommentAttachments(company.comment_attachments));
  setNoContractConfirmed(Boolean(company.no_contract_confirmed));
- setPaymentOrderUrl(company.payment_order_url || '');
+ setPaymentOrderUrl(externalizeSupabaseStorageUrl(company.payment_order_url));
  setPaymentOrderName(company.payment_order_name || '');
  setPaymentOrderStorageBucket(String(company.payment_order_storage_bucket || ''));
  setPaymentOrderStoragePath(String(company.payment_order_storage_path || ''));

@@ -35,6 +35,7 @@ import { useAuth } from '../context/AuthContext';
 import { fetchCoursesList } from '../lib/bitrix';
 import type { QuestionnaireLink, Company, Deal, Participant, Certificate, GeneratedDocument, Protocol, QuestionnaireEvent, CommentAttachment } from '../types';
 import { APP_ROLE_LABELS, getProfileDisplayName, loadProfileDirectory, type ProfileDirectoryEntry } from '../lib/profileDirectory';
+import { externalizeSupabaseStorageUrl } from '../lib/supabaseStorageUrl';
 
 type Tab = 'participants' | 'certificates' | 'course_costs' | 'protocols' | 'printed_documents';
 
@@ -47,7 +48,7 @@ function normalizeCommentAttachments(value: unknown): CommentAttachment[] {
   return value
     .map<CommentAttachment | null>((item, index) => {
       const record = item as Record<string, unknown>;
-      const url = String(record.url || record.secure_url || '').trim();
+      const url = externalizeSupabaseStorageUrl(String(record.url || record.secure_url || '').trim());
       const name = String(record.name || '').trim();
       if (!url || !name) return null;
       return {
@@ -717,7 +718,7 @@ export default function QuestionnairePage() {
   const generalContractorLabel = isGeneralContractor ? 'Да' : 'Нет';
   const paymentSource = companyEditing ? companyDraft : company;
   const companyCommentAttachments = normalizeCommentAttachments(paymentSource?.comment_attachments);
-  const paymentOrderUrl = String(paymentSource?.payment_order_url || '').trim();
+  const paymentOrderUrl = externalizeSupabaseStorageUrl(String(paymentSource?.payment_order_url || '').trim());
   const paymentOrderName = String(paymentSource?.payment_order_name || '').trim();
   const paymentOrderNumber = String(paymentSource?.payment_order_number || '').trim();
   const paymentOrderDate = String(paymentSource?.payment_order_date || '').trim();
