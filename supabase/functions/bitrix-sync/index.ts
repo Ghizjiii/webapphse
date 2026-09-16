@@ -108,7 +108,9 @@ const COMPANY_BIN_FIELD_CANDIDATES = [
   "UF_CRM_1772598149",
 ];
 const BITRIX_SYNC_CONCURRENCY = 3;
-const BITRIX_REQUEST_TIMEOUT_MS = numberEnv("BITRIX_REQUEST_TIMEOUT_MS", 12_000);
+const BITRIX_REQUEST_TIMEOUT_MS = numberEnv("BITRIX_REQUEST_TIMEOUT_MS", 5_000);
+const BITRIX_REQUEST_ATTEMPTS = numberEnv("BITRIX_REQUEST_ATTEMPTS", 2);
+const BITRIX_COMPANY_LOOKUP_TIMEOUT_MS = numberEnv("BITRIX_COMPANY_LOOKUP_TIMEOUT_MS", 4_000);
 const FILE_REQUEST_TIMEOUT_MS = numberEnv("FILE_REQUEST_TIMEOUT_MS", 12_000);
 const PHOTO_REQUEST_TIMEOUT_MS = numberEnv("PHOTO_REQUEST_TIMEOUT_MS", 8_000);
 
@@ -1387,24 +1389,30 @@ async function verifyDealFileAttached(params: {
   return false;
 }
 
-async function callBitrix(method: string, params: Record<string, unknown>): Promise<unknown> {
+async function callBitrix(
+  method: string,
+  params: Record<string, unknown>,
+  options: { timeoutMs?: number; attempts?: number } = {},
+): Promise<unknown> {
   if (!BITRIX_WEBHOOK_URL) throw new Error("BITRIX_WEBHOOK_URL is not configured");
 
+  const timeoutMs = options.timeoutMs || BITRIX_REQUEST_TIMEOUT_MS;
+  const maxAttempts = Math.max(1, Math.floor(options.attempts || BITRIX_REQUEST_ATTEMPTS));
   let lastError: Error | null = null;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const response = await fetchWithTimeout(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),
-      }, BITRIX_REQUEST_TIMEOUT_MS, `Bitrix ${method}`);
+      }, timeoutMs, `Bitrix ${method}`);
       const text = await response.text();
       const body = text ? JSON.parse(text) : {};
 
       if (!response.ok) {
         const error = new Error(`Bitrix HTTP ${response.status} at ${method}: ${text || "empty response"}`);
         lastError = error;
-        if (attempt < 4 && (response.status === 429 || response.status >= 500)) {
+        if (attempt < maxAttempts && (response.status === 429 || response.status >= 500)) {
           await sleep(350 * attempt);
           continue;
         }
@@ -1415,7 +1423,7 @@ async function callBitrix(method: string, params: Record<string, unknown>): Prom
         const code = plain(body.error).toUpperCase();
         const error = new Error(`Bitrix ${method} error ${code}: ${plain(body.error_description || body.error)}`);
         lastError = error;
-        if (attempt < 4 && /QUERY_LIMIT_EXCEEDED|TOO_MANY_REQUESTS|TIMEOUT/.test(code)) {
+        if (attempt < maxAttempts && /QUERY_LIMIT_EXCEEDED|TOO_MANY_REQUESTS|TIMEOUT/.test(code)) {
           await sleep(350 * attempt);
           continue;
         }
@@ -1426,7 +1434,7 @@ async function callBitrix(method: string, params: Record<string, unknown>): Prom
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = error instanceof Error ? error : new Error(message);
-      if (attempt < 4 && isTransientRequestError(message)) {
+      if (attempt < maxAttempts && isTransientRequestError(message)) {
         await sleep(350 * attempt);
         continue;
       }
@@ -1440,11 +1448,17 @@ function resolveBitrixListTypeId(iblockId: number): string {
   return iblockId === 60 ? "bitrix_processes" : "lists";
 }
 
-async function callBitrixListMethod(method: string, params: Record<string, string | number>): Promise<unknown> {
+async function callBitrixListMethod(
+  method: string,
+  params: Record<string, string | number>,
+  options: { timeoutMs?: number; attempts?: number } = {},
+): Promise<unknown> {
   if (!BITRIX_WEBHOOK_URL) throw new Error("BITRIX_WEBHOOK_URL is not configured");
 
+  const timeoutMs = options.timeoutMs || BITRIX_REQUEST_TIMEOUT_MS;
+  const maxAttempts = Math.max(1, Math.floor(options.attempts || BITRIX_REQUEST_ATTEMPTS));
   let lastError: Error | null = null;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const body = new URLSearchParams();
       for (const [key, value] of Object.entries(params)) {
@@ -1454,14 +1468,14 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
       const response = await fetchWithTimeout(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
         method: "POST",
         body,
-      }, BITRIX_REQUEST_TIMEOUT_MS, `Bitrix ${method}`);
+      }, timeoutMs, `Bitrix ${method}`);
       const text = await response.text();
       const parsed = text ? JSON.parse(text) : {};
 
       if (!response.ok) {
         const error = new Error(`Bitrix HTTP ${response.status} at ${method}: ${text || "empty response"}`);
         lastError = error;
-        if (attempt < 4 && (response.status === 429 || response.status >= 500)) {
+        if (attempt < maxAttempts && (response.status === 429 || response.status >= 500)) {
           await sleep(350 * attempt);
           continue;
         }
@@ -1472,7 +1486,7 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
         const code = plain(parsed.error).toUpperCase();
         const error = new Error(`Bitrix ${method} error ${code}: ${plain(parsed.error_description || parsed.error)}`);
         lastError = error;
-        if (attempt < 4 && /QUERY_LIMIT_EXCEEDED|TOO_MANY_REQUESTS|TIMEOUT/.test(code)) {
+        if (attempt < maxAttempts && /QUERY_LIMIT_EXCEEDED|TOO_MANY_REQUESTS|TIMEOUT/.test(code)) {
           await sleep(350 * attempt);
           continue;
         }
@@ -1483,7 +1497,7 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = error instanceof Error ? error : new Error(message);
-      if (attempt < 4 && isTransientRequestError(message)) {
+      if (attempt < maxAttempts && isTransientRequestError(message)) {
         await sleep(350 * attempt);
         continue;
       }
@@ -2115,27 +2129,38 @@ function crmMultiValuesEqual(value: unknown, expected: string[], kind: "phone" |
 }
 
 async function findExistingCompanyIdByBin(binIin: string, companyName: string): Promise<string | null> {
-  const searchValues = Array.from(new Set([plain(binIin), digits(binIin), digits(binIin).replace(/^0+/, "")].filter(Boolean)));
+  const binDigits = digits(binIin);
+  const searchValues = Array.from(new Set([
+    binDigits || plain(binIin),
+    binDigits.replace(/^0+/, ""),
+  ].filter(Boolean)));
   const candidates = new Map<string, Record<string, unknown>>();
   const normalizedName = plain(companyName).toLowerCase();
+  const selectFields = Array.from(new Set(["ID", "TITLE", "PHONE", "EMAIL", ...COMPANY_BIN_FIELD_CANDIDATES]));
 
-  for (const fieldCode of COMPANY_BIN_FIELD_CANDIDATES) {
-    for (const value of searchValues) {
-      try {
+  for (const value of searchValues) {
+    const settled = await Promise.allSettled(
+      COMPANY_BIN_FIELD_CANDIDATES.map(async fieldCode => {
         const result = await callBitrix("crm.company.list", {
           filter: { [fieldCode]: value },
           order: { ID: "ASC" },
-          select: ["ID", "TITLE", "PHONE", "EMAIL", "UF_*"],
-        });
-        const rows = Array.isArray(result) ? result : Array.isArray(result?.items) ? result.items : [];
-        for (const row of rows as Array<Record<string, unknown>>) {
-          const id = plain(row.ID || row.id);
-          if (id) candidates.set(id, row);
-        }
-      } catch {
-        // keep trying next candidate
+          select: selectFields,
+        }, { timeoutMs: BITRIX_COMPANY_LOOKUP_TIMEOUT_MS, attempts: 1 });
+        const resultRecord = (result || {}) as Record<string, unknown>;
+        const rows = Array.isArray(result) ? result : Array.isArray(resultRecord.items) ? resultRecord.items : [];
+        return rows as Array<Record<string, unknown>>;
+      })
+    );
+
+    for (const response of settled) {
+      if (response.status !== "fulfilled") continue;
+      for (const row of response.value) {
+        const id = plain(row.ID || row.id);
+        if (id) candidates.set(id, row);
       }
     }
+
+    if (candidates.size > 0) break;
   }
 
   const matchingRows = Array.from(candidates.values()).filter(row => companyHasMatchingBin(row, binIin));
