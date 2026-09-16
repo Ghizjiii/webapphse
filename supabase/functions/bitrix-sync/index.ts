@@ -108,6 +108,9 @@ const COMPANY_BIN_FIELD_CANDIDATES = [
   "UF_CRM_1772598149",
 ];
 const BITRIX_SYNC_CONCURRENCY = 3;
+const BITRIX_REQUEST_TIMEOUT_MS = numberEnv("BITRIX_REQUEST_TIMEOUT_MS", 12_000);
+const FILE_REQUEST_TIMEOUT_MS = numberEnv("FILE_REQUEST_TIMEOUT_MS", 12_000);
+const PHOTO_REQUEST_TIMEOUT_MS = numberEnv("PHOTO_REQUEST_TIMEOUT_MS", 8_000);
 
 type CompanyRow = {
   id: string;
@@ -447,6 +450,60 @@ function digits(value: unknown): string {
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function numberEnv(name: string, fallback: number): number {
+  const parsed = Number(Deno.env.get(name));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isTransientRequestError(message: string): boolean {
+  return /failed to fetch|networkerror|network request failed|load failed|timed out|abort/i.test(message);
+}
+
+async function fetchWithTimeout(
+  input: string | URL | Request,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
+function logBitrixSyncStage(questionnaireId: string, stage: string, details: Record<string, unknown> = {}) {
+  console.info(JSON.stringify({
+    source: "bitrix-sync",
+    questionnaireId,
+    stage,
+    ...details,
+  }));
 }
 
 function sanitizeFileName(name: string): string {
@@ -1336,11 +1393,11 @@ async function callBitrix(method: string, params: Record<string, unknown>): Prom
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      const response = await fetch(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
+      const response = await fetchWithTimeout(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),
-      });
+      }, BITRIX_REQUEST_TIMEOUT_MS, `Bitrix ${method}`);
       const text = await response.text();
       const body = text ? JSON.parse(text) : {};
 
@@ -1369,7 +1426,7 @@ async function callBitrix(method: string, params: Record<string, unknown>): Prom
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = error instanceof Error ? error : new Error(message);
-      if (attempt < 4 && /failed to fetch|networkerror|network request failed|load failed/i.test(message)) {
+      if (attempt < 4 && isTransientRequestError(message)) {
         await sleep(350 * attempt);
         continue;
       }
@@ -1394,10 +1451,10 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
         body.append(key, String(value));
       }
 
-      const response = await fetch(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
+      const response = await fetchWithTimeout(`${BITRIX_WEBHOOK_URL}/${method}.json`, {
         method: "POST",
         body,
-      });
+      }, BITRIX_REQUEST_TIMEOUT_MS, `Bitrix ${method}`);
       const text = await response.text();
       const parsed = text ? JSON.parse(text) : {};
 
@@ -1426,7 +1483,7 @@ async function callBitrixListMethod(method: string, params: Record<string, strin
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = error instanceof Error ? error : new Error(message);
-      if (attempt < 4 && /failed to fetch|networkerror|network request failed|load failed/i.test(message)) {
+      if (attempt < 4 && isTransientRequestError(message)) {
         await sleep(350 * attempt);
         continue;
       }
@@ -2189,7 +2246,7 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
 }
 
 async function prepareBinaryFileFromUrl(fileUrl: string, preferredName: string): Promise<PreparedFile> {
-  const response = await fetch(fileUrl, { cache: "no-store" });
+  const response = await fetchWithTimeout(fileUrl, { cache: "no-store" }, FILE_REQUEST_TIMEOUT_MS, "Payment file download");
   if (!response.ok) throw new Error(`Failed to fetch file: HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   const base64 = bytesToBase64(bytes);
@@ -2201,7 +2258,11 @@ async function prepareBinaryFileFromUrl(fileUrl: string, preferredName: string):
 }
 
 async function prepareBinaryFileFromStorage(bucket: string, path: string, preferredName: string): Promise<PreparedFile> {
-  const { data, error } = await adminClient().storage.from(bucket).download(path);
+  const { data, error } = await withTimeout(
+    adminClient().storage.from(bucket).download(path),
+    FILE_REQUEST_TIMEOUT_MS,
+    "Payment file storage download",
+  );
   if (error) throw new Error(error.message || "Failed to download payment file from storage");
 
   const bytes = new Uint8Array(await data.arrayBuffer());
@@ -2568,7 +2629,7 @@ async function preparePhotoForBitrix(photoUrl: string, participantName: string):
   let response: Response | null = null;
   for (const candidate of buildCloudinaryJpgCandidates(photoUrl)) {
     try {
-      const current = await fetch(candidate, { cache: "no-store" });
+      const current = await fetchWithTimeout(candidate, { cache: "no-store" }, PHOTO_REQUEST_TIMEOUT_MS, "Photo download");
       if (!current.ok) continue;
       response = current;
       break;
@@ -2735,13 +2796,19 @@ Deno.serve(async (req: Request) => {
   }
 
   let requestQuestionnaireId = "";
+  let syncStage = "start";
 
   try {
+    syncStage = "authorize";
     const auth = await requireActiveProfile(req);
     const responsibleBitrixUserId = plain(auth.profile.bitrix_user_id);
     const body = await req.json();
     const questionnaireId = plain(body?.questionnaireId);
     requestQuestionnaireId = questionnaireId;
+    const setStage = (stage: string, details: Record<string, unknown> = {}) => {
+      syncStage = stage;
+      logBitrixSyncStage(questionnaireId, stage, details);
+    };
     const paymentFieldCode = plain(body?.paymentFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FIELD") || "");
     const paymentStatusFieldCode = plain(body?.paymentStatusFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_STATUS_FIELD") || "");
     const paymentFileFieldCode = plain(body?.paymentFileFieldCode || Deno.env.get("BITRIX_DEAL_PAYMENT_FILE_FIELD") || "");
@@ -2754,6 +2821,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(req, 400, { error: "Current user is not mapped to a Bitrix employee" });
     }
 
+    setStage("load-questionnaire-data");
     const supabase = adminClient();
     const [questionnaireResult, companyResult, dealResult, participantsResult] = await Promise.all([
       supabase
@@ -2797,6 +2865,7 @@ Deno.serve(async (req: Request) => {
     if (!company) throw new Error("Компания для анкеты не найдена");
     if (participants.length === 0) throw new Error("В анкете нет сотрудников для синхронизации");
 
+    setStage("load-courses", { participants: participants.length });
     const coursesResult = await supabase
       .from("participant_courses")
       .select("participant_id, course_name, previous_electrical_safety_group")
@@ -2878,9 +2947,11 @@ Deno.serve(async (req: Request) => {
       `${participants.length} сотрудников, ${allCourses.length} курсов, ${syncTasks.length} заявок на курсы`,
     ].filter(Boolean).join(" - ");
 
+    setStage("upsert-company", { syncTasks: syncTasks.length });
     const bitrixCompanyId = await upsertCompany(company, deal);
     await supabase.from("companies").update({ bitrix_company_id: bitrixCompanyId }).eq("id", company.id);
 
+    setStage("upsert-deal", { bitrixCompanyId, hasPaymentFile: Boolean(getPaymentFileSourceKey(company)) });
     const { bitrixDealId, paymentFileSyncKey } = await upsertDeal({
       deal,
       company,
@@ -2912,19 +2983,23 @@ Deno.serve(async (req: Request) => {
       await supabase.from("deals").insert(dealPayload);
     }
 
+    setStage("sync-products", { bitrixDealId, productRows: dealProductRows.length });
     await syncDealProductRows(bitrixDealId, dealProductRows);
 
+    setStage("load-bitrix-references");
     const [enumMaps, participantEmailFieldCode, participantFullNameFieldCode, previousElectricalSafetyGroupFieldCode] = await Promise.all([
       loadEnumMaps(supabase),
       ensureParticipantEmailField(),
       ensureParticipantFullNameField(),
       resolvePreviousElectricalSafetyGroupField(),
     ]);
+    setStage("load-smart-items", { bitrixDealId });
     const existingBitrixItemsByTitle = await loadSmartProcessItemsByTitle(bitrixDealId);
     let persistedCertificateCount = 0;
     let photoFailures = 0;
     const photoFailureSamples: string[] = [];
 
+    setStage("sync-certificates", { syncTasks: syncTasks.length });
     await runInChunks(syncTasks, BITRIX_SYNC_CONCURRENCY, async task => {
       const existingCertificate = existingCertificateByKey.get(
         taskKey(task.participant.id, task.courseName, task.qualification, task.electricalSafetyGroup),
@@ -3138,6 +3213,7 @@ Deno.serve(async (req: Request) => {
       }
     });
 
+    setStage("mark-success", { bitrixDealId, certificates: persistedCertificateCount, photoFailures });
     await supabase
       .from("deals")
       .update({
@@ -3161,18 +3237,18 @@ Deno.serve(async (req: Request) => {
     });
   } catch (error) {
     const message = describeUnknownError(error);
-    console.error("bitrix-sync failed", { message, error });
+    console.error("bitrix-sync failed", { questionnaireId: requestQuestionnaireId, stage: syncStage, message, error });
     const status = /unauthorized|inactive|profile not found/i.test(message) ? 401 : 500;
     try {
       if (requestQuestionnaireId) {
         await adminClient()
           .from("deals")
-          .update({ sync_status: "error", error_message: message })
+          .update({ sync_status: "error", error_message: `${syncStage}: ${message}` })
           .eq("questionnaire_id", requestQuestionnaireId);
       }
     } catch {
       // ignore error persistence failure
     }
-    return jsonResponse(req, status, { error: message });
+    return jsonResponse(req, status, { error: message, stage: syncStage });
   }
 });

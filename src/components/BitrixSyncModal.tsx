@@ -27,6 +27,34 @@ function prettifySyncError(msg: string): string {
     .replace(/company card/gi, 'карточке компании');
 }
 
+async function getFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback = error instanceof Error ? error.message : 'Failed to send a request to the Edge Function';
+  const context = (error as { context?: unknown } | null)?.context;
+  if (!context || typeof context !== 'object' || typeof (context as Response).clone !== 'function') {
+    return fallback;
+  }
+
+  const response = context as Response;
+  try {
+    const body = await response.clone().json();
+    const message = String(body?.error || body?.message || '').trim();
+    const stage = String(body?.stage || '').trim();
+    if (message && stage) return `${stage}: ${message}`;
+    if (message) return message;
+  } catch {
+    // Fall back to text below.
+  }
+
+  try {
+    const text = (await response.clone().text()).trim();
+    if (text) return text;
+  } catch {
+    // Keep the Supabase fallback message.
+  }
+
+  return fallback;
+}
+
 export default function BitrixSyncModal({ questionnaireId, company, participants, dealId, existingDeal, dealAmount, onClose, onDone }: Props) {
   const { showToast } = useToast();
   const [progress, setProgress] = useState<BitrixSyncProgress>({ step: '', current: 0, total: 0, status: 'idle' });
@@ -75,7 +103,13 @@ export default function BitrixSyncModal({ questionnaireId, company, participants
       });
 
       if (error) {
-        throw new Error(error.message || 'Failed to invoke bitrix-sync');
+        throw new Error(await getFunctionErrorMessage(error));
+      }
+
+      if (data?.error) {
+        const stage = String(data?.stage || '').trim();
+        const message = String(data.error || '').trim();
+        throw new Error(stage ? `${stage}: ${message}` : message);
       }
 
       const photoFailures = Number(data?.photoFailures || 0);
