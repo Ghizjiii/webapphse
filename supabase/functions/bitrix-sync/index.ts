@@ -111,6 +111,7 @@ const BITRIX_SYNC_CONCURRENCY = 3;
 const BITRIX_REQUEST_TIMEOUT_MS = numberEnv("BITRIX_REQUEST_TIMEOUT_MS", 5_000);
 const BITRIX_REQUEST_ATTEMPTS = numberEnv("BITRIX_REQUEST_ATTEMPTS", 2);
 const BITRIX_COMPANY_LOOKUP_TIMEOUT_MS = numberEnv("BITRIX_COMPANY_LOOKUP_TIMEOUT_MS", 4_000);
+const BITRIX_COMPANY_ADD_TIMEOUT_MS = numberEnv("BITRIX_COMPANY_ADD_TIMEOUT_MS", 25_000);
 const FILE_REQUEST_TIMEOUT_MS = numberEnv("FILE_REQUEST_TIMEOUT_MS", 12_000);
 const PHOTO_REQUEST_TIMEOUT_MS = numberEnv("PHOTO_REQUEST_TIMEOUT_MS", 8_000);
 
@@ -2128,6 +2129,10 @@ function crmMultiValuesEqual(value: unknown, expected: string[], kind: "phone" |
   return currentValues.every((current, index) => current === expectedValues[index]);
 }
 
+function companyLookupSelectFields(): string[] {
+  return Array.from(new Set(["ID", "TITLE", "PHONE", "EMAIL", ...COMPANY_BIN_FIELD_CANDIDATES]));
+}
+
 async function findExistingCompanyIdByBin(binIin: string, companyName: string): Promise<string | null> {
   const binDigits = digits(binIin);
   const searchValues = Array.from(new Set([
@@ -2136,7 +2141,7 @@ async function findExistingCompanyIdByBin(binIin: string, companyName: string): 
   ].filter(Boolean)));
   const candidates = new Map<string, Record<string, unknown>>();
   const normalizedName = plain(companyName).toLowerCase();
-  const selectFields = Array.from(new Set(["ID", "TITLE", "PHONE", "EMAIL", ...COMPANY_BIN_FIELD_CANDIDATES]));
+  const selectFields = companyLookupSelectFields();
 
   for (const value of searchValues) {
     const settled = await Promise.allSettled(
@@ -2174,6 +2179,23 @@ async function findExistingCompanyIdByBin(binIin: string, companyName: string): 
   })[0];
 
   return best ? plain(best.ID || best.id) : null;
+}
+
+async function findExistingCompanyIdByTitle(companyName: string, binIin: string): Promise<string | null> {
+  const normalizedName = plain(companyName).toLowerCase();
+  if (!normalizedName) return null;
+
+  const result = await callBitrix("crm.company.list", {
+    filter: { TITLE: companyName },
+    order: { ID: "DESC" },
+    select: companyLookupSelectFields(),
+  }, { timeoutMs: BITRIX_COMPANY_LOOKUP_TIMEOUT_MS, attempts: 1 });
+  const resultRecord = (result || {}) as Record<string, unknown>;
+  const rows = (Array.isArray(result) ? result : Array.isArray(resultRecord.items) ? resultRecord.items : []) as Array<Record<string, unknown>>;
+  const exactTitleRows = rows.filter(row => plain(row.TITLE || row.title).toLowerCase() === normalizedName);
+  const matchingBinRow = exactTitleRows.find(row => companyHasMatchingBin(row, binIin));
+  const fallbackRow = matchingBinRow || exactTitleRows[0] || null;
+  return fallbackRow ? plain(fallbackRow.ID || fallbackRow.id) : null;
 }
 
 async function fetchCompanyFields(bitrixCompanyId: string): Promise<Record<string, unknown>> {
@@ -2266,8 +2288,25 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
     return existingId;
   }
 
-  const result = await callBitrix("crm.company.add", { fields });
-  return plain(result?.ID || result?.id || result);
+  try {
+    const result = await callBitrix("crm.company.add", { fields }, {
+      timeoutMs: BITRIX_COMPANY_ADD_TIMEOUT_MS,
+      attempts: 1,
+    });
+    return plain(result?.ID || result?.id || result);
+  } catch (error) {
+    const message = describeUnknownError(error);
+    if (!isTransientRequestError(message)) {
+      throw error;
+    }
+
+    await sleep(1200);
+    const createdId = await findExistingCompanyIdByBin(company.bin_iin, company.name)
+      || await findExistingCompanyIdByTitle(company.name, company.bin_iin);
+    if (createdId) return createdId;
+
+    throw error;
+  }
 }
 
 async function prepareBinaryFileFromUrl(fileUrl: string, preferredName: string): Promise<PreparedFile> {
