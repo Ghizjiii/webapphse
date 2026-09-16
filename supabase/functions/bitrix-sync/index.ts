@@ -138,6 +138,13 @@ type DealRow = {
   payment_file_sync_key: string | null;
 };
 
+type RefCompanyDirectoryRow = {
+  bitrix_company_id: string | null;
+  name: string | null;
+  bin_iin: string | null;
+  bin_iin_digits: string | null;
+};
+
 type QuestionnaireRow = {
   id: string;
   request_type: "external" | "internal" | null;
@@ -2198,6 +2205,75 @@ async function findExistingCompanyIdByTitle(companyName: string, binIin: string)
   return fallbackRow ? plain(fallbackRow.ID || fallbackRow.id) : null;
 }
 
+async function findCompanyIdInLocalDirectory(company: CompanyRow): Promise<string | null> {
+  const binDigits = digits(company.bin_iin);
+  const normalizedName = plain(company.name).toLowerCase();
+
+  if (binDigits) {
+    const { data, error } = await adminClient()
+      .from("ref_company_directory")
+      .select("bitrix_company_id, name, bin_iin, bin_iin_digits")
+      .eq("bin_iin_digits", binDigits)
+      .limit(10);
+    if (error) throw error;
+
+    const rows = (data || []) as RefCompanyDirectoryRow[];
+    const exactNameRow = rows.find(row => plain(row.name).toLowerCase() === normalizedName);
+    const row = exactNameRow || rows[0] || null;
+    const bitrixId = plain(row?.bitrix_company_id);
+    if (bitrixId) return bitrixId;
+  }
+
+  if (normalizedName) {
+    const { data, error } = await adminClient()
+      .from("ref_company_directory")
+      .select("bitrix_company_id, name, bin_iin, bin_iin_digits")
+      .ilike("name", company.name)
+      .limit(5);
+    if (error) throw error;
+
+    const rows = ((data || []) as RefCompanyDirectoryRow[]).filter(row => {
+      const rowName = plain(row.name).toLowerCase();
+      if (rowName !== normalizedName) return false;
+      if (!binDigits) return true;
+      const rowBin = digits(row.bin_iin_digits || row.bin_iin);
+      return rowBin === binDigits;
+    });
+    const bitrixId = plain(rows[0]?.bitrix_company_id);
+    if (bitrixId) return bitrixId;
+  }
+
+  return null;
+}
+
+async function rememberCompanyInLocalDirectory(company: CompanyRow, bitrixCompanyId: string): Promise<void> {
+  const bitrixId = plain(bitrixCompanyId);
+  if (!bitrixId) return;
+
+  const binDigits = digits(company.bin_iin);
+  const now = new Date().toISOString();
+  const { error } = await adminClient()
+    .from("ref_company_directory")
+    .upsert({
+      bitrix_company_id: bitrixId,
+      name: plain(company.name),
+      bin_iin: plain(company.bin_iin),
+      bin_iin_digits: binDigits,
+      phone: plain(company.phone),
+      email: plain(company.email),
+      city: plain(company.city),
+      updated_at: now,
+    }, { onConflict: "bitrix_company_id" });
+
+  if (error) {
+    console.warn("Failed to remember Bitrix company in local directory", {
+      bitrixCompanyId: bitrixId,
+      companyId: company.id,
+      message: describeUnknownError(error),
+    });
+  }
+}
+
 async function fetchCompanyFields(bitrixCompanyId: string): Promise<Record<string, unknown>> {
   try {
     const raw = await callBitrix("crm.company.get", {
@@ -2278,6 +2354,11 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
     return persistedId;
   }
 
+  const localDirectoryId = await findCompanyIdInLocalDirectory(company);
+  if (localDirectoryId) {
+    return localDirectoryId;
+  }
+
   const existingId = await findExistingCompanyIdByBin(company.bin_iin, company.name);
   if (existingId) {
     const currentCompany = await fetchCompanyFields(existingId);
@@ -2285,6 +2366,7 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
     if (Object.keys(fieldsToUpdate).length > 0) {
       await callBitrix("crm.company.update", { id: existingId, fields: fieldsToUpdate });
     }
+    await rememberCompanyInLocalDirectory(company, existingId);
     return existingId;
   }
 
@@ -2293,7 +2375,9 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
       timeoutMs: BITRIX_COMPANY_ADD_TIMEOUT_MS,
       attempts: 1,
     });
-    return plain(result?.ID || result?.id || result);
+    const createdId = plain(result?.ID || result?.id || result);
+    await rememberCompanyInLocalDirectory(company, createdId);
+    return createdId;
   } catch (error) {
     const message = describeUnknownError(error);
     if (!isTransientRequestError(message)) {
@@ -2301,9 +2385,23 @@ async function upsertCompany(company: CompanyRow, deal: DealRow | null): Promise
     }
 
     await sleep(1200);
-    const createdId = await findExistingCompanyIdByBin(company.bin_iin, company.name)
-      || await findExistingCompanyIdByTitle(company.name, company.bin_iin);
-    if (createdId) return createdId;
+    let createdId = "";
+    try {
+      createdId = await findCompanyIdInLocalDirectory(company)
+        || await findExistingCompanyIdByBin(company.bin_iin, company.name)
+        || await findExistingCompanyIdByTitle(company.name, company.bin_iin)
+        || "";
+    } catch (lookupError) {
+      console.warn("Bitrix company lookup after transient create failure failed", {
+        companyId: company.id,
+        createError: message,
+        lookupError: describeUnknownError(lookupError),
+      });
+    }
+    if (createdId) {
+      await rememberCompanyInLocalDirectory(company, createdId);
+      return createdId;
+    }
 
     throw error;
   }

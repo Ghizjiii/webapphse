@@ -2344,6 +2344,33 @@ Deno.serve(async (req: Request) => {
       : auth.source;
     const targets = determineSyncTargets(source, eventName, body);
 
+    if (auth.source === "bitrix-webhook" && !targets.syncHrItem && !targets.ignoreEvent) {
+      const backgroundTask = runReferenceSync(source, eventName, body).catch(error => {
+        console.error(JSON.stringify({
+          stage: "background-sync-error",
+          source,
+          eventName,
+          message: error instanceof Error ? error.message : "Unknown error",
+        }));
+      });
+      const edgeRuntime = (globalThis as unknown as {
+        EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void };
+      }).EdgeRuntime;
+      if (typeof edgeRuntime?.waitUntil === "function") {
+        edgeRuntime.waitUntil(backgroundTask);
+      }
+
+      return jsonResponse(req, 202, {
+        ok: true,
+        accepted: true,
+        background: true,
+        scope: SYNC_SCOPE,
+        source,
+        eventName,
+        targets,
+      });
+    }
+
     const result = targets.syncHrItem
       ? await runHrFieldSync(source, eventName, body)
       : await runReferenceSync(source, eventName, body);
