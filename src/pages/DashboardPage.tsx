@@ -60,6 +60,43 @@ type CertificateAmountRef = {
   price: number | string | null;
 };
 
+type ChunkedQueryResult<T> = {
+  data: T[] | null;
+  error: { message?: string } | null;
+};
+
+const SUPABASE_IN_FILTER_CHUNK_SIZE = 30;
+
+function chunkItems<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function fetchByQuestionnaireChunks<T>(
+  questionnaireIds: string[],
+  buildQuery: (ids: string[]) => PromiseLike<ChunkedQueryResult<T>>
+): Promise<ChunkedQueryResult<T>> {
+  if (questionnaireIds.length === 0) {
+    return { data: [], error: null };
+  }
+
+  const responses = await Promise.all(
+    chunkItems(questionnaireIds, SUPABASE_IN_FILTER_CHUNK_SIZE).map(ids => buildQuery(ids))
+  );
+  const failedResponse = responses.find(response => response.error);
+  if (failedResponse?.error) {
+    return { data: [], error: failedResponse.error };
+  }
+
+  return {
+    data: responses.flatMap(response => response.data || []),
+    error: null,
+  };
+}
+
 const STATUS_CONFIG = {
   active: { label: 'Активна', icon: <Power size={12} />, className: 'bg-green-50 text-green-700 border-green-200' },
   submitted: { label: 'Заполнена', icon: <CheckCircle2 size={12} />, className: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -247,28 +284,38 @@ export default function DashboardPage() {
     ));
 
     const [companiesRes, participantsRes, participantCoursesRes, certificatesRes, dealsRes, creatorProfiles] = await Promise.all([
-      supabase
-        .from('companies')
-        .select('*')
-        .in('questionnaire_id', questionnaireIds)
-        .order('updated_at', { ascending: false })
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('participants')
-        .select('questionnaire_id')
-        .in('questionnaire_id', questionnaireIds),
-      supabase
-        .from('participant_courses')
-        .select('questionnaire_id, course_name')
-        .in('questionnaire_id', questionnaireIds),
-      supabase
-        .from('certificates')
-        .select('questionnaire_id, price')
-        .in('questionnaire_id', questionnaireIds),
-      supabase
-        .from('deals')
-        .select('questionnaire_id, sync_status, bitrix_deal_id')
-        .in('questionnaire_id', questionnaireIds),
+      fetchByQuestionnaireChunks<Company>(questionnaireIds, ids =>
+        supabase
+          .from('companies')
+          .select('*')
+          .in('questionnaire_id', ids)
+          .order('updated_at', { ascending: false })
+          .order('created_at', { ascending: false })
+      ),
+      fetchByQuestionnaireChunks<ParticipantQuestionnaireRef>(questionnaireIds, ids =>
+        supabase
+          .from('participants')
+          .select('questionnaire_id')
+          .in('questionnaire_id', ids)
+      ),
+      fetchByQuestionnaireChunks<ParticipantCourseQuestionnaireRef>(questionnaireIds, ids =>
+        supabase
+          .from('participant_courses')
+          .select('questionnaire_id, course_name')
+          .in('questionnaire_id', ids)
+      ),
+      fetchByQuestionnaireChunks<CertificateAmountRef>(questionnaireIds, ids =>
+        supabase
+          .from('certificates')
+          .select('questionnaire_id, price')
+          .in('questionnaire_id', ids)
+      ),
+      fetchByQuestionnaireChunks<DealQuestionnaireSyncRef>(questionnaireIds, ids =>
+        supabase
+          .from('deals')
+          .select('questionnaire_id, sync_status, bitrix_deal_id')
+          .in('questionnaire_id', ids)
+      ),
       loadProfileDirectory(creatorIds),
     ]);
 
