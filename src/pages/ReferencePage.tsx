@@ -438,9 +438,14 @@ export default function ReferencePage() {
       const stats = data && typeof data === 'object' && 'stats' in data
         ? (data.stats as Record<string, number>)
         : null;
+      const warnings = data && typeof data === 'object' && 'warnings' in data && Array.isArray(data.warnings)
+        ? data.warnings
+            .map(item => item && typeof item === 'object' && 'message' in item ? String(item.message || '') : '')
+            .filter(Boolean)
+        : [];
       showToast(
-        'success',
-        `Синхронизировано: ${stats?.lists_count || 0} списков, ${stats?.items_count || 0} элементов, ${stats?.companies_count || 0} компаний, ${stats?.contracts_count || 0} договоров`
+        warnings.length > 0 ? 'warning' : 'success',
+        `Синхронизировано: ${stats?.lists_count || 0} списков, ${stats?.items_count || 0} элементов, ${stats?.companies_count || 0} компаний, ${stats?.contracts_count || 0} договоров${warnings.length > 0 ? `. Пропущено неполных правил: ${warnings.length}. ${warnings[0]}` : ''}`
       );
       await loadData(false);
     } catch (e) {

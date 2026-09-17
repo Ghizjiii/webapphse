@@ -138,6 +138,13 @@ type SyncTargets = {
   reason: string;
 };
 
+type SyncWarning = {
+  scope: "document-validity" | "course-price";
+  bitrixItemId: string;
+  itemName: string;
+  message: string;
+};
+
 const BITRIX_REFERENCE_LISTS = {
   MY_COMPANIES: { iblockId: 60, name: "Справочник компаний (служебное)" },
   COURSES: { iblockId: 64, name: "Наименование курсов" },
@@ -1908,8 +1915,9 @@ async function replaceDocumentValidityRules(
   supabase: ReturnType<typeof adminClient>,
   items: BitrixListElement[],
   now: string,
-) {
-  const payload = items.map((item, index) => {
+): Promise<SyncWarning[]> {
+  const warnings: SyncWarning[] = [];
+  const payload = items.flatMap((item, index) => {
     const details = item.details as BitrixDocumentValidityDetails | null;
     const courseName = plain(details?.course_name || item.name);
     const category = plain(details?.category);
@@ -1918,10 +1926,22 @@ async function replaceDocumentValidityRules(
     const durationValue = typeof durationValueRaw === "number" ? durationValueRaw : Number(durationValueRaw);
 
     if (!courseName || !category || !documentType || !Number.isFinite(durationValue) || durationValue <= 0) {
-      throw new Error(`Не удалось прочитать правило срока из Bitrix для элемента "${item.name}" (#${item.id})`);
+      const missingFields = [
+        !courseName ? "название курса" : "",
+        !category ? "категория" : "",
+        !documentType ? "тип документа" : "",
+        !Number.isFinite(durationValue) || durationValue <= 0 ? "срок действия" : "",
+      ].filter(Boolean).join(", ");
+      warnings.push({
+        scope: "document-validity",
+        bitrixItemId: item.id,
+        itemName: item.name,
+        message: `Пропущено правило срока "${item.name}" (#${item.id}): не заполнено поле ${missingFields}`,
+      });
+      return [];
     }
 
-    return {
+    return [{
       course_name: courseName,
       category,
       document_type: documentType,
@@ -1929,24 +1949,27 @@ async function replaceDocumentValidityRules(
       duration_unit: details?.duration_unit || "year",
       sort_order: item.sortOrder || index + 1,
       updated_at: now,
-    };
+    }];
   });
 
   const { error: deleteError } = await supabase.from("ref_document_validity_rules").delete().gte("sort_order", 0);
   if (deleteError) throw deleteError;
 
-  if (payload.length === 0) return;
+  if (payload.length === 0) return warnings;
 
   const { error: insertError } = await supabase.from("ref_document_validity_rules").insert(payload);
   if (insertError) throw insertError;
+
+  return warnings;
 }
 
 async function replaceCoursePrices(
   supabase: ReturnType<typeof adminClient>,
   items: BitrixListElement[],
   now: string,
-) {
-  const payload = items.map((item, index) => {
+): Promise<SyncWarning[]> {
+  const warnings: SyncWarning[] = [];
+  const payload = items.flatMap((item, index) => {
     const details = item.details as BitrixCoursePriceDetails | null;
     const courseName = plain(details?.course_name || item.name);
     const qualification = plain(details?.qualification);
@@ -1955,10 +1978,20 @@ async function replaceCoursePrices(
     const price = details?.price ?? null;
 
     if (!courseName || !category) {
-      throw new Error(`Не удалось прочитать цену курса из Bitrix для элемента "${item.name}" (#${item.id})`);
+      const missingFields = [
+        !courseName ? "название курса" : "",
+        !category ? "категория" : "",
+      ].filter(Boolean).join(", ");
+      warnings.push({
+        scope: "course-price",
+        bitrixItemId: item.id,
+        itemName: item.name,
+        message: `Пропущено ценовое правило "${item.name}" (#${item.id}): не заполнено поле ${missingFields}`,
+      });
+      return [];
     }
 
-    return {
+    return [{
       bitrix_item_id: item.id,
       name: item.name,
       course_name: courseName,
@@ -1968,16 +2001,18 @@ async function replaceCoursePrices(
       price,
       sort_order: item.sortOrder || index + 1,
       updated_at: now,
-    };
+    }];
   });
 
   const { error: deleteError } = await supabase.from("ref_course_prices").delete().gte("sort_order", 0);
   if (deleteError) throw deleteError;
 
-  if (payload.length === 0) return;
+  if (payload.length === 0) return warnings;
 
   const { error: insertError } = await supabase.from("ref_course_prices").insert(payload);
   if (insertError) throw insertError;
+
+  return warnings;
 }
 
 async function replaceCompanyDirectorySnapshot(
@@ -2190,6 +2225,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
     let courseItems: BitrixListElement[] = [];
     let documentValidityItems: BitrixListElement[] = [];
     let coursePriceItems: BitrixListElement[] = [];
+    const warnings: SyncWarning[] = [];
 
     if (targets.syncReferenceLists) {
       listsSnapshot = await fetchAllReferenceListElements();
@@ -2245,8 +2281,8 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
           sort_order: item.sortOrder,
         })),
       );
-      await replaceDocumentValidityRules(supabase, documentValidityItems, now);
-      await replaceCoursePrices(supabase, coursePriceItems, now);
+      warnings.push(...await replaceDocumentValidityRules(supabase, documentValidityItems, now));
+      warnings.push(...await replaceCoursePrices(supabase, coursePriceItems, now));
     }
 
     let companySnapshot: Awaited<ReturnType<typeof fetchCompanyDirectorySnapshotFromBitrix>> | null = null;
@@ -2268,6 +2304,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
       sync_reference_lists: targets.syncReferenceLists,
       sync_company_directory: targets.syncCompanyDirectory,
       event_entity_type_id: targets.entityTypeId,
+      warnings_count: warnings.length,
     };
 
     await upsertSyncStatus(supabase, {
@@ -2285,6 +2322,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
       source,
       eventName,
       stats,
+      warnings,
     }));
 
     return {
@@ -2293,6 +2331,7 @@ async function runReferenceSync(source: string, eventName: string, body: PlainOb
       last_success_at: now,
       targets,
       stats,
+      warnings,
     };
   } catch (error) {
     const finishedAt = new Date().toISOString();
