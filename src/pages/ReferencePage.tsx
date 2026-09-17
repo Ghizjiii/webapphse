@@ -440,7 +440,9 @@ export default function ReferencePage() {
         : null;
       const warnings = data && typeof data === 'object' && 'warnings' in data && Array.isArray(data.warnings)
         ? data.warnings
-            .map(item => item && typeof item === 'object' && 'message' in item ? String(item.message || '') : '')
+            .map((item: unknown) => item && typeof item === 'object' && 'message' in item
+              ? String((item as { message?: unknown }).message || '')
+              : '')
             .filter(Boolean)
         : [];
       showToast(
