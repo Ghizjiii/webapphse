@@ -9,7 +9,7 @@ on:
       - "supabase/functions/generate-document/**"
       - "supabase/functions/generate-protocol-document/**"
       - "supabase/functions/_shared/**"
-      - "supabase/migrations/20260921000200_add_questionnaire_change_audit.sql"
+      - "supabase/migrations/20260921000300_add_generated_document_issuer.sql"
       - ".github/workflows/deploy-backend.yml"
 
 concurrency:
@@ -41,7 +41,7 @@ jobs:
             supabase/functions/_shared \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/functions/"
           scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" \
-            supabase/migrations/20260921000200_add_questionnaire_change_audit.sql \
+            supabase/migrations/20260921000300_add_generated_document_issuer.sql \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/migration.sql"
 
       - name: Apply migration and restart Edge Runtime

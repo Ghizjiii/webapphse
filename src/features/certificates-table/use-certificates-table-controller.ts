@@ -20,7 +20,7 @@ import {
   normalizePreviousElectricalSafetyGroup,
 } from '../../lib/electricalSafety';
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate, templateSupportsPhoto } from '../../lib/documentGeneration';
-import { issuerCompanyGroupingKey } from '../../lib/issuerCompany';
+import { issuerCompanyGroupingKey, resolveIssuerCompanyProfile } from '../../lib/issuerCompany';
 import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { reconcileProtocolsFromCertificates } from '../../lib/protocolGeneration';
 import { useToast } from '../../context/ToastContext';
@@ -2313,6 +2313,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  const grouped = new Map<string, {
  template: NonNullable<ReturnType<typeof resolveTemplateForCertificate>>;
  courseName: string;
+ issuerCompany: string;
  rows: Array<{ cert: Certificate; placeholders: Record<string, string>; photoUrl: string }>;
  }>();
 
@@ -2330,10 +2331,12 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  }
 
  const courseName = String(cert.course_name || '').trim() || 'Без названия курса';
- const key = `${template.key}::${courseName.toLowerCase()}::${issuerCompanyGroupingKey(cert.issuer_company)}`;
+ const issuerCompany = resolveIssuerCompanyProfile(cert.issuer_company).canonicalName;
+ const key = `${template.key}::${courseName.toLowerCase()}::${issuerCompanyGroupingKey(issuerCompany)}`;
  const group = grouped.get(key) || {
  template,
  courseName,
+ issuerCompany,
  rows: [],
  };
 
@@ -2361,7 +2364,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  });
  let generated = 0;
  let failed = 0;
- const unresolvedByFile: Array<{ fileName: string; tokens: string[] }> = [];
+ const failedGroups: string[] = [];
  const photoIssuesByFile: Array<{ fileName: string; issues: string[] }> = [];
 
  try {
@@ -2377,22 +2380,17 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  const {
  fileUrl,
  fileName,
- unresolvedCount,
- unresolvedTokens,
  photoIssueCount,
  photoIssues,
  } = await callGenerateDocumentFunction({
  template: group.template,
- fileName: makeGeneratedFileName(group.courseName),
+ fileName: makeGeneratedFileName(group.courseName, group.issuerCompany),
  items: group.rows.map(row => ({
  placeholders: row.placeholders,
  photoUrl: row.photoUrl,
  })),
  });
 
- if (unresolvedCount > 0) {
- unresolvedByFile.push({ fileName, tokens: unresolvedTokens });
- }
  if (photoIssueCount > 0) {
  photoIssuesByFile.push({ fileName, issues: photoIssues });
  }
@@ -2409,6 +2407,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  template_name: group.template.name,
  file_name: fileName,
  file_url: fileUrl,
+ issuer_company: group.issuerCompany,
  course_name: row.cert.course_name || '',
  category: row.cert.category || '',
  employees_count: group.rows.length,
@@ -2426,21 +2425,16 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
 
  generated++;
  setGenerationProgress(prev => prev ? { ...prev, processed: prev.processed + 1, generated } : prev);
- } catch {
+ } catch (error) {
  failed++;
+ const message = error instanceof Error ? error.message : String(error);
+ failedGroups.push(`${group.courseName} / ${group.issuerCompany}: ${message}`);
  setGenerationProgress(prev => prev ? { ...prev, processed: prev.processed + 1, failed } : prev);
  }
  }
 
  if (generated > 0) {
  showToast('success', `Сгенерировано файлов: ${generated}. Пропущено групп: ${skipped}. Ошибок: ${failed}.`);
- if (unresolvedByFile.length > 0) {
- const preview = unresolvedByFile
- .slice(0, 2)
- .map(item => `${item.fileName}: ${item.tokens.slice(0, 4).join(', ')}`)
- .join(' | ');
- showToast('warning', `В ${unresolvedByFile.length} файлах остались незаполненные плейсхолдеры. ${preview}`);
- }
  if (photoIssuesByFile.length > 0) {
  const preview = photoIssuesByFile
  .slice(0, 2)
@@ -2452,6 +2446,9 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  showToast('warning', 'Нет поддерживаемых записей для генерации файлов');
  } else {
  showToast('error', 'Не удалось сгенерировать документы');
+ }
+ if (failedGroups.length > 0) {
+ showToast('error', `Ошибки генерации (${failedGroups.length}): ${failedGroups.slice(0, 3).join(' | ')}`);
  }
  onRefresh();
  } finally {

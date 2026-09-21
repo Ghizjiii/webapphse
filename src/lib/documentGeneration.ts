@@ -370,24 +370,13 @@ export async function callGenerateDocumentFunction(input: {
   fileUrl: string;
   fileName: string;
   fileId: string;
+  scriptVersion: string;
   unresolvedCount: number;
   unresolvedTokens: string[];
   photoIssueCount: number;
   photoIssues: string[];
 }> {
-  let lastError: unknown = null;
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      return await callGenerateDocumentFunctionOnce(input);
-    } catch (error) {
-      lastError = error;
-      if (attempt >= 3) break;
-      await new Promise(resolve => setTimeout(resolve, 1200 * attempt));
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('Failed to invoke generate-document');
+  return callGenerateDocumentFunctionOnce(input);
 }
 
 async function callGenerateDocumentFunctionOnce(input: {
@@ -400,6 +389,7 @@ async function callGenerateDocumentFunctionOnce(input: {
   fileUrl: string;
   fileName: string;
   fileId: string;
+  scriptVersion: string;
   unresolvedCount: number;
   unresolvedTokens: string[];
   photoIssueCount: number;
@@ -426,6 +416,7 @@ async function callGenerateDocumentFunctionOnce(input: {
   const fileUrl = String(data?.fileUrl || '');
   const fileName = String(data?.fileName || input.fileName);
   const fileId = String(data?.fileId || '');
+  const scriptVersion = String(data?.scriptVersion || '').trim();
   const unresolvedCount = Number(data?.unresolvedCount || 0);
   const unresolvedTokens = Array.isArray(data?.unresolvedTokens)
     ? data.unresolvedTokens.map((v: unknown) => String(v))
@@ -435,6 +426,10 @@ async function callGenerateDocumentFunctionOnce(input: {
     ? data.photoIssues.map((v: unknown) => String(v))
     : [];
   if (!fileUrl) throw new Error('Google Apps Script did not return fileUrl');
+  if (unresolvedCount > 0) {
+    const preview = unresolvedTokens.slice(0, 5).join(', ');
+    throw new Error(`Остались незаполненные плейсхолдеры: ${preview || unresolvedCount}`);
+  }
 
-  return { fileUrl, fileName, fileId, unresolvedCount, unresolvedTokens, photoIssueCount, photoIssues };
+  return { fileUrl, fileName, fileId, scriptVersion, unresolvedCount, unresolvedTokens, photoIssueCount, photoIssues };
 }

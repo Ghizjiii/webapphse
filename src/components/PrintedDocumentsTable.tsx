@@ -24,6 +24,7 @@ type GroupedDocument = {
   certificates: Certificate[];
   courses: string[];
   categories: string[];
+  issuerCompanies: string[];
   employeesCount: number;
 };
 
@@ -32,6 +33,7 @@ type ColumnKey =
   | 'doc_type'
   | 'courses'
   | 'categories'
+  | 'issuer_companies'
   | 'employees'
   | 'generated_at'
   | 'file_url';
@@ -41,6 +43,7 @@ const COLUMN_DEFS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'doc_type', label: 'Тип' },
   { key: 'courses', label: 'Курс' },
   { key: 'categories', label: 'Категория' },
+  { key: 'issuer_companies', label: 'Компания-эмитент' },
   { key: 'employees', label: 'Кол-во сотрудников' },
   { key: 'generated_at', label: 'Дата генерации' },
   { key: 'file_url', label: 'Файл' },
@@ -51,6 +54,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   doc_type: 130,
   courses: 420,
   categories: 180,
+  issuer_companies: 210,
   employees: 150,
   generated_at: 180,
   file_url: 140,
@@ -99,7 +103,7 @@ export default function PrintedDocumentsTable({ documents, certificates }: Props
     const groups = new Map<string, GroupedDocument>();
 
     for (const document of documents) {
-      const key = `${document.file_url}::${document.file_name}`;
+      const key = `${document.file_url}::${document.file_name}::${String(document.issuer_company || '').trim()}`;
       const existing = groups.get(key);
 
       if (!existing) {
@@ -112,6 +116,7 @@ export default function PrintedDocumentsTable({ documents, certificates }: Props
           certificates: [],
           courses: [],
           categories: [],
+          issuerCompanies: [],
           employeesCount: Number(document.employees_count || 0),
         });
         continue;
@@ -129,6 +134,7 @@ export default function PrintedDocumentsTable({ documents, certificates }: Props
       const groupCertificates: Certificate[] = [];
       const courseSet = new Set<string>();
       const categorySet = new Set<string>();
+      const issuerCompanySet = new Set<string>();
 
       for (const document of group.documents) {
         const docCourse = String(document.course_name || '').trim();
@@ -136,6 +142,9 @@ export default function PrintedDocumentsTable({ documents, certificates }: Props
 
         const docCategory = String(document.category || '').trim();
         if (docCategory) categorySet.add(docCategory);
+
+        const docIssuerCompany = String(document.issuer_company || '').trim();
+        if (docIssuerCompany) issuerCompanySet.add(docIssuerCompany);
 
         if (!document.certificate_id) continue;
         const cert = certById.get(document.certificate_id);
@@ -148,11 +157,15 @@ export default function PrintedDocumentsTable({ documents, certificates }: Props
 
         const certCategory = String(cert.category || '').trim();
         if (certCategory) categorySet.add(certCategory);
+
+        const certIssuerCompany = String(cert.issuer_company || '').trim();
+        if (certIssuerCompany) issuerCompanySet.add(certIssuerCompany);
       }
 
       group.certificates = groupCertificates;
       group.courses = Array.from(courseSet).sort((left, right) => left.localeCompare(right, 'ru'));
       group.categories = Array.from(categorySet).sort((left, right) => left.localeCompare(right, 'ru'));
+      group.issuerCompanies = Array.from(issuerCompanySet).sort((left, right) => left.localeCompare(right, 'ru'));
       group.employeesCount = Math.max(group.employeesCount, groupCertificates.length);
     }
 
@@ -256,6 +269,7 @@ export default function PrintedDocumentsTable({ documents, certificates }: Props
     if (key === 'doc_type') return group.docType === 'certificate' ? 'Сертификат' : 'Удостоверение';
     if (key === 'courses') return group.courses.join(', ') || '—';
     if (key === 'categories') return group.categories.join(', ') || '—';
+    if (key === 'issuer_companies') return group.issuerCompanies.join(', ') || '—';
     if (key === 'employees') return group.employeesCount || 0;
     if (key === 'generated_at') return formatDateTime(group.generatedAt);
     if (key === 'file_url') {

@@ -987,6 +987,7 @@ export async function callGenerateProtocolDocumentFunction(input: {
   fileUrl: string;
   fileName: string;
   fileId: string;
+  scriptVersion: string;
   unresolvedCount: number;
   unresolvedTokens: string[];
 }> {
@@ -1009,11 +1010,16 @@ export async function callGenerateProtocolDocumentFunction(input: {
   const fileUrl = String(data?.fileUrl || '');
   const fileName = String(data?.fileName || input.fileName);
   const fileId = String(data?.fileId || '');
+  const scriptVersion = String(data?.scriptVersion || '').trim();
   const unresolvedCount = Number(data?.unresolvedCount || 0);
   const unresolvedTokens = Array.isArray(data?.unresolvedTokens)
     ? data.unresolvedTokens.map((value: unknown) => String(value))
     : [];
 
   if (!fileUrl) throw new Error('Google Apps Script did not return fileUrl');
-  return { fileUrl, fileName, fileId, unresolvedCount, unresolvedTokens };
+  if (unresolvedCount > 0) {
+    const preview = unresolvedTokens.slice(0, 5).join(', ');
+    throw new Error(`Остались незаполненные плейсхолдеры: ${preview || unresolvedCount}`);
+  }
+  return { fileUrl, fileName, fileId, scriptVersion, unresolvedCount, unresolvedTokens };
 }

@@ -125,13 +125,14 @@ export function toBitrixDate(value: string | null): string {
   return value.includes('T') ? value.split('T')[0] : value;
 }
 
-export function makeGeneratedFileName(courseName: string): string {
+export function makeGeneratedFileName(courseName: string, issuerCompany = ''): string {
   const safeCourseName = String(courseName || '').trim() || 'Курс';
+  const safeIssuerCompany = String(issuerCompany || '').trim();
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const hh = String(now.getHours()).padStart(2, '0');
   const mi = String(now.getMinutes()).padStart(2, '0');
-  return `${safeCourseName} - ${yyyy}-${mm}-${dd} ${hh}-${mi}`;
+  return `${safeCourseName}${safeIssuerCompany ? ` - ${safeIssuerCompany}` : ''} - ${yyyy}-${mm}-${dd} ${hh}-${mi}`;
 }

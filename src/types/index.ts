@@ -385,6 +385,7 @@ export interface GeneratedDocument {
   template_name: string;
   file_name: string;
   file_url: string;
+  issuer_company?: string | null;
   course_name?: string | null;
   category?: string | null;
   employees_count?: number | null;
