@@ -286,10 +286,7 @@ function normalizeMap(raw) {
 
   const fullName = tokenValue(out, 'FULLNAME') ||
     tokenValue(out, 'FULL_NAME') ||
-    tokenValue(out, 'FIO') ||
-    [tokenValue(out, 'LAST_NAME'), tokenValue(out, 'NAME'), tokenValue(out, 'SEC_NAME')]
-      .filter(Boolean)
-      .join(' ');
+    tokenValue(out, 'FIO');
 
   setToken(out, 'FULLNAME', fullName);
   setToken(out, 'FULL_NAME', fullName);
