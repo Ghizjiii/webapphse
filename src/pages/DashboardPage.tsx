@@ -208,7 +208,7 @@ export default function DashboardPage() {
   const [paymentOrderFilter, setPaymentOrderFilter] = useState<PaymentOrderFilterValue>('all');
   const [generalContractorFilter, setGeneralContractorFilter] = useState<GeneralContractorFilterValue>('all');
   const [objectSearch, setObjectSearch] = useState('');
-  const [engineerFilter, setEngineerFilter] = useState('all');
+  const [engineerSearch, setEngineerSearch] = useState('');
   const [showCourseDetails, setShowCourseDetails] = useState(true);
   const [pageSize, setPageSize] = useState(() => readStoredPagination(user?.id || '').pageSize);
   const [currentPage, setCurrentPage] = useState(() => readStoredPagination(user?.id || '').currentPage);
@@ -455,7 +455,7 @@ export default function DashboardPage() {
     createdToFilter,
     creatorFilter,
     generalContractorFilter,
-    engineerFilter,
+    engineerSearch,
     objectSearch,
     paymentOrderFilter,
     regionFilter,
@@ -527,10 +527,6 @@ export default function DashboardPage() {
     )).sort((left, right) => left.localeCompare(right, 'ru-RU'));
   }, [rows]);
 
-  const engineerFilterOptions = useMemo(() => Array.from(new Set(
-    rows.map(({ questionnaire }) => String(questionnaire.engineer_name || '').trim()).filter(Boolean),
-  )).sort((left, right) => left.localeCompare(right, 'ru-RU')), [rows]);
-
   useEffect(() => {
     if (regionFilter !== 'all' && !regionFilterOptions.includes(regionFilter)) {
       setRegionFilter('all');
@@ -539,6 +535,7 @@ export default function DashboardPage() {
 
   const normalizedCompanySearch = companySearch.trim().toLowerCase();
   const normalizedObjectSearch = objectSearch.trim().toLowerCase();
+  const normalizedEngineerSearch = engineerSearch.trim().toLocaleLowerCase('ru-RU');
   const createdFromTime = createdFromFilter ? new Date(`${createdFromFilter}T00:00:00`).getTime() : NaN;
   const createdToTime = createdToFilter ? new Date(`${createdToFilter}T23:59:59`).getTime() : NaN;
   const filteredRows = useMemo(
@@ -566,8 +563,11 @@ export default function DashboardPage() {
         return false;
       }
 
-      if (engineerFilter !== 'all' && String(questionnaire.engineer_name || '').trim() !== engineerFilter) {
-        return false;
+      if (normalizedEngineerSearch) {
+        const engineerName = String(questionnaire.engineer_name || '').trim().toLocaleLowerCase('ru-RU');
+        if (!engineerName.includes(normalizedEngineerSearch)) {
+          return false;
+        }
       }
 
       const createdAtTime = new Date(questionnaire.created_at).getTime();
@@ -616,9 +616,9 @@ export default function DashboardPage() {
       createdToTime,
       creatorFilter,
       currentUserId,
-      engineerFilter,
       generalContractorFilter,
       normalizedCompanySearch,
+      normalizedEngineerSearch,
       normalizedObjectSearch,
       paymentOrderFilter,
       regionFilter,
@@ -742,7 +742,7 @@ export default function DashboardPage() {
     createdToFilter !== '' ||
     paymentOrderFilter !== 'all' ||
     generalContractorFilter !== 'all' ||
-    engineerFilter !== 'all' ||
+    engineerSearch.trim() !== '' ||
     objectSearch.trim() !== '';
 
   const filteredTotalAmount = useMemo(
@@ -775,7 +775,7 @@ export default function DashboardPage() {
     setCreatedToFilter('');
     setPaymentOrderFilter('all');
     setGeneralContractorFilter('all');
-    setEngineerFilter('all');
+    setEngineerSearch('');
     setObjectSearch('');
   }
 
@@ -1004,16 +1004,12 @@ export default function DashboardPage() {
 
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Инженер (ФИО)</span>
-                  <select
-                    value={engineerFilter}
-                    onChange={(event) => setEngineerFilter(event.target.value)}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                  >
-                    <option value="all">Все инженеры</option>
-                    {engineerFilterOptions.map(engineerName => (
-                      <option key={engineerName} value={engineerName}>{engineerName}</option>
-                    ))}
-                  </select>
+                  <input
+                    value={engineerSearch}
+                    onChange={(event) => setEngineerSearch(event.target.value)}
+                    placeholder="Поиск по ФИО инженера"
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
                 </label>
 
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
