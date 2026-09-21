@@ -60,38 +60,38 @@ jobs:
           document_script_url="$2"
           protocol_script_url="$3"
 
-          edge_id="$(docker ps --filter label=com.docker.compose.service=functions -q | head -n 1)"
+          edge_id="$(sudo -n docker ps --filter label=com.docker.compose.service=functions -q | head -n 1)"
           test -n "$edge_id"
-          functions_source="$(docker inspect "$edge_id" --format '{{range .Mounts}}{{if eq .Destination "/home/deno/functions"}}{{.Source}}{{end}}{{end}}')"
+          functions_source="$(sudo -n docker inspect "$edge_id" --format '{{range .Mounts}}{{if eq .Destination "/home/deno/functions"}}{{.Source}}{{end}}{{end}}')"
           test -n "$functions_source"
 
           for function_name in generate-document generate-protocol-document _shared; do
-            mkdir -p "$functions_source/$function_name"
-            cp -a "$release_path/functions/$function_name/." "$functions_source/$function_name/"
+            sudo -n mkdir -p "$functions_source/$function_name"
+            sudo -n cp -a "$release_path/functions/$function_name/." "$functions_source/$function_name/"
           done
 
-          compose_dir="$(docker inspect "$edge_id" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
-          compose_service="$(docker inspect "$edge_id" --format '{{index .Config.Labels "com.docker.compose.service"}}')"
+          compose_dir="$(sudo -n docker inspect "$edge_id" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
+          compose_service="$(sudo -n docker inspect "$edge_id" --format '{{index .Config.Labels "com.docker.compose.service"}}')"
           env_file="$compose_dir/.env"
-          test -f "$env_file"
+          sudo -n test -f "$env_file"
 
           update_env() {
             key="$1"
             value="$2"
-            if grep -q "^${key}=" "$env_file"; then
-              sed -i "s|^${key}=.*$|${key}=${value}|" "$env_file"
+            if sudo -n grep -q "^${key}=" "$env_file"; then
+              sudo -n sed -i "s|^${key}=.*$|${key}=${value}|" "$env_file"
             else
-              printf '%s=%s\n' "$key" "$value" >> "$env_file"
+              printf '%s=%s\n' "$key" "$value" | sudo -n tee -a "$env_file" >/dev/null
             fi
           }
 
           update_env GOOGLE_APPS_SCRIPT_URL "$document_script_url"
           update_env GOOGLE_APPS_SCRIPT_PROTOCOL_URL "$protocol_script_url"
 
-          db_id="$(docker ps --filter label=com.docker.compose.service=db -q | head -n 1)"
+          db_id="$(sudo -n docker ps --filter label=com.docker.compose.service=db -q | head -n 1)"
           test -n "$db_id"
-          docker exec -i "$db_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres < "$release_path/migration.sql" >/dev/null
+          sudo -n docker exec -i "$db_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres < "$release_path/migration.sql" >/dev/null
 
-          (cd "$compose_dir" && docker compose up -d --no-deps "$compose_service") >/dev/null
+          sudo -n docker compose --project-directory "$compose_dir" up -d --no-deps "$compose_service" >/dev/null
           rm -rf "$release_path"
           REMOTE
