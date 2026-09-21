@@ -80,6 +80,7 @@ Deno.serve(async (req: Request) => {
 
     const fileUrl = String(upstreamJson.fileUrl || upstreamJson.url || "");
     const fileId = String(upstreamJson.fileId || "");
+    const scriptVersion = String(upstreamJson.scriptVersion || "");
     const generatedFileName = String(upstreamJson.fileName || body.fileName);
     const upstreamError = String(upstreamJson.error || "").trim();
     const unresolvedCount = Number(upstreamJson.unresolvedCount || 0);
@@ -105,6 +106,7 @@ Deno.serve(async (req: Request) => {
       ok: true,
       fileUrl,
       fileId,
+      scriptVersion,
       fileName: generatedFileName,
       templateKey: body.templateKey,
       templateName: body.templateName || "",
