@@ -6,6 +6,7 @@ import {
   gradeShort,
   normalizePreviousElectricalSafetyGroup,
 } from './electricalSafety';
+import { formatProtocolNumber, resolveIssuerCompanyProfile } from './issuerCompany';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -34,6 +35,12 @@ const TEMPLATE_BOT_ID: TemplateConfig = {
   key: 'tpl_02_bot_worker_id',
   name: '02. BOT worker ID',
   docType: 'id_card',
+};
+
+const TEMPLATE_BOT_CERT_EDU: TemplateConfig = {
+  key: 'tpl_01_bot_itr_certificate_edu',
+  name: '01. BOT safety certificate (ITR, EDU)',
+  docType: 'certificate',
 };
 
 const TEMPLATE_ELECTRICAL_SAFETY_ID: TemplateConfig = {
@@ -230,7 +237,11 @@ export function resolveTemplateForCertificate(cert: Certificate): TemplateConfig
 
   const hasBot = course.includes('\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u044c') && course.includes('\u043e\u0445\u0440\u0430\u043d\u0430 \u0442\u0440\u0443\u0434\u0430');
   if (hasBot) {
-    if (category.includes('\u0438\u0442\u0440')) return TEMPLATE_BOT_CERT;
+    if (category.includes('\u0438\u0442\u0440')) {
+      return resolveIssuerCompanyProfile(cert.issuer_company).protocolPrefix === 'EDU'
+        ? TEMPLATE_BOT_CERT_EDU
+        : TEMPLATE_BOT_CERT;
+    }
     return TEMPLATE_BOT_ID;
   }
 
@@ -284,6 +295,8 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
   const electricalSafetyIssueDate = usesElectricalSafetyTemplate
     ? formatElectricalSafetyIssueDate(cert.start_date)
     : frontSideStartDate;
+  const issuer = resolveIssuerCompanyProfile(cert.issuer_company);
+  const protocolNumber = formatProtocolNumber(cert.protocol_number, cert.issuer_company);
 
   const values: Record<string, string> = {
     WORK_PLACE: firstNotEmpty(companyName, cert.employee_status),
@@ -301,8 +314,11 @@ export function buildPlaceholders(cert: Certificate, companyName: string, templa
     COURSE: courseName,
     DOC_NUM: String(cert.document_number || '').trim(),
     CERT_NUM: String(cert.document_number || '').trim(),
-    PROTOCOL_NUM: String(cert.protocol_number || '').trim(),
-    PROTOCOL: String(cert.protocol_number || '').trim(),
+    PROTOCOL_NUM: protocolNumber,
+    PROTOCOL: protocolNumber,
+    MyCompanyName: issuer.canonicalName,
+    Director_Fullname: issuer.directorFullName,
+    Director_Shortname: issuer.directorShortName,
     CHAIRMAN: chairman,
     COMMISSION_CHAIR: chairman,
     COMMISSION_ALL: firstNotEmpty(cert.commission_members, chairman),

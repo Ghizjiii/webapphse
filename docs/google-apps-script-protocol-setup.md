@@ -97,6 +97,9 @@ const TEMPLATES = {
 {{MANAGER}}
 {{HEAD}}
 {{WORK_PLACE}}
+{{MyCompanyName}}
+{{Director_Fullname}}
+{{Director_Shortname}}
 ```
 
 ## 6. Code.gs

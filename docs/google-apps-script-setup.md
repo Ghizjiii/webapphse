@@ -43,6 +43,7 @@ const PHOTO_HEIGHT_POINTS = 113; // ~4 cm
 
 const TEMPLATES = {
   tpl_01_bot_itr_certificate: 'DOC_ID_01',
+  tpl_01_bot_itr_certificate_edu: '1VyNvETjRWRas7e69OjOV06_M4N4iV7SQCF7lvO9xpmE',
   tpl_02_bot_worker_id: 'DOC_ID_02',
   tpl_03_fire_tech_minimum: 'DOC_ID_03',
   tpl_04_industrial_safety: 'DOC_ID_04',
@@ -155,6 +156,9 @@ function fillIdCardBatch(body, batch, report) {
     replaceToken(body, `CERT_NUM_${slot}`, values.DOC_NUM);
     replaceToken(body, `PROTOCOL_NUM_${slot}`, values.PROTOCOL_NUM);
     replaceToken(body, `PROTOCOL_${slot}`, values.PROTOCOL_NUM);
+    replaceToken(body, 'MyCompanyName', values.MyCompanyName);
+    replaceToken(body, 'Director_Fullname', values.Director_Fullname);
+    replaceToken(body, 'Director_Shortname', values.Director_Shortname);
     replaceToken(body, `CHAIRMAN_${slot}`, values.CHAIRMAN);
     replaceToken(body, `COURSE_START_${slot}`, values.COURSE_START);
     replaceToken(body, `COURSE_START_DIFFER_${slot}`, values.COURSE_START_DIFFER);
@@ -189,6 +193,9 @@ function fillCertificatePage(body, item) {
   replaceToken(body, 'CERT_NUM', values.DOC_NUM);
   replaceToken(body, 'PROTOCOL_NUM', values.PROTOCOL_NUM);
   replaceToken(body, 'PROTOCOL', values.PROTOCOL_NUM);
+  replaceToken(body, 'MyCompanyName', values.MyCompanyName);
+  replaceToken(body, 'Director_Fullname', values.Director_Fullname);
+  replaceToken(body, 'Director_Shortname', values.Director_Shortname);
   replaceToken(body, 'CHAIRMAN', values.CHAIRMAN);
   replaceToken(body, 'COURSE_START', values.COURSE_START);
   replaceToken(body, 'COURSE_START_KAZ', values.COURSE_START_KAZ);
@@ -283,6 +290,9 @@ function buildCommonValues(p) {
     COURSE_NAME: pick(p, ['COURSE_NAME', 'COURSE']),
     DOC_NUM: pick(p, ['DOC_NUM', 'CERT_NUM']),
     PROTOCOL_NUM: pick(p, ['PROTOCOL_NUM', 'PROTOCOL']),
+    MyCompanyName: pick(p, ['MyCompanyName']),
+    Director_Fullname: pick(p, ['Director_Fullname']),
+    Director_Shortname: pick(p, ['Director_Shortname']),
     CHAIRMAN: pick(p, ['CHAIRMAN', 'COMMISSION_CHAIR']),
     COURSE_START: pick(p, ['COURSE_START', 'DATE', 'DATE_ISSUE']),
     COURSE_START_DIFFER: pick(p, ['COURSE_START_DIFFER', 'COURSE_START', 'DATE', 'DATE_ISSUE']),

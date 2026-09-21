@@ -11,6 +11,7 @@ import {
   gradeShort,
   normalizePreviousElectricalSafetyGroup,
 } from './electricalSafety';
+import { formatProtocolNumber, resolveIssuerCompanyProfile } from './issuerCompany';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -836,12 +837,17 @@ function protocolGlobalPlaceholders(params: {
 }): Record<string, string> {
   const first = params.certificates[0];
   const protocolDateRu = formatProtocolDateForTemplate(params.protocol);
+  const issuer = resolveIssuerCompanyProfile(first?.issuer_company);
+  const protocolNumber = formatProtocolNumber(params.protocol.protocol_number, first?.issuer_company);
 
   return {
     '{{WORK_PLACE}}': String(params.companyName || '').trim(),
     '{{COURSE_NAME}}': params.protocol.course_name,
-    '{{PROTOCOL_NUM}}': String(params.protocol.protocol_number || '').trim(),
-    '{{PROTOCOL}}': String(params.protocol.protocol_number || '').trim(),
+    '{{PROTOCOL_NUM}}': protocolNumber,
+    '{{PROTOCOL}}': protocolNumber,
+    '{{MyCompanyName}}': issuer.canonicalName,
+    '{{Director_Fullname}}': issuer.directorFullName,
+    '{{Director_Shortname}}': issuer.directorShortName,
     '{{PROTOCOL_DATE}}': protocolDateRu,
     '{{PROTOCOL_DATE_SHORT}}': formatProtocolDateShortRu(params.protocol.protocol_date),
     '{{PROTOCOL_DATE_DAY}}': normalizeDay(params.protocol.protocol_date),
@@ -870,6 +876,9 @@ export function buildProtocolDocumentPayload(params: {
     const displayFullName = certificateFullName(cert);
     const electricalSafetyAdmission = electricalSafetyAdmissionDocumentText(cert.electrical_safety_admission_protocol);
     const docValid = formatDocValidForProtocolTemplate(params.protocol, cert);
+    const usesFullNameTokens = isElectricalSafetyProtocolTemplate(params.protocol.template_key);
+    const issuer = resolveIssuerCompanyProfile(cert.issuer_company);
+    const protocolNumber = formatProtocolNumber(params.protocol.protocol_number, cert.issuer_company);
     const rowValues: Record<string, string> = {
       '{{AUTO_N}}': String(index + 1),
       '{{WORK_PLACE}}': String(params.companyName || '').trim(),
@@ -878,17 +887,20 @@ export function buildProtocolDocumentPayload(params: {
       '{{SEC_NAME}}': nameTokens.middleName,
       '{{FULLNAME}}': nameTokens.fullName,
       '{{FULLNAME_SHORT}}': nameTokens.fullNameShort,
-      '{{FIO}}': displayFullName,
+      '{{FIO}}': usesFullNameTokens ? displayFullName : '',
       '{{FIO_SHORT}}': nameTokens.fullNameShort,
-      '{{FULL_NAME}}': displayFullName,
+      '{{FULL_NAME}}': usesFullNameTokens ? displayFullName : '',
       '{{FULL_NAME_SHORT}}': nameTokens.fullNameShort,
       '{{POS}}': String(cert.position || '').trim(),
       '{{POSITION}}': String(cert.position || '').trim(),
       '{{CATEGORY}}': String(cert.category || '').trim(),
       '{{COURSE_NAME}}': String(cert.course_name || '').trim(),
       '{{DOC_NUM}}': String(cert.document_number || '').trim(),
-      '{{PROTOCOL_NUM}}': String(params.protocol.protocol_number || '').trim(),
-      '{{PROTOCOL}}': String(params.protocol.protocol_number || '').trim(),
+      '{{PROTOCOL_NUM}}': protocolNumber,
+      '{{PROTOCOL}}': protocolNumber,
+      '{{MyCompanyName}}': issuer.canonicalName,
+      '{{Director_Fullname}}': issuer.directorFullName,
+      '{{Director_Shortname}}': issuer.directorShortName,
       '{{PROTOCOL_DATE}}': formatProtocolDateForTemplate(params.protocol),
       '{{PROTOCOL_DATE_SHORT_YEAR}}': formatProtocolDateShortYear(params.protocol.protocol_date),
       '{{PROTOCOL_DATE_SHORT}}': formatProtocolDateShortRu(params.protocol.protocol_date),

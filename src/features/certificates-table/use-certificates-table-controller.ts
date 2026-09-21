@@ -20,6 +20,7 @@ import {
   normalizePreviousElectricalSafetyGroup,
 } from '../../lib/electricalSafety';
 import { buildPlaceholders, callGenerateDocumentFunction, resolveTemplateForCertificate, templateSupportsPhoto } from '../../lib/documentGeneration';
+import { issuerCompanyGroupingKey } from '../../lib/issuerCompany';
 import { defaultDocumentType, findDocumentValidityRule, resolveDocumentExpiryFromRule } from '../../lib/documentValidity';
 import { reconcileProtocolsFromCertificates } from '../../lib/protocolGeneration';
 import { useToast } from '../../context/ToastContext';
@@ -2329,7 +2330,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  }
 
  const courseName = String(cert.course_name || '').trim() || 'Без названия курса';
- const key = `${template.key}::${courseName.toLowerCase()}`;
+ const key = `${template.key}::${courseName.toLowerCase()}::${issuerCompanyGroupingKey(cert.issuer_company)}`;
  const group = grouped.get(key) || {
  template,
  courseName,
