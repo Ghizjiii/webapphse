@@ -1,4 +1,4 @@
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline';
 
 const PDF_RENDER_MAX_WIDTH = 2600;
 const PDF_RENDER_MAX_HEIGHT = 3600;
@@ -36,7 +36,9 @@ export function isPdfFile(file: File): boolean {
 
 export async function renderPdfFirstPageToJpeg(file: File): Promise<File> {
   const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  if (!pdfjs.GlobalWorkerOptions.workerPort) {
+    pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
+  }
   const data = new Uint8Array(await file.arrayBuffer());
   const loadingTask = pdfjs.getDocument({ data });
   const document = await loadingTask.promise;

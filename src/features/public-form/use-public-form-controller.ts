@@ -17,6 +17,7 @@ import { logger } from '../../lib/logger';
 import { getParticipantDisplayName, normalizeParticipantFullName } from '../../lib/participantName';
 import { parseParticipantImportFile } from '../../lib/participantImport';
 import { externalizeSupabaseStorageUrl } from '../../lib/supabaseStorageUrl';
+import { downloadQuestionnaireSubmissionPdf } from '../../lib/questionnaireSubmissionPdf';
 import type { CommentAttachment, Company, Participant, QuestionnaireRequestType, RefCompanyDirectory, RefCoursePrice } from '../../types';
 import {
  applyDirectoryMatchToCompany,
@@ -166,6 +167,11 @@ function createCommentAttachmentId(): string {
 export function usePublicFormController(token: string | undefined) {
  const [linkStatus, setLinkStatus] = useState<LinkStatus>('loading');
  const [questionnaireId, setQuestionnaireId] = useState<string | null>(null);
+ const [requestNumber, setRequestNumber] = useState<number | null>(null);
+ const [engineerName, setEngineerName] = useState('');
+ const [regionName, setRegionName] = useState('');
+ const [objectName, setObjectName] = useState('');
+ const [isGeneralContractor, setIsGeneralContractor] = useState(false);
  const [existingCompany, setExistingCompany] = useState<Company | null>(null);
  const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
  const [requestType, setRequestType] = useState<QuestionnaireRequestType>('external');
@@ -436,7 +442,7 @@ export function usePublicFormController(token: string | undefined) {
 
  const { data, error } = await supabase
  .from('questionnaires')
- .select('id, is_active, expires_at, status, payment_order_optional, request_type')
+ .select('id, is_active, expires_at, status, payment_order_optional, request_type, request_number, engineer_name, region_name, object_name, is_general_contractor')
  .eq('secret_token', token)
  .maybeSingle();
 
@@ -458,6 +464,11 @@ export function usePublicFormController(token: string | undefined) {
  }
 
  setQuestionnaireId(data.id);
+ setRequestNumber(typeof data.request_number === 'number' ? data.request_number : null);
+ setEngineerName(String(data.engineer_name || '').trim());
+ setRegionName(String(data.region_name || '').trim());
+ setObjectName(String(data.object_name || '').trim());
+ setIsGeneralContractor(Boolean(data.is_general_contractor));
  const nextRequestType = data.request_type === 'internal' ? 'internal' : 'external';
  setRequestType(nextRequestType);
  setPaymentOrderOptional(Boolean(data.payment_order_optional));
@@ -910,6 +921,40 @@ export function usePublicFormController(token: string | undefined) {
  setErrors(prev => ({ ...prev, payment_order: undefined, payment_order_beneficiary_account: undefined }));
  }, [updatePaymentManualCorrectionState]);
 
+ const handlePaymentBeneficiarySelect = useCallback((name: string, bin: string, account: string) => {
+ const normalizedBin = normalizePaymentBeneficiaryBin(bin);
+ const normalizedAccount = normalizePaymentBeneficiaryAccount(account);
+ const correctedFields = updatePaymentManualCorrectionState({
+ beneficiaryBin: normalizedBin,
+ beneficiaryAccount: normalizedAccount,
+ });
+ setPaymentBeneficiaryName(name);
+ setPaymentBeneficiaryBin(normalizedBin);
+ setPaymentBeneficiaryAccount(normalizedAccount);
+ setPaymentBeneficiaryValid(true);
+ setPaymentManualCorrection(true);
+ setPaymentCorrectedFields(correctedFields);
+ setPaymentVerificationSource('user_corrected');
+ setPaymentBeneficiaryHint(`Выбрана компания-получатель: ${name}.`);
+ setPaymentRecognitionDetails(current => current ? {
+ ...current,
+ beneficiaryName: name,
+ beneficiaryBin: normalizedBin,
+ beneficiaryAccount: normalizedAccount,
+ beneficiaryValid: true,
+ beneficiaryReason: 'Компания-получатель выбрана пользователем из разрешенного списка.',
+ manualCorrection: true,
+ correctedFields,
+ verificationSource: 'user_corrected',
+ } : current);
+ setErrors(prev => ({
+ ...prev,
+ payment_order: undefined,
+ payment_order_beneficiary_bin: undefined,
+ payment_order_beneficiary_account: undefined,
+ }));
+ }, [updatePaymentManualCorrectionState]);
+
  const handleValidatePaymentBeneficiary = useCallback(async (): Promise<PaymentOrderExtractedFields | null> => {
  const nextBin = normalizePaymentBeneficiaryBin(paymentBeneficiaryBin);
  const nextAccount = normalizePaymentBeneficiaryAccount(paymentBeneficiaryAccount);
@@ -973,6 +1018,7 @@ export function usePublicFormController(token: string | undefined) {
  }, [
  paymentBeneficiaryAccount,
  paymentBeneficiaryBin,
+ paymentManualCorrection,
  paymentOcrOriginal,
  paymentOrderAmount,
  paymentOrderDate,
@@ -1378,12 +1424,46 @@ export function usePublicFormController(token: string | undefined) {
  }
  }
 
- await supabase.from('questionnaires').update({
+ const submittedAt = new Date();
+ const { error: questionnaireSubmitError } = await supabase.from('questionnaires').update({
  status: 'submitted',
- submitted_at: new Date().toISOString(),
+ submitted_at: submittedAt.toISOString(),
  }).eq('id', questionnaireId);
+ if (questionnaireSubmitError) throw questionnaireSubmitError;
 
  setSubmitted(true);
+ try {
+ await downloadQuestionnaireSubmissionPdf({
+ requestNumber,
+ engineerName,
+ requestType,
+ regionName,
+ objectName,
+ isGeneralContractor,
+ companyName,
+ companyBin,
+ companyPhone,
+ companyEmail,
+ companyCity,
+ companyComments,
+ paymentOrderNumber: paymentOrderNumberValue,
+ paymentOrderDate: paymentOrderDateValue || '',
+ paymentOrderAmount,
+ paymentBeneficiaryName: finalBeneficiaryName,
+ paymentBeneficiaryBin: finalBeneficiaryBin,
+ paymentBeneficiaryAccount: finalBeneficiaryAccount,
+ participants: participantsToSubmit.map(participant => ({
+ ...participant,
+ full_name: normalizeParticipantFullName(getParticipantDisplayName(participant)),
+ last_name: normalizeParticipantFullName(participant.last_name),
+ first_name: normalizeParticipantFullName(participant.first_name),
+ patronymic: normalizeParticipantFullName(participant.patronymic),
+ })),
+ submittedAt,
+ });
+ } catch (pdfError) {
+ logger.error('PublicFormPage', 'Submission PDF generation failed', pdfError);
+ }
  } catch (error) {
  logger.error('PublicFormPage', 'Submit failed', error);
  if (isPaymentOrderDuplicateError(error)) {
@@ -1420,9 +1500,16 @@ export function usePublicFormController(token: string | undefined) {
  paymentOrderStorageBucket,
  paymentOrderStoragePath,
  paymentOrderUrl,
+ paymentOrderOptional,
  paymentRecognitionDetails,
  paymentVerificationSource,
  questionnaireId,
+ requestNumber,
+ engineerName,
+ requestType,
+ regionName,
+ objectName,
+ isGeneralContractor,
  ]);
 
  const validateForm = useCallback(() => validate(), [validate]);
@@ -1701,6 +1788,7 @@ export function usePublicFormController(token: string | undefined) {
  handlePaymentOrderAmountChange,
  handlePaymentBeneficiaryBinChange,
  handlePaymentBeneficiaryAccountChange,
+ handlePaymentBeneficiarySelect,
  handleValidatePaymentBeneficiary,
  handleCommentAttachmentSelect,
  removeCommentAttachment,

@@ -66,6 +66,19 @@ type ChunkedQueryResult<T> = {
 };
 
 const SUPABASE_IN_FILTER_CHUNK_SIZE = 30;
+const DASHBOARD_PAGINATION_STORAGE_PREFIX = 'hse-dashboard-pagination';
+
+function readStoredPagination(userId: string): { pageSize: number; currentPage: number } {
+  if (!userId || typeof window === 'undefined') return { pageSize: 20, currentPage: 1 };
+  try {
+    const stored = JSON.parse(localStorage.getItem(`${DASHBOARD_PAGINATION_STORAGE_PREFIX}:${userId}`) || '{}');
+    const pageSize = [20, 50, 100].includes(Number(stored.pageSize)) ? Number(stored.pageSize) : 20;
+    const currentPage = Math.max(1, Number(stored.currentPage) || 1);
+    return { pageSize, currentPage };
+  } catch {
+    return { pageSize: 20, currentPage: 1 };
+  }
+}
 
 function chunkItems<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -195,13 +208,15 @@ export default function DashboardPage() {
   const [paymentOrderFilter, setPaymentOrderFilter] = useState<PaymentOrderFilterValue>('all');
   const [generalContractorFilter, setGeneralContractorFilter] = useState<GeneralContractorFilterValue>('all');
   const [objectSearch, setObjectSearch] = useState('');
+  const [engineerFilter, setEngineerFilter] = useState('all');
   const [showCourseDetails, setShowCourseDetails] = useState(true);
-  const [pageSize, setPageSize] = useState(20);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readStoredPagination(user?.id || '').pageSize);
+  const [currentPage, setCurrentPage] = useState(() => readStoredPagination(user?.id || '').currentPage);
+  const filterResetReadyRef = useRef(false);
   const topTableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableElementRef = useRef<HTMLTableElement | null>(null);
-  const [tableScrollWidth, setTableScrollWidth] = useState(1840);
+  const [tableScrollWidth, setTableScrollWidth] = useState(2040);
   const currentUserId = user?.id || '';
   const currentUserEmail = user?.email || '';
   const currentProfileEmail = profile?.email || '';
@@ -217,6 +232,7 @@ export default function DashboardPage() {
     : null;
   const canSeeAllQuestionnaires = profile?.role === 'admin' || profile?.questionnaire_access === 'all';
   const isAdmin = profile?.role === 'admin';
+  const canManageQuestionnaires = profile?.role === 'admin' || profile?.role === 'coordinator';
   const currentResponsibleName = getProfileDisplayName(
     profile ? {
       user_id: profile.user_id,
@@ -428,6 +444,10 @@ export default function DashboardPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
+    if (!filterResetReadyRef.current) {
+      filterResetReadyRef.current = true;
+      return;
+    }
     setCurrentPage(1);
   }, [
     companySearch,
@@ -435,14 +455,22 @@ export default function DashboardPage() {
     createdToFilter,
     creatorFilter,
     generalContractorFilter,
+    engineerFilter,
     objectSearch,
-    pageSize,
     paymentOrderFilter,
     regionFilter,
     requestTypeFilter,
     statusFilter,
     trashMode,
   ]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    localStorage.setItem(
+      `${DASHBOARD_PAGINATION_STORAGE_PREFIX}:${currentUserId}`,
+      JSON.stringify({ pageSize, currentPage }),
+    );
+  }, [currentPage, currentUserId, pageSize]);
 
   useEffect(() => {
     if (!isAdmin && trashMode) {
@@ -499,6 +527,10 @@ export default function DashboardPage() {
     )).sort((left, right) => left.localeCompare(right, 'ru-RU'));
   }, [rows]);
 
+  const engineerFilterOptions = useMemo(() => Array.from(new Set(
+    rows.map(({ questionnaire }) => String(questionnaire.engineer_name || '').trim()).filter(Boolean),
+  )).sort((left, right) => left.localeCompare(right, 'ru-RU')), [rows]);
+
   useEffect(() => {
     if (regionFilter !== 'all' && !regionFilterOptions.includes(regionFilter)) {
       setRegionFilter('all');
@@ -531,6 +563,10 @@ export default function DashboardPage() {
       }
 
       if (regionFilter !== 'all' && getQuestionnaireRegionLabel(questionnaire) !== regionFilter) {
+        return false;
+      }
+
+      if (engineerFilter !== 'all' && String(questionnaire.engineer_name || '').trim() !== engineerFilter) {
         return false;
       }
 
@@ -580,6 +616,7 @@ export default function DashboardPage() {
       createdToTime,
       creatorFilter,
       currentUserId,
+      engineerFilter,
       generalContractorFilter,
       normalizedCompanySearch,
       normalizedObjectSearch,
@@ -592,11 +629,12 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
+    if (loading) return;
     const nextTotalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
     if (currentPage > nextTotalPages) {
       setCurrentPage(nextTotalPages);
     }
-  }, [filteredRows.length, pageSize, currentPage]);
+  }, [filteredRows.length, pageSize, currentPage, loading]);
 
   useEffect(() => {
     updateTableScrollWidth();
@@ -704,7 +742,9 @@ export default function DashboardPage() {
     createdToFilter !== '' ||
     paymentOrderFilter !== 'all' ||
     generalContractorFilter !== 'all' ||
+    engineerFilter !== 'all' ||
     objectSearch.trim() !== '';
+
   const filteredTotalAmount = useMemo(
     () => filteredRows.reduce((sum, row) => sum + row.totalAmount, 0),
     [filteredRows],
@@ -735,6 +775,7 @@ export default function DashboardPage() {
     setCreatedToFilter('');
     setPaymentOrderFilter('all');
     setGeneralContractorFilter('all');
+    setEngineerFilter('all');
     setObjectSearch('');
   }
 
@@ -797,6 +838,7 @@ export default function DashboardPage() {
     payment_order_optional: boolean;
     is_general_contractor: boolean;
     object_name: string;
+    engineer_name: string;
   }) {
     const isDepartmentHeadScoped = currentProfileRole === 'department_head' && Boolean(currentProfileRegionId);
     const createPayload = isDepartmentHeadScoped
@@ -817,6 +859,7 @@ export default function DashboardPage() {
       payment_order_optional: createPayload.payment_order_optional,
       is_general_contractor: createPayload.is_general_contractor,
       object_name: createPayload.object_name,
+      engineer_name: createPayload.engineer_name,
       is_active: true,
       status: 'active',
       created_by: user?.id,
@@ -960,6 +1003,20 @@ export default function DashboardPage() {
                 </label>
 
                 <label className="flex flex-col gap-1.5 text-sm text-gray-600">
+                  <span>Инженер (ФИО)</span>
+                  <select
+                    value={engineerFilter}
+                    onChange={(event) => setEngineerFilter(event.target.value)}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Все инженеры</option>
+                    {engineerFilterOptions.map(engineerName => (
+                      <option key={engineerName} value={engineerName}>{engineerName}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm text-gray-600">
                   <span>Создана с</span>
                   <input
                     type="date"
@@ -1094,12 +1151,13 @@ export default function DashboardPage() {
               onScroll={() => syncTableScroll('body')}
               className="overflow-x-auto overscroll-x-contain"
             >
-          <table ref={tableElementRef} className="min-w-[1840px] w-full text-xs sm:text-sm">
+          <table ref={tableElementRef} className="min-w-[2040px] w-full text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60">
                 <th className="sticky left-0 z-20 w-16 bg-gray-50 px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">№</th>
                 <th className="min-w-[260px] px-4 py-3.5 text-left text-[10px] font-medium uppercase tracking-wider text-gray-600 sm:text-xs">Заявка / Название компании</th>
                 <th className="min-w-[180px] px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Объект</th>
+                <th className="min-w-[200px] px-4 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Инженер</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Регион / отдел</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Тип</th>
                 <th className="text-left px-4 py-3.5 font-medium text-gray-600 text-xs uppercase tracking-wider">Генподряд</th>
@@ -1120,7 +1178,7 @@ export default function DashboardPage() {
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={showCourseDetails ? 16 : 15} className="px-4 py-10 text-center text-sm text-gray-500">
+                  <td colSpan={showCourseDetails ? 17 : 16} className="px-4 py-10 text-center text-sm text-gray-500">
                     По выбранным фильтрам анкеты не найдены.
                   </td>
                 </tr>
@@ -1146,6 +1204,7 @@ export default function DashboardPage() {
                 const requestTypeLabel = getQuestionnaireRequestTypeLabel(q);
                 const fallbackSubtitle = String(q.title || '').trim();
                 const objectName = String(q.object_name || '').trim();
+                const engineerName = String(q.engineer_name || '').trim();
                 const isGeneralContractor = Boolean(q.is_general_contractor);
                 const currentRow = {
                   questionnaire: q,
@@ -1180,6 +1239,9 @@ export default function DashboardPage() {
                     </td>
                     <td className="px-4 py-4 text-gray-600">
                       {objectName ? <span className="font-medium text-gray-700">{objectName}</span> : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-4 py-4 text-gray-600">
+                      {engineerName ? <span className="font-medium text-gray-700">{engineerName}</span> : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-4 text-gray-600">
                       {regionLabel ? (
@@ -1306,20 +1368,24 @@ export default function DashboardPage() {
                             >
                               <Copy size={15} />
                             </button>
-                            <button
-                              onClick={() => toggleActive(q)}
-                              title={q.is_active ? 'Деактивировать' : 'Активировать'}
-                              className={`p-1.5 rounded-lg transition-all ${q.is_active ? 'text-gray-400 hover:text-amber-600 hover:bg-amber-50' : 'text-gray-400 hover:text-green-600 hover:bg-green-50'}`}
-                            >
-                              {q.is_active ? <PowerOff size={15} /> : <Power size={15} />}
-                            </button>
-                            <button
-                              onClick={() => setDeleteTarget(currentRow)}
-                              title="Удалить"
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            >
-                              <Trash2 size={15} />
-                            </button>
+                            {canManageQuestionnaires && (
+                              <>
+                                <button
+                                  onClick={() => toggleActive(q)}
+                                  title={q.is_active ? 'Деактивировать' : 'Активировать'}
+                                  className={`p-1.5 rounded-lg transition-all ${q.is_active ? 'text-gray-400 hover:text-amber-600 hover:bg-amber-50' : 'text-gray-400 hover:text-green-600 hover:bg-green-50'}`}
+                                >
+                                  {q.is_active ? <PowerOff size={15} /> : <Power size={15} />}
+                                </button>
+                                <button
+                                  onClick={() => setDeleteTarget(currentRow)}
+                                  title="Удалить"
+                                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              </>
+                            )}
                           </>
                         )}
                       </div>

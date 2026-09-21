@@ -57,6 +57,7 @@ interface CompanySectionProps {
   onPaymentOrderAmountChange: (value: string) => void;
   onPaymentBeneficiaryBinChange: (value: string) => void;
   onPaymentBeneficiaryAccountChange: (value: string) => void;
+  onPaymentBeneficiarySelect: (name: string, bin: string, account: string) => void;
   onValidatePaymentBeneficiary: () => void;
 }
 
@@ -227,6 +228,7 @@ export function CompanySection(props: CompanySectionProps) {
     onPaymentOrderAmountChange,
     onPaymentBeneficiaryBinChange,
     onPaymentBeneficiaryAccountChange,
+    onPaymentBeneficiarySelect,
     onValidatePaymentBeneficiary,
   } = props;
 
@@ -427,6 +429,32 @@ export function CompanySection(props: CompanySectionProps) {
                     </div>
                   )}
                 </div>
+                {paymentRecognitionDetails?.acceptedBeneficiaries?.length ? (
+                  <div className="mt-3">
+                    <label className="mb-1 block text-xs text-gray-600">Компания-получатель оплаты</label>
+                    <select
+                      value=""
+                      onChange={event => {
+                        const [beneficiaryIndex, accountIndex] = event.target.value.split(':').map(Number);
+                        const beneficiary = paymentRecognitionDetails.acceptedBeneficiaries?.[beneficiaryIndex];
+                        const account = beneficiary?.accounts?.[accountIndex];
+                        if (beneficiary && account) {
+                          onPaymentBeneficiarySelect(beneficiary.name, beneficiary.bin, account);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="">Выберите компанию, если в чеке нет БИН или счета</option>
+                      {paymentRecognitionDetails.acceptedBeneficiaries.flatMap((beneficiary, beneficiaryIndex) => (
+                        beneficiary.accounts.map((account, accountIndex) => (
+                          <option key={`${beneficiary.bin}-${account}`} value={`${beneficiaryIndex}:${accountIndex}`}>
+                            {beneficiary.name} · БИН {beneficiary.bin} · {account}
+                          </option>
+                        ))
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] md:items-start">
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">БИН получателя</label>

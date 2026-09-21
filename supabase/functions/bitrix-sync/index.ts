@@ -2963,6 +2963,9 @@ Deno.serve(async (req: Request) => {
   try {
     syncStage = "authorize";
     const auth = await requireActiveProfile(req);
+    if (auth.profile.role !== "admin" && auth.profile.role !== "coordinator") {
+      return jsonResponse(req, 403, { error: "Only administrators and coordinators can synchronize with Bitrix24" });
+    }
     const responsibleBitrixUserId = plain(auth.profile.bitrix_user_id);
     const body = await req.json();
     const questionnaireId = plain(body?.questionnaireId);

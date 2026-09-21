@@ -10,6 +10,7 @@ export interface QuestionnaireLink {
   payment_order_optional: boolean;
   is_general_contractor?: boolean;
   object_name?: string | null;
+  engineer_name?: string | null;
   expires_at: string | null;
   created_by: string | null;
   created_at: string;

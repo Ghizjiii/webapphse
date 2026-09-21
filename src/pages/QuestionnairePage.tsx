@@ -226,6 +226,7 @@ export default function QuestionnairePage() {
   const isAdmin = profile?.role === 'admin';
   const isCoordinator = profile?.role === 'coordinator';
   const canStartProcessing = isAdmin || isCoordinator;
+  const canManageQuestionnaire = isAdmin || isCoordinator;
 
   const [questionnaire, setQuestionnaire] = useState<QuestionnaireLink | null>(null);
   const [creatorProfile, setCreatorProfile] = useState<ProfileDirectoryEntry | null>(null);
@@ -242,6 +243,7 @@ export default function QuestionnairePage() {
   const [workflowEvents, setWorkflowEvents] = useState<QuestionnaireEvent[]>([]);
   const [availableCourses, setAvailableCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState<Tab>('participants');
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [companyEditing, setCompanyEditing] = useState(false);
@@ -257,6 +259,8 @@ export default function QuestionnairePage() {
 
   const loadData = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
+    setLoadError('');
 
     const [qRes, companiesRes, dealsRes] = await Promise.all([
       supabase.from('questionnaires').select('*').eq('id', id).maybeSingle(),
@@ -264,10 +268,19 @@ export default function QuestionnairePage() {
       supabase.from('deals').select('*').eq('questionnaire_id', id).order('updated_at', { ascending: false }).order('created_at', { ascending: false }),
     ]);
 
-    if (qRes.error || !qRes.data) {
+    if (qRes.error) {
       setCreatorProfile(null);
       setProcessingProfile(null);
-      navigate('/dashboard');
+      setLoadError('Не удалось загрузить анкету. Проверьте соединение и повторите попытку.');
+      setLoading(false);
+      return;
+    }
+
+    if (!qRes.data) {
+      setCreatorProfile(null);
+      setProcessingProfile(null);
+      setLoadError('Анкета не найдена или была удалена.');
+      setLoading(false);
       return;
     }
 
@@ -627,6 +640,7 @@ export default function QuestionnairePage() {
   }
 
   function renderCompanyActions(editLabel = 'Редактировать') {
+    if (!canManageQuestionnaire) return null;
     if (company) {
       if (companyEditing) {
         return (
@@ -690,13 +704,29 @@ export default function QuestionnairePage() {
     );
   }
 
-  if (!questionnaire) return null;
+  if (!questionnaire) {
+    return (
+      <DashboardLayout breadcrumbs={[{ label: 'Анкеты', to: '/dashboard' }, { label: 'Ошибка загрузки' }]}>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+          <div>{loadError || 'Не удалось открыть анкету.'}</div>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 font-medium text-red-700 hover:bg-red-100"
+          >
+            Повторить
+          </button>
+        </div>
+      </DashboardLayout>
+    );
+  }
   const isExpired = questionnaire.expires_at && new Date(questionnaire.expires_at) < new Date();
   const uniqueCoursesCount = new Set(
     participants.flatMap(participant => (participant.courses || []).map(course => String(course.course_name || '').trim()).filter(Boolean))
   ).size;
   const totalCourseRequests = participants.reduce((sum, participant) => sum + (participant.courses?.length || 0), 0);
-  const canSyncToBitrix = Boolean(company && participants.length > 0);
+  const hasBitrixSyncData = Boolean(company && participants.length > 0);
+  const canSyncToBitrix = canManageQuestionnaire && hasBitrixSyncData;
   const responsibleRole = creatorProfile?.role || (questionnaire.created_by === currentUserId ? currentProfileRole : null);
   const responsibleName = getProfileDisplayName(
     creatorProfile,
@@ -821,17 +851,19 @@ export default function QuestionnairePage() {
             <ExternalLink size={14} />
             Открыть форму
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setLinkEditing(true);
-              setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
-            }}
-            className={secondaryButtonClass}
-          >
-            <Pencil size={14} />
-            Изменить срок
-          </button>
+          {canManageQuestionnaire && (
+            <button
+              type="button"
+              onClick={() => {
+                setLinkEditing(true);
+                setExpiryDraft(questionnaire.expires_at?.split('T')[0] || '');
+              }}
+              className={secondaryButtonClass}
+            >
+              <Pencil size={14} />
+              Изменить срок
+            </button>
+          )}
         </>
       )}
     >
@@ -995,6 +1027,11 @@ export default function QuestionnairePage() {
                     Объект: {objectName}
                   </span>
                 ) : null}
+                {questionnaire.engineer_name ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-medium text-cyan-800">
+                    Инженер: {questionnaire.engineer_name}
+                  </span>
+                ) : null}
               </div>
 
               <div className="grid max-w-6xl gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
@@ -1008,7 +1045,7 @@ export default function QuestionnairePage() {
                 <SummaryBadge label="Заявки" value={totalCourseRequests} />
               </div>
 
-              {!canSyncToBitrix && (
+              {canManageQuestionnaire && !hasBitrixSyncData && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   Чтобы отправить анкету в Bitrix24, заполните компанию и добавьте хотя бы одного сотрудника.
                 </div>
@@ -1018,16 +1055,18 @@ export default function QuestionnairePage() {
             <div className="flex min-w-0 flex-col gap-3 xl:items-end">
               <div className="flex w-full min-w-0 flex-col gap-3 xl:max-w-[370px]">
                 <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
-                  <button
-                    onClick={toggleActive}
-                    className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
-                      questionnaire.is_active
-                        ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
-                        : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-                    }`}
-                  >
-                    {questionnaire.is_active ? <><PowerOff size={14} /> Деактивировать</> : <><Power size={14} /> Активировать</>}
-                  </button>
+                  {canManageQuestionnaire && (
+                    <button
+                      onClick={toggleActive}
+                      className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
+                        questionnaire.is_active
+                          ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                          : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                      }`}
+                    >
+                      {questionnaire.is_active ? <><PowerOff size={14} /> Деактивировать</> : <><Power size={14} /> Активировать</>}
+                    </button>
+                  )}
                   {canSyncToBitrix && (
                     <button
                       onClick={() => void openSyncModal()}
@@ -1439,52 +1478,60 @@ export default function QuestionnairePage() {
           </div>
 
           {tab === 'participants' && (
-            <ParticipantsTable
-              questionnaireId={id!}
-              companyId={company?.id || null}
-              participants={participants}
-              availableCourses={availableCourses}
-              onRefresh={loadData}
-            />
+            <fieldset disabled={!canManageQuestionnaire}>
+              <ParticipantsTable
+                questionnaireId={id!}
+                companyId={company?.id || null}
+                participants={participants}
+                availableCourses={availableCourses}
+                onRefresh={loadData}
+              />
+            </fieldset>
           )}
           {tab === 'certificates' && (
-            <CertificatesTable
-              questionnaireId={id!}
-              dealId={deal?.id || null}
-              companyId={company?.id || null}
-              companyName={company?.name || ''}
-              participants={participants}
-              bitrixDealId={deal?.bitrix_deal_id || null}
-              bitrixCompanyId={company?.bitrix_company_id || null}
-              requestType={questionnaire.request_type === 'internal' ? 'internal' : 'external'}
-              certificates={certificates}
-              onRefresh={loadData}
-            />
+            <fieldset disabled={!canManageQuestionnaire}>
+              <CertificatesTable
+                questionnaireId={id!}
+                dealId={deal?.id || null}
+                companyId={company?.id || null}
+                companyName={company?.name || ''}
+                participants={participants}
+                bitrixDealId={deal?.bitrix_deal_id || null}
+                bitrixCompanyId={company?.bitrix_company_id || null}
+                requestType={questionnaire.request_type === 'internal' ? 'internal' : 'external'}
+                certificates={certificates}
+                onRefresh={loadData}
+              />
+            </fieldset>
           )}
           {tab === 'course_costs' && (
             <CourseCostSummaryTable summaries={courseCostSummaries} />
           )}
           {tab === 'protocols' && (
-            <ProtocolsTable
-              questionnaireId={id!}
-              dealId={deal?.id || null}
-              companyId={company?.id || null}
-              companyName={company?.name || ''}
-              bitrixDealId={deal?.bitrix_deal_id || null}
-              bitrixCompanyId={company?.bitrix_company_id || null}
-              protocols={protocols}
-              certificates={certificates}
-              onRefresh={loadData}
-            />
+            <fieldset disabled={!canManageQuestionnaire}>
+              <ProtocolsTable
+                questionnaireId={id!}
+                dealId={deal?.id || null}
+                companyId={company?.id || null}
+                companyName={company?.name || ''}
+                bitrixDealId={deal?.bitrix_deal_id || null}
+                bitrixCompanyId={company?.bitrix_company_id || null}
+                protocols={protocols}
+                certificates={certificates}
+                onRefresh={loadData}
+              />
+            </fieldset>
           )}
           {tab === 'printed_documents' && (
-            <PrintedDocumentsTable
-              documents={generatedDocuments}
-              certificates={certificates}
-              bitrixDealId={deal?.bitrix_deal_id || null}
-              bitrixCompanyId={company?.bitrix_company_id || null}
-              onRefresh={loadData}
-            />
+            <fieldset disabled={!canManageQuestionnaire}>
+              <PrintedDocumentsTable
+                documents={generatedDocuments}
+                certificates={certificates}
+                bitrixDealId={deal?.bitrix_deal_id || null}
+                bitrixCompanyId={company?.bitrix_company_id || null}
+                onRefresh={loadData}
+              />
+            </fieldset>
           )}
         </div>
       </div>

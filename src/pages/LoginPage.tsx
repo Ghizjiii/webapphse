@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import DevelopedByFooter from '../components/DevelopedByFooter';
@@ -9,12 +9,14 @@ import { useToast } from '../context/ToastContext';
 export default function LoginPage() {
   const { user, signIn } = useAuth();
   const { showToast } = useToast();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  if (user) return <Navigate to="/dashboard" replace />;
+  const returnPath = String((location.state as { from?: string } | null)?.from || '/dashboard');
+  if (user) return <Navigate to={returnPath.startsWith('/dashboard') ? returnPath : '/dashboard'} replace />;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

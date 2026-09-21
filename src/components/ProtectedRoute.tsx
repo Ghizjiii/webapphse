@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function ProtectedRoute({
@@ -9,6 +9,7 @@ export default function ProtectedRoute({
   requireAdmin?: boolean;
 }) {
   const { user, profile, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -18,7 +19,7 @@ export default function ProtectedRoute({
     );
   }
 
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}${location.hash}` }} />;
   if (profile && !profile.is_active) return <Navigate to="/login" replace />;
   if (requireAdmin && profile?.role !== 'admin') return <Navigate to="/dashboard" replace />;
   return <>{children}</>;

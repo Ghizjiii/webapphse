@@ -134,6 +134,7 @@ export default function PublicFormPage() {
             onPaymentOrderAmountChange={controller.handlePaymentOrderAmountChange}
             onPaymentBeneficiaryBinChange={controller.handlePaymentBeneficiaryBinChange}
             onPaymentBeneficiaryAccountChange={controller.handlePaymentBeneficiaryAccountChange}
+            onPaymentBeneficiarySelect={controller.handlePaymentBeneficiarySelect}
             onValidatePaymentBeneficiary={() => {
               void controller.handleValidatePaymentBeneficiary();
             }}

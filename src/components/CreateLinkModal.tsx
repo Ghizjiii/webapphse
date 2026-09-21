@@ -11,6 +11,7 @@ type CreateQuestionnairePayload = {
   payment_order_optional: boolean;
   is_general_contractor: boolean;
   object_name: string;
+  engineer_name: string;
 };
 
 type RegionOption = {
@@ -35,6 +36,7 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
   const [paymentOrderOptional, setPaymentOrderOptional] = useState(false);
   const [isGeneralContractor, setIsGeneralContractor] = useState(false);
   const [objectName, setObjectName] = useState('');
+  const [engineerName, setEngineerName] = useState('');
   const [regions, setRegions] = useState<RegionOption[]>([]);
   const [selectedRegionId, setSelectedRegionId] = useState(defaultRegionId);
   const [loadingRegions, setLoadingRegions] = useState(true);
@@ -127,6 +129,7 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
       payment_order_optional: paymentOrderOptional,
       is_general_contractor: isGeneralContractor,
       object_name: objectName.trim(),
+      engineer_name: engineerName.trim(),
     });
   }
 
@@ -274,6 +277,16 @@ export default function CreateLinkModal({ responsibleName, defaultRegion, onClos
               onChange={(event) => setObjectName(event.target.value)}
               placeholder="Например: Германия, Франкфурт"
               maxLength={255}
+              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">Инженер (ФИО)</label>
+            <input
+              value={engineerName}
+              onChange={event => setEngineerName(event.target.value)}
+              placeholder="Фамилия Имя Отчество"
               className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
