@@ -2395,8 +2395,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  photoIssuesByFile.push({ fileName, issues: photoIssues });
  }
 
- await supabase.from('generated_documents').insert(
- group.rows.map(row => ({
+ const generatedDocumentRows = group.rows.map(row => ({
  questionnaire_id: questionnaireId,
  certificate_id: row.cert.id,
  company_id: companyId,
@@ -2412,8 +2411,24 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  category: row.cert.category || '',
  employees_count: group.rows.length,
  generated_at: new Date().toISOString(),
- }))
- );
+ }));
+ const { error: generatedDocumentInsertError } = await supabase
+ .from('generated_documents')
+ .insert(generatedDocumentRows);
+
+ if (generatedDocumentInsertError) {
+ const isMissingIssuerColumn = /issuer_company/i.test(generatedDocumentInsertError.message || '');
+ if (!isMissingIssuerColumn) throw generatedDocumentInsertError;
+
+ const legacyRows = generatedDocumentRows.map(({ issuer_company: issuerCompany, ...row }) => {
+ void issuerCompany;
+ return row;
+ });
+ const { error: legacyInsertError } = await supabase
+ .from('generated_documents')
+ .insert(legacyRows);
+ if (legacyInsertError) throw legacyInsertError;
+ }
 
  await supabase
  .from('certificates')
