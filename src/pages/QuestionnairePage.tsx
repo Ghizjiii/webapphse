@@ -39,6 +39,11 @@ import { externalizeSupabaseStorageUrl } from '../lib/supabaseStorageUrl';
 
 type Tab = 'participants' | 'certificates' | 'course_costs' | 'protocols' | 'printed_documents';
 
+type RegionOption = {
+  bitrix_item_id: string;
+  name: string;
+};
+
 function getRecordValue(record: unknown, key: string): string {
   return String((record as Record<string, unknown>)[key] ?? '');
 }
@@ -102,7 +107,72 @@ function getWorkflowEventDescription(event: QuestionnaireEvent): string {
     return `${WORKFLOW_STATUS_LABELS[event.from_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.from_status} → ${WORKFLOW_STATUS_LABELS[event.to_status as keyof typeof WORKFLOW_STATUS_LABELS] || event.to_status}`;
   }
 
+  const entityLabel = String(event.metadata?.entity_label || '').trim();
+  const operation = String(event.metadata?.operation || '').trim();
+  const rawChanges = event.metadata?.changes;
+  const changes = rawChanges && typeof rawChanges === 'object'
+    ? Object.entries(rawChanges as Record<string, { from?: unknown; to?: unknown }>)
+    : [];
+  const fieldLabels: Record<string, string> = {
+    region_name: 'Регион / отдел',
+    region_bitrix_item_id: 'Регион / отдел',
+    object_name: 'Объект',
+    engineer_name: 'Инженер (ФИО)',
+    is_active: 'Активность ссылки',
+    expires_at: 'Срок действия',
+    name: 'Название компании',
+    bin_iin: 'БИН/ИИН',
+    phone: 'Телефон',
+    email: 'Email',
+    city: 'Город',
+    comments: 'Комментарий',
+    payment_order_name: 'Платежное поручение',
+    payment_order_number: 'Номер платежа',
+    payment_order_date: 'Дата платежа',
+    payment_order_amount: 'Сумма платежа',
+    payment_is_paid: 'Статус оплаты',
+    payment_order_beneficiary_name: 'Получатель платежа',
+    payment_order_beneficiary_bin: 'БИН получателя',
+    full_name: 'ФИО',
+    position: 'Должность',
+    category: 'Категория',
+    course_name: 'Курс',
+    issuer_company: 'Компания, которая выдает документ',
+    protocol_number: 'Номер протокола',
+    document_number: 'Номер документа',
+    protocol_date: 'Дата протокола',
+    is_printed: 'Статус печати',
+    sync_status: 'Статус синхронизации',
+    error_message: 'Ошибка синхронизации',
+    bitrix_company_id: 'Компания Bitrix24',
+    bitrix_deal_id: 'Сделка Bitrix24',
+  };
+  const formatAuditValue = (value: unknown) => {
+    if (value === null || value === undefined || value === '') return '—';
+    if (value === true) return 'Да';
+    if (value === false) return 'Нет';
+    if (typeof value === 'object') return 'обновлено';
+    const text = String(value);
+    return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+  };
+
+  if (changes.length > 0) {
+    const visibleChanges = changes
+      .filter(([field], _index, list) => field !== 'region_bitrix_item_id' || !list.some(([item]) => item === 'region_name'))
+      .slice(0, 3)
+      .map(([field, value]) => `${fieldLabels[field] || field}: ${formatAuditValue(value.from)} → ${formatAuditValue(value.to)}`);
+    const remaining = changes.length - visibleChanges.length;
+    return `${entityLabel ? `${entityLabel}: ` : ''}${visibleChanges.join('; ')}${remaining > 0 ? `; еще ${remaining}` : ''}`;
+  }
+
+  if (operation === 'insert') return `${entityLabel || 'Запись'} добавлена`;
+  if (operation === 'delete') return `${entityLabel || 'Запись'} удалена`;
+
   return 'Событие заявки';
+}
+
+function getWorkflowEventActor(event: QuestionnaireEvent): string {
+  return String(event.metadata?.actor_name || '').trim();
 }
 
 function normalizeAmountInput(value: string): number | null {
@@ -249,6 +319,14 @@ export default function QuestionnairePage() {
   const [companyEditing, setCompanyEditing] = useState(false);
   const [companyDraft, setCompanyDraft] = useState<Partial<Company>>({});
   const [savingCompany, setSavingCompany] = useState(false);
+  const [questionnaireEditing, setQuestionnaireEditing] = useState(false);
+  const [questionnaireDraft, setQuestionnaireDraft] = useState({
+    region_bitrix_item_id: '',
+    object_name: '',
+    engineer_name: '',
+  });
+  const [regionOptions, setRegionOptions] = useState<RegionOption[]>([]);
+  const [savingQuestionnaireDetails, setSavingQuestionnaireDetails] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [uploadingPaymentOrder, setUploadingPaymentOrder] = useState(false);
@@ -257,10 +335,13 @@ export default function QuestionnairePage() {
   const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
   const courseCostSummaries = buildCourseCostSummarySet(certificates);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!id) return;
-    setLoading(true);
-    setLoadError('');
+    const silent = Boolean(options.silent);
+    if (!silent) {
+      setLoading(true);
+      setLoadError('');
+    }
 
     const [qRes, companiesRes, dealsRes] = await Promise.all([
       supabase.from('questionnaires').select('*').eq('id', id).maybeSingle(),
@@ -269,6 +350,10 @@ export default function QuestionnairePage() {
     ]);
 
     if (qRes.error) {
+      if (silent) {
+        console.warn('Silent questionnaire refresh failed', qRes.error);
+        return;
+      }
       setCreatorProfile(null);
       setProcessingProfile(null);
       setLoadError('Не удалось загрузить анкету. Проверьте соединение и повторите попытку.');
@@ -277,6 +362,7 @@ export default function QuestionnairePage() {
     }
 
     if (!qRes.data) {
+      if (silent) return;
       setCreatorProfile(null);
       setProcessingProfile(null);
       setLoadError('Анкета не найдена или была удалена.');
@@ -419,16 +505,36 @@ export default function QuestionnairePage() {
       setWorkflowEvents([]);
     }
 
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [canSeeAllQuestionnaires, currentProfileEmail, currentProfileFullName, currentProfileRole, currentUserEmail, currentUserId, id, navigate]);
+
+  const refreshDataSilently = useCallback(() => {
+    void loadData({ silent: true });
+  }, [loadData]);
 
   useEffect(() => {
     loadData();
-    supabase.from('ref_courses').select('name').order('sort_order').order('name').then(({ data }) => {
-      if (data && data.length > 0) {
-        setAvailableCourses(data.map((r: { name: string }) => r.name));
+    void Promise.all([
+      supabase.from('ref_courses').select('name').order('sort_order').order('name'),
+      supabase
+        .from('ref_bitrix_list_items')
+        .select('bitrix_item_id, name')
+        .eq('list_key', 'REGIONS')
+        .order('sort_order')
+        .order('name'),
+    ]).then(([coursesResult, regionsResult]) => {
+      if (coursesResult.data && coursesResult.data.length > 0) {
+        setAvailableCourses(coursesResult.data.map((row: { name: string }) => row.name));
       } else {
-        fetchCoursesList().then(setAvailableCourses);
+        void fetchCoursesList().then(setAvailableCourses);
+      }
+      if (!regionsResult.error) {
+        setRegionOptions((regionsResult.data || [])
+          .map(row => ({
+            bitrix_item_id: String(row.bitrix_item_id || '').trim(),
+            name: String(row.name || '').trim(),
+          }))
+          .filter(row => row.bitrix_item_id && row.name));
       }
     });
   }, [loadData]);
@@ -719,6 +825,47 @@ export default function QuestionnairePage() {
         </div>
       </DashboardLayout>
     );
+  }
+
+  function startQuestionnaireEditing() {
+    if (!questionnaire) return;
+    setQuestionnaireDraft({
+      region_bitrix_item_id: String(questionnaire.region_bitrix_item_id || ''),
+      object_name: String(questionnaire.object_name || ''),
+      engineer_name: String(questionnaire.engineer_name || ''),
+    });
+    setQuestionnaireEditing(true);
+  }
+
+  async function saveQuestionnaireDetails() {
+    if (!questionnaire) return;
+    const selectedRegion = regionOptions.find(option => option.bitrix_item_id === questionnaireDraft.region_bitrix_item_id);
+    const keepsCurrentRegion = questionnaireDraft.region_bitrix_item_id
+      && questionnaireDraft.region_bitrix_item_id === questionnaire.region_bitrix_item_id;
+    setSavingQuestionnaireDetails(true);
+    const { data, error } = await supabase
+      .from('questionnaires')
+      .update({
+        region_bitrix_item_id: selectedRegion?.bitrix_item_id || (keepsCurrentRegion ? questionnaire.region_bitrix_item_id : ''),
+        region_name: selectedRegion?.name || (keepsCurrentRegion ? questionnaire.region_name : ''),
+        object_name: questionnaireDraft.object_name.trim(),
+        engineer_name: questionnaireDraft.engineer_name.trim(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', questionnaire.id)
+      .select('*')
+      .single();
+
+    setSavingQuestionnaireDetails(false);
+    if (error) {
+      showToast('error', 'Не удалось сохранить данные заявки');
+      return;
+    }
+
+    setQuestionnaire(data as QuestionnaireLink);
+    setQuestionnaireEditing(false);
+    setWorkflowEvents(await loadQuestionnaireEvents(questionnaire.id));
+    showToast('success', 'Данные заявки сохранены');
   }
   const isExpired = questionnaire.expires_at && new Date(questionnaire.expires_at) < new Date();
   const uniqueCoursesCount = new Set(
@@ -1055,6 +1202,16 @@ export default function QuestionnairePage() {
             <div className="flex min-w-0 flex-col gap-3 xl:items-end">
               <div className="flex w-full min-w-0 flex-col gap-3 xl:max-w-[370px]">
                 <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
+                  {canManageQuestionnaire && (
+                    <button
+                      type="button"
+                      onClick={startQuestionnaireEditing}
+                      className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50"
+                    >
+                      <Pencil size={14} />
+                      Данные заявки
+                    </button>
+                  )}
                   {canManageQuestionnaire && (
                     <button
                       onClick={toggleActive}
@@ -1429,8 +1586,8 @@ export default function QuestionnairePage() {
               {workflowEvents.length === 0 ? (
                 <div className="text-sm text-gray-500">История появится после первого этапа обработки.</div>
               ) : (
-                <div className="space-y-2">
-                  {workflowEvents.slice(0, 6).map(event => (
+                <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                  {workflowEvents.map(event => (
                     <div key={event.id} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm">
                       <div>
                         <div className={event.is_overdue ? 'font-medium text-red-700' : 'font-medium text-gray-900'}>
@@ -1439,6 +1596,9 @@ export default function QuestionnairePage() {
                         <div className="text-xs text-gray-500">
                           {getWorkflowEventDescription(event)}
                         </div>
+                        {getWorkflowEventActor(event) ? (
+                          <div className="mt-1 text-[11px] text-gray-400">Изменил: {getWorkflowEventActor(event)}</div>
+                        ) : null}
                       </div>
                       <div className="whitespace-nowrap text-xs text-gray-500">{formatDateTime(event.occurred_at)}</div>
                     </div>
@@ -1500,7 +1660,7 @@ export default function QuestionnairePage() {
                 bitrixCompanyId={company?.bitrix_company_id || null}
                 requestType={questionnaire.request_type === 'internal' ? 'internal' : 'external'}
                 certificates={certificates}
-                onRefresh={loadData}
+                onRefresh={refreshDataSilently}
               />
             </fieldset>
           )}
@@ -1550,6 +1710,91 @@ export default function QuestionnairePage() {
             loadData();
           }}
         />
+      )}
+
+      {questionnaireEditing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Данные заявки</h2>
+                <p className="mt-1 text-xs text-gray-500">Изменения сохраняются в истории заявки.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuestionnaireEditing(false)}
+                disabled={savingQuestionnaireDetails}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+                aria-label="Закрыть"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Регион / отдел</label>
+                <select
+                  value={questionnaireDraft.region_bitrix_item_id}
+                  onChange={event => setQuestionnaireDraft(current => ({
+                    ...current,
+                    region_bitrix_item_id: event.target.value,
+                  }))}
+                  className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="">Не указан</option>
+                  {questionnaire.region_bitrix_item_id
+                    && !regionOptions.some(option => option.bitrix_item_id === questionnaire.region_bitrix_item_id) ? (
+                      <option value={questionnaire.region_bitrix_item_id}>{questionnaire.region_name || 'Текущий регион / отдел'}</option>
+                    ) : null}
+                  {regionOptions.map(option => (
+                    <option key={option.bitrix_item_id} value={option.bitrix_item_id}>{option.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Объект</label>
+                <input
+                  value={questionnaireDraft.object_name}
+                  onChange={event => setQuestionnaireDraft(current => ({ ...current, object_name: event.target.value }))}
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  placeholder="Название объекта"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Инженер (ФИО)</label>
+                <input
+                  value={questionnaireDraft.engineer_name}
+                  onChange={event => setQuestionnaireDraft(current => ({ ...current, engineer_name: event.target.value }))}
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  placeholder="Фамилия Имя Отчество"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setQuestionnaireEditing(false)}
+                disabled={savingQuestionnaireDetails}
+                className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveQuestionnaireDetails()}
+                disabled={savingQuestionnaireDetails}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Check size={14} />
+                {savingQuestionnaireDetails ? 'Сохраняем...' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </DashboardLayout>
   );

@@ -21,6 +21,11 @@ export const WORKFLOW_EVENT_LABELS: Record<string, string> = {
   completed: 'Завершена',
   overdue: 'Просрочена',
   archived: 'Перенесена в архив',
+  data_updated: 'Данные изменены',
+  entity_created: 'Добавлены данные',
+  entity_deleted: 'Удалены данные',
+  payment_or_company_changed: 'Компания или оплата изменены',
+  bitrix_sync_changed: 'Синхронизация с Bitrix24',
 };
 
 export function resolveWorkflowStatus(questionnaire: QuestionnaireLink): QuestionnaireWorkflowStatus {
@@ -94,7 +99,7 @@ export async function loadQuestionnaireEvents(questionnaireId: string): Promise<
     .from('questionnaire_events')
     .select('*')
     .eq('questionnaire_id', questionnaireId)
-    .order('occurred_at', { ascending: true });
+    .order('occurred_at', { ascending: false });
 
   if (error) throw error;
   return (data || []) as QuestionnaireEvent[];

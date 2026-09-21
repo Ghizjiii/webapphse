@@ -4,6 +4,7 @@ import { CertificatesGrid } from '../features/certificates-table/grid';
 import { AUX_COLUMN_LABELS, TEXT_FIELDS } from '../features/certificates-table/config';
 import { CertificatesToolbar } from '../features/certificates-table/toolbar';
 import { useCertificatesTableController, type CertificatesTableProps } from '../features/certificates-table/use-certificates-table-controller';
+import { useAuth } from '../context/AuthContext';
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 150, 200, 250, 500] as const;
 
@@ -98,9 +99,22 @@ function PaginationControls({
 }
 
 export default function CertificatesTable(props: CertificatesTableProps) {
+  const { user } = useAuth();
   const controller = useCertificatesTableController(props);
-  const [pageSize, setPageSize] = useState<number>(20);
-  const [currentPage, setCurrentPage] = useState<number>(1);
+  const paginationStorageKey = `hse:certificates-pagination:${user?.id || 'anonymous'}:${props.questionnaireId}`;
+  const storedPagination = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(paginationStorageKey) || '{}') as { pageSize?: number; currentPage?: number };
+    } catch {
+      return {};
+    }
+  })();
+  const [pageSize, setPageSize] = useState<number>(() =>
+    PAGE_SIZE_OPTIONS.includes(storedPagination.pageSize as typeof PAGE_SIZE_OPTIONS[number])
+      ? Number(storedPagination.pageSize)
+      : 20
+  );
+  const [currentPage, setCurrentPage] = useState<number>(() => Math.max(1, Number(storedPagination.currentPage) || 1));
 
   const getColumnLabel = (key: string) => {
     const textField = TEXT_FIELDS.find(field => String(field.key) === key);
@@ -130,6 +144,10 @@ export default function CertificatesTable(props: CertificatesTableProps) {
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    localStorage.setItem(paginationStorageKey, JSON.stringify({ pageSize, currentPage }));
+  }, [currentPage, pageSize, paginationStorageKey]);
 
   return (
     <div className="min-w-0">

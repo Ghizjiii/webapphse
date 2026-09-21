@@ -219,8 +219,62 @@ export async function downloadQuestionnaireSubmissionPdf(data: SubmissionPdfData
     drawField('Счет получателя', data.paymentBeneficiaryAccount);
   }
 
+  const courseCounts = new Map<string, number>();
+  for (const participant of data.participants) {
+    for (const course of participant.courses) {
+      const courseName = String(course || '').trim();
+      if (!courseName) continue;
+      courseCounts.set(courseName, (courseCounts.get(courseName) || 0) + 1);
+    }
+  }
+  const courseRows = Array.from(courseCounts.entries()).sort(([left], [right]) => left.localeCompare(right, 'ru'));
+  const totalCourseRequests = courseRows.reduce((sum, [, count]) => sum + count, 0);
+
+  addPage();
+  page.context.fillStyle = '#eff6ff';
+  page.context.fillRect(PAGE_MARGIN, y, CONTENT_WIDTH, 58);
+  y += 14;
+  drawText('Детали курсов', PAGE_MARGIN + 18, CONTENT_WIDTH - 36, { size: 26, color: '#1d4ed8', bold: true, lineHeight: 34 });
+  y += 22;
+
+  const metricsTop = y;
+  const metricWidth = (CONTENT_WIDTH - 24) / 3;
+  const metrics = [
+    ['Сотрудников', String(data.participants.length)],
+    ['Курсов', String(courseRows.length)],
+    ['Заявок на курсы', String(totalCourseRequests)],
+  ];
+  metrics.forEach(([label, value], index) => {
+    const x = PAGE_MARGIN + index * (metricWidth + 12);
+    page.context.fillStyle = '#f8fafc';
+    page.context.fillRect(x, metricsTop, metricWidth, 92);
+    page.context.font = '400 19px Arial, sans-serif';
+    page.context.fillStyle = '#64748b';
+    page.context.fillText(label, x + 16, metricsTop + 14);
+    page.context.font = '700 30px Arial, sans-serif';
+    page.context.fillStyle = '#0f172a';
+    page.context.fillText(value, x + 16, metricsTop + 46);
+  });
+  y = metricsTop + 112;
+
+  if (courseRows.length === 0) {
+    drawText('Курсы не указаны', PAGE_MARGIN, CONTENT_WIDTH, { size: 22, color: '#64748b', lineHeight: 30 });
+  } else {
+    for (const [courseName, count] of courseRows) {
+      page.context.font = '400 22px Arial, sans-serif';
+      const lines = wrapText(page.context, `${courseName}: ${count}`, CONTENT_WIDTH - 36);
+      const rowHeight = Math.max(48, lines.length * 30 + 18);
+      ensureSpace(rowHeight + 8);
+      page.context.fillStyle = '#f8fafc';
+      page.context.fillRect(PAGE_MARGIN, y, CONTENT_WIDTH, rowHeight);
+      y += 9;
+      drawText(`${courseName}: ${count}`, PAGE_MARGIN + 18, CONTENT_WIDTH - 36, { size: 22, color: '#334155', bold: true, lineHeight: 30 });
+      y += 8;
+    }
+  }
+
   ensureSpace(130);
-  y += 10;
+  y += 22;
   drawText(`Список участников (${data.participants.length})`, PAGE_MARGIN, CONTENT_WIDTH, { size: 32, bold: true, lineHeight: 42 });
   y += 14;
 

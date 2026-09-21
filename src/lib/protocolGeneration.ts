@@ -11,7 +11,7 @@ import {
   gradeShort,
   normalizePreviousElectricalSafetyGroup,
 } from './electricalSafety';
-import { formatProtocolNumber, resolveIssuerCompanyProfile } from './issuerCompany';
+import { formatProtocolNumber, issuerCompanyGroupingKey, resolveIssuerCompanyProfile } from './issuerCompany';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -25,6 +25,7 @@ export interface ProtocolGroup {
   courseName: string;
   categoryScope: ProtocolCategoryScope;
   categoryLabel: string;
+  issuerCompany: string;
   groupKey: string;
   personalProtocol: boolean;
   certificates: Certificate[];
@@ -253,8 +254,17 @@ export function protocolCategoryLabel(scope: ProtocolCategoryScope): string {
 export function protocolNumberSequenceKey(params: {
   courseName: string;
   categoryScope: ProtocolCategoryScope;
+  issuerCompany?: string | null;
 }): string {
-  return `${normalizeProtocolSequenceCourseName(params.courseName)}::${params.categoryScope}`;
+  const base = `${normalizeProtocolSequenceCourseName(params.courseName)}::${params.categoryScope}`;
+  return params.issuerCompany
+    ? `${base}::issuer:${issuerCompanyGroupingKey(params.issuerCompany)}`
+    : base;
+}
+
+function protocolIssuerFromGroupKey(groupKey: string | null | undefined): string {
+  const match = String(groupKey || '').match(/::issuer:(HSE|EDU)(?:::|$)/i);
+  return match?.[1]?.toUpperCase() === 'EDU' ? 'Safety Education Group' : 'HSE Company';
 }
 
 export function isProtocolTemplateGenerationSupported(templateKey: string | null | undefined): boolean {
@@ -306,6 +316,7 @@ async function assignAutomaticProtocolNumbers<T extends {
   course_name: string;
   category_scope: ProtocolCategoryScope;
   protocol_number: string;
+  group_key?: string;
 }>(
   rows: T[],
   options: { replaceExisting?: boolean } = {},
@@ -327,7 +338,7 @@ async function assignAutomaticProtocolNumbers<T extends {
     loadProtocolNumeratorSettings(),
     supabase
       .from('protocols')
-      .select('id, course_name, category_scope, protocol_number'),
+      .select('id, course_name, category_scope, protocol_number, group_key'),
   ]);
 
   if (existingProtocolsResponse.error) throw existingProtocolsResponse.error;
@@ -341,6 +352,7 @@ async function assignAutomaticProtocolNumbers<T extends {
     const key = protocolNumberSequenceKey({
       courseName: row.course_name,
       categoryScope: row.category_scope as ProtocolCategoryScope,
+      issuerCompany: protocolIssuerFromGroupKey(row.group_key),
     });
     const currentMax = maxNumberByKey.get(key);
     if (currentMax == null || currentNumber > currentMax) {
@@ -354,6 +366,7 @@ async function assignAutomaticProtocolNumbers<T extends {
     const key = protocolNumberSequenceKey({
       courseName: row.course_name,
       categoryScope: row.category_scope,
+      issuerCompany: protocolIssuerFromGroupKey(row.group_key),
     });
     const startNumber = resolveProtocolStartNumber(settingsMap, row.course_name, row.category_scope);
     const currentMax = maxNumberByKey.get(key);
@@ -372,6 +385,7 @@ export async function assignProtocolNumbersToRows<T extends {
   course_name: string;
   category_scope: ProtocolCategoryScope;
   protocol_number: string;
+  group_key?: string;
 }>(
   rows: T[],
   options: { replaceExisting?: boolean } = {},
@@ -409,6 +423,7 @@ function buildCertificateProtocolNumberUpdates(
         templateKey: resolved.template.key,
         courseName: String(cert.course_name || '').trim(),
         categoryScope: resolved.scope,
+        issuerCompany: cert.issuer_company,
         discriminator: shouldUsePersonalProtocol ? certificateProtocolDiscriminator(cert) : '',
       }));
       const nextProtocolNumber = String(matchedProtocol?.protocol_number || '').trim();
@@ -505,11 +520,14 @@ export function protocolGroupKey(params: {
   templateKey: string;
   courseName: string;
   categoryScope: ProtocolCategoryScope;
+  issuerCompany?: string | null;
   discriminator?: string | null;
 }): string {
   const base = `${params.templateKey}::${params.courseName}::${params.categoryScope}`;
+  const issuerCompany = String(params.issuerCompany || '').trim();
+  const issuerPart = issuerCompany ? `::issuer:${issuerCompanyGroupingKey(issuerCompany)}` : '';
   const discriminator = String(params.discriminator || '').trim();
-  return discriminator ? `${base}::${discriminator}` : base;
+  return discriminator ? `${base}${issuerPart}::${discriminator}` : `${base}${issuerPart}`;
 }
 
 export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[] {
@@ -523,10 +541,12 @@ export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[
     if (!resolved) continue;
 
     const shouldCreatePersonalProtocol = isElectricalSafetyProtocolTemplate(resolved.template.key);
+    const issuerCompany = String(cert.issuer_company || '').trim();
     const key = protocolGroupKey({
       templateKey: resolved.template.key,
       courseName,
       categoryScope: resolved.scope,
+      issuerCompany,
       discriminator: shouldCreatePersonalProtocol ? certificateProtocolDiscriminator(cert) : '',
     });
 
@@ -541,6 +561,7 @@ export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[
       courseName,
       categoryScope: resolved.scope,
       categoryLabel: protocolCategoryLabel(resolved.scope),
+      issuerCompany,
       groupKey: key,
       personalProtocol: shouldCreatePersonalProtocol,
       certificates: [cert],
@@ -557,7 +578,9 @@ export function buildProtocolGroups(certificates: Certificate[]): ProtocolGroup[
     .sort((left, right) => {
       const byCourse = left.courseName.localeCompare(right.courseName, 'ru');
       if (byCourse !== 0) return byCourse;
-      return left.categoryLabel.localeCompare(right.categoryLabel, 'ru');
+      const byCategory = left.categoryLabel.localeCompare(right.categoryLabel, 'ru');
+      if (byCategory !== 0) return byCategory;
+      return left.issuerCompany.localeCompare(right.issuerCompany, 'ru');
     });
 }
 
@@ -609,6 +632,16 @@ export function buildProtocolDraftRows(params: {
 }): Protocol[] {
   const groups = buildProtocolGroups(params.certificates);
   const storedMap = new Map<string, Protocol>();
+  const legacyGroupCounts = new Map<string, number>();
+
+  for (const group of groups) {
+    const legacyGroupKey = protocolGroupKey({
+      templateKey: group.template.key,
+      courseName: group.courseName,
+      categoryScope: group.categoryScope,
+    });
+    legacyGroupCounts.set(legacyGroupKey, (legacyGroupCounts.get(legacyGroupKey) || 0) + 1);
+  }
 
   for (const row of params.storedProtocols || []) {
     storedMap.set(
@@ -635,7 +668,9 @@ export function buildProtocolDraftRows(params: {
       companyId: params.companyId,
       existing: group.personalProtocol
         ? storedMap.get(group.groupKey) || null
-        : storedMap.get(group.groupKey) || storedMap.get(legacyGroupKey) || null,
+        : storedMap.get(group.groupKey)
+          || (legacyGroupCounts.get(legacyGroupKey) === 1 ? storedMap.get(legacyGroupKey) : null)
+          || null,
     });
   });
 }
@@ -768,6 +803,7 @@ export function certificatesForProtocolRow(protocol: Protocol, certificates: Cer
         templateKey: resolved.template.key,
         courseName: String(cert.course_name || '').trim(),
         categoryScope: resolved.scope,
+        issuerCompany: cert.issuer_company,
         discriminator: isElectricalSafetyProtocolTemplate(resolved.template.key)
           ? certificateProtocolDiscriminator(cert)
           : '',

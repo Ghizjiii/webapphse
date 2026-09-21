@@ -1,0 +1,97 @@
+name: Deploy backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/functions/generate-document/**"
+      - "supabase/functions/generate-protocol-document/**"
+      - "supabase/functions/_shared/**"
+      - "supabase/migrations/20260921000200_add_questionnaire_change_audit.sql"
+      - ".github/workflows/deploy-backend.yml"
+
+concurrency:
+  group: production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload backend release
+        env:
+          REMOTE_RELEASE: "/tmp/hse-backend-${{ github.sha }}"
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "mkdir -p '$REMOTE_RELEASE/functions'"
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" -r \
+            supabase/functions/generate-document \
+            supabase/functions/generate-protocol-document \
+            supabase/functions/_shared \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/functions/"
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" \
+            supabase/migrations/20260921000200_add_questionnaire_change_audit.sql \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/migration.sql"
+
+      - name: Apply migration and restart Edge Runtime
+        env:
+          REMOTE_RELEASE: "/tmp/hse-backend-${{ github.sha }}"
+          DOCUMENT_SCRIPT_URL: "${{ secrets.GOOGLE_APPS_SCRIPT_URL }}"
+          PROTOCOL_SCRIPT_URL: "${{ secrets.GOOGLE_APPS_SCRIPT_PROTOCOL_URL }}"
+        run: |
+          test -n "$DOCUMENT_SCRIPT_URL"
+          test -n "$PROTOCOL_SCRIPT_URL"
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            bash -s -- "$REMOTE_RELEASE" "$DOCUMENT_SCRIPT_URL" "$PROTOCOL_SCRIPT_URL" <<'REMOTE'
+          set -euo pipefail
+
+          release_path="$1"
+          document_script_url="$2"
+          protocol_script_url="$3"
+
+          edge_id="$(docker ps --filter label=com.docker.compose.service=functions -q | head -n 1)"
+          test -n "$edge_id"
+          functions_source="$(docker inspect "$edge_id" --format '{{range .Mounts}}{{if eq .Destination "/home/deno/functions"}}{{.Source}}{{end}}{{end}}')"
+          test -n "$functions_source"
+
+          for function_name in generate-document generate-protocol-document _shared; do
+            mkdir -p "$functions_source/$function_name"
+            cp -a "$release_path/functions/$function_name/." "$functions_source/$function_name/"
+          done
+
+          compose_dir="$(docker inspect "$edge_id" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
+          compose_service="$(docker inspect "$edge_id" --format '{{index .Config.Labels "com.docker.compose.service"}}')"
+          env_file="$compose_dir/.env"
+          test -f "$env_file"
+
+          update_env() {
+            key="$1"
+            value="$2"
+            if grep -q "^${key}=" "$env_file"; then
+              sed -i "s|^${key}=.*$|${key}=${value}|" "$env_file"
+            else
+              printf '%s=%s\n' "$key" "$value" >> "$env_file"
+            fi
+          }
+
+          update_env GOOGLE_APPS_SCRIPT_URL "$document_script_url"
+          update_env GOOGLE_APPS_SCRIPT_PROTOCOL_URL "$protocol_script_url"
+
+          db_id="$(docker ps --filter label=com.docker.compose.service=db -q | head -n 1)"
+          test -n "$db_id"
+          docker exec -i "$db_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres < "$release_path/migration.sql" >/dev/null
+
+          (cd "$compose_dir" && docker compose up -d --no-deps "$compose_service") >/dev/null
+          rm -rf "$release_path"
+          REMOTE
