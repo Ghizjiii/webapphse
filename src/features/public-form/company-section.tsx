@@ -57,7 +57,7 @@ interface CompanySectionProps {
   onPaymentOrderAmountChange: (value: string) => void;
   onPaymentBeneficiaryBinChange: (value: string) => void;
   onPaymentBeneficiaryAccountChange: (value: string) => void;
-  onPaymentBeneficiarySelect: (name: string, bin: string, account: string) => void;
+  onPaymentBeneficiarySelect: (name: string, bin: string) => void;
   onValidatePaymentBeneficiary: () => void;
 }
 
@@ -90,6 +90,9 @@ function renderMatchStatus(value: boolean | undefined) {
 }
 
 function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecognitionDetails }) {
+  const manuallySelectedWithoutAccount = details.beneficiaryValid === true &&
+    details.verificationSource === 'user_corrected' &&
+    !String(details.beneficiaryAccount || '').trim();
   const boxClass = details.beneficiaryValid === false
     ? 'border-red-200 bg-red-50'
     : details.beneficiaryValid === true
@@ -130,7 +133,9 @@ function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecogn
           <div className="text-gray-500">Получатель</div>
           <div className="mt-1 font-medium text-gray-900">{formatRecognitionValue(details.beneficiaryName)}</div>
           <div className="mt-1 text-gray-600">БИН: {formatRecognitionValue(details.beneficiaryBin)}</div>
-          <div className="text-gray-600">Счет: {formatRecognitionValue(details.beneficiaryAccount)}</div>
+          {!manuallySelectedWithoutAccount && (
+            <div className="text-gray-600">Счет: {formatRecognitionValue(details.beneficiaryAccount)}</div>
+          )}
         </div>
         <div className="rounded-lg border border-white/70 bg-white/70 p-2">
           <div className="text-gray-500">Проверка условий</div>
@@ -138,11 +143,17 @@ function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecogn
             <span>БИН получателя</span>
             {renderMatchStatus(details.beneficiaryBinMatched)}
           </div>
-          <div className="mt-1 flex items-center justify-between gap-2">
-            <span>Счет получателя</span>
-            {renderMatchStatus(details.beneficiaryAccountMatched)}
-          </div>
-          <div className="mt-1 text-gray-600">Нужно совпадение БИН и счета одной разрешенной компании.</div>
+          {manuallySelectedWithoutAccount ? (
+            <div className="mt-1 text-gray-600">Компания получателя выбрана пользователем.</div>
+          ) : (
+            <>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span>Счет получателя</span>
+                {renderMatchStatus(details.beneficiaryAccountMatched)}
+              </div>
+              <div className="mt-1 text-gray-600">Нужно совпадение БИН и счета одной разрешенной компании.</div>
+            </>
+          )}
         </div>
       </div>
 
@@ -153,7 +164,7 @@ function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecogn
         </div>
       )}
 
-      {details.beneficiaryReason && (
+      {details.beneficiaryValid !== true && details.beneficiaryReason && (
         <div className="mt-2 font-medium text-red-700">Причина: {details.beneficiaryReason}</div>
       )}
 
@@ -163,7 +174,7 @@ function PaymentRecognitionDetailsBox({ details }: { details: PaymentOrderRecogn
           <div className="mt-1 space-y-1 text-gray-600">
             {details.acceptedBeneficiaries.map(item => (
               <div key={`${item.bin}-${item.name}`}>
-                {item.name}: БИН {item.bin}, счет {item.accounts.join(', ')}
+                {item.name}: БИН {item.bin}
               </div>
             ))}
           </div>
@@ -231,6 +242,21 @@ export function CompanySection(props: CompanySectionProps) {
     onPaymentBeneficiarySelect,
     onValidatePaymentBeneficiary,
   } = props;
+  const manuallySelectedBeneficiaryWithoutAccount = paymentRecognitionDetails?.beneficiaryValid === true &&
+    paymentRecognitionDetails.verificationSource === 'user_corrected' &&
+    !paymentBeneficiaryAccount.trim();
+  const beneficiaryCompanySelectionMode = Boolean(
+    paymentOrderUrl &&
+    paymentRecognitionDetails &&
+    (
+      (!paymentBeneficiaryBin.trim() && !paymentBeneficiaryAccount.trim()) ||
+      manuallySelectedBeneficiaryWithoutAccount
+    ),
+  );
+  const selectedBeneficiaryIndex = paymentRecognitionDetails?.acceptedBeneficiaries?.findIndex(beneficiary => (
+    beneficiary.bin === paymentBeneficiaryBin &&
+    beneficiary.name === paymentRecognitionDetails.beneficiaryName
+  )) ?? -1;
 
   return (
     <div className="bg-white rounded-2xl shadow-lg p-6">
@@ -429,38 +455,38 @@ export function CompanySection(props: CompanySectionProps) {
                     </div>
                   )}
                 </div>
-                {paymentRecognitionDetails?.acceptedBeneficiaries?.length ? (
+                {beneficiaryCompanySelectionMode && paymentRecognitionDetails?.acceptedBeneficiaries?.length ? (
                   <div className="mt-3">
                     <label className="mb-1 block text-xs text-gray-600">Компания-получатель оплаты</label>
                     <select
-                      value=""
+                      value={selectedBeneficiaryIndex >= 0 ? String(selectedBeneficiaryIndex) : ''}
                       onChange={event => {
-                        const [beneficiaryIndex, accountIndex] = event.target.value.split(':').map(Number);
+                        const beneficiaryIndex = Number(event.target.value);
                         const beneficiary = paymentRecognitionDetails.acceptedBeneficiaries?.[beneficiaryIndex];
-                        const account = beneficiary?.accounts?.[accountIndex];
-                        if (beneficiary && account) {
-                          onPaymentBeneficiarySelect(beneficiary.name, beneficiary.bin, account);
+                        if (beneficiary) {
+                          onPaymentBeneficiarySelect(beneficiary.name, beneficiary.bin);
                         }
                       }}
                       className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
                     >
-                      <option value="">Выберите компанию, если в чеке нет БИН или счета</option>
-                      {paymentRecognitionDetails.acceptedBeneficiaries.flatMap((beneficiary, beneficiaryIndex) => (
-                        beneficiary.accounts.map((account, accountIndex) => (
-                          <option key={`${beneficiary.bin}-${account}`} value={`${beneficiaryIndex}:${accountIndex}`}>
-                            {beneficiary.name} · БИН {beneficiary.bin} · {account}
-                          </option>
-                        ))
+                      <option value="">Выберите компанию-получателя</option>
+                      {paymentRecognitionDetails.acceptedBeneficiaries.map((beneficiary, beneficiaryIndex) => (
+                        <option key={beneficiary.bin} value={beneficiaryIndex}>
+                          {beneficiary.name}
+                        </option>
                       ))}
                     </select>
                   </div>
                 ) : null}
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] md:items-start">
+                <div className={`mt-3 grid grid-cols-1 gap-3 md:items-start ${
+                  beneficiaryCompanySelectionMode ? 'md:grid-cols-1' : 'md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]'
+                }`}>
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">БИН получателя</label>
                     <input
                       value={paymentBeneficiaryBin}
                       onChange={event => onPaymentBeneficiaryBinChange(event.target.value)}
+                      readOnly={beneficiaryCompanySelectionMode}
                       placeholder="211040027532"
                       className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
                         errors.payment_order_beneficiary_bin ? 'border-red-400 bg-red-50' : 'border-gray-300 bg-white'
@@ -468,7 +494,7 @@ export function CompanySection(props: CompanySectionProps) {
                     />
                     {errors.payment_order_beneficiary_bin && <p className="text-xs text-red-500 mt-1">{errors.payment_order_beneficiary_bin}</p>}
                   </div>
-                  <div>
+                  {!beneficiaryCompanySelectionMode && <div>
                     <label className="block text-xs text-gray-600 mb-1">Счет получателя IBAN</label>
                     <input
                       value={paymentBeneficiaryAccount}
@@ -479,8 +505,8 @@ export function CompanySection(props: CompanySectionProps) {
                       }`}
                     />
                     {errors.payment_order_beneficiary_account && <p className="text-xs text-red-500 mt-1">{errors.payment_order_beneficiary_account}</p>}
-                  </div>
-                  <button
+                  </div>}
+                  {!beneficiaryCompanySelectionMode && <button
                     type="button"
                     onClick={onValidatePaymentBeneficiary}
                     disabled={paymentValidationLoading || uploadingPaymentOrder}
@@ -488,7 +514,7 @@ export function CompanySection(props: CompanySectionProps) {
                   >
                     {paymentValidationLoading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                     Проверить
-                  </button>
+                  </button>}
                 </div>
               </div>
             )}

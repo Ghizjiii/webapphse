@@ -921,16 +921,15 @@ export function usePublicFormController(token: string | undefined) {
  setErrors(prev => ({ ...prev, payment_order: undefined, payment_order_beneficiary_account: undefined }));
  }, [updatePaymentManualCorrectionState]);
 
- const handlePaymentBeneficiarySelect = useCallback((name: string, bin: string, account: string) => {
+ const handlePaymentBeneficiarySelect = useCallback((name: string, bin: string) => {
  const normalizedBin = normalizePaymentBeneficiaryBin(bin);
- const normalizedAccount = normalizePaymentBeneficiaryAccount(account);
  const correctedFields = updatePaymentManualCorrectionState({
  beneficiaryBin: normalizedBin,
- beneficiaryAccount: normalizedAccount,
+ beneficiaryAccount: '',
  });
  setPaymentBeneficiaryName(name);
  setPaymentBeneficiaryBin(normalizedBin);
- setPaymentBeneficiaryAccount(normalizedAccount);
+ setPaymentBeneficiaryAccount('');
  setPaymentBeneficiaryValid(true);
  setPaymentManualCorrection(true);
  setPaymentCorrectedFields(correctedFields);
@@ -940,7 +939,9 @@ export function usePublicFormController(token: string | undefined) {
  ...current,
  beneficiaryName: name,
  beneficiaryBin: normalizedBin,
- beneficiaryAccount: normalizedAccount,
+ beneficiaryAccount: '',
+ beneficiaryBinMatched: true,
+ beneficiaryAccountMatched: undefined,
  beneficiaryValid: true,
  beneficiaryReason: 'Компания-получатель выбрана пользователем из разрешенного списка.',
  manualCorrection: true,
@@ -1018,7 +1019,6 @@ export function usePublicFormController(token: string | undefined) {
  }, [
  paymentBeneficiaryAccount,
  paymentBeneficiaryBin,
- paymentManualCorrection,
  paymentOcrOriginal,
  paymentOrderAmount,
  paymentOrderDate,
@@ -1097,7 +1097,7 @@ export function usePublicFormController(token: string | undefined) {
  ? (finalCorrectedFields.length > 0 ? 'user_corrected' : paymentVerificationSource || 'ocr')
  : '';
 
- if (!paymentOrderOptional && paymentOrderUrl && paymentManualCorrection) {
+ if (!paymentOrderOptional && paymentOrderUrl && paymentManualCorrection && !finalBeneficiaryValid) {
  const validatedBeneficiary = await handleValidatePaymentBeneficiary();
  finalBeneficiaryValid = validatedBeneficiary?.payment_order_beneficiary_valid === true;
  finalBeneficiaryBin = normalizePaymentBeneficiaryBin(String(validatedBeneficiary?.payment_order_beneficiary_bin || finalBeneficiaryBin));
@@ -1492,6 +1492,7 @@ export function usePublicFormController(token: string | undefined) {
  paymentBeneficiaryName,
  paymentBeneficiaryValid,
  paymentBeneficiaryBin,
+ paymentManualCorrection,
  paymentOcrOriginal,
  paymentOrderAmount,
  paymentOrderDate,
