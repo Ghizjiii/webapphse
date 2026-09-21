@@ -1,9 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const googleScriptUrl =
-  Deno.env.get("GOOGLE_APPS_SCRIPT_PROTOCOL_URL") ||
-  Deno.env.get("GOOGLE_APPS_SCRIPT_URL") ||
-  "";
+  "https://script.google.com/macros/s/AKfycbxgSD_VbHQpSw_paYfm1ywVkLAIY3d6pN77JVprpsc_xnEY6xxEkSbYMPggXsV4edfF/exec";
 const googleScriptToken =
   Deno.env.get("GOOGLE_APPS_SCRIPT_PROTOCOL_TOKEN") ||
   Deno.env.get("GOOGLE_APPS_SCRIPT_TOKEN") ||

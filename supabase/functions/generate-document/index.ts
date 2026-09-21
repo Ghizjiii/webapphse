@@ -1,7 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared/cors.ts";
 
-const googleScriptUrl = Deno.env.get("GOOGLE_APPS_SCRIPT_URL") || "";
+const googleScriptUrl =
+  "https://script.google.com/macros/s/AKfycbzFb__m-pn-YC3zgFjCqgIVVewYWcnl5VkxTYaTRXz3QYxX0ZsXDZjEcwPsnldiOBp1/exec";
 const googleScriptToken = Deno.env.get("GOOGLE_APPS_SCRIPT_TOKEN") || "";
 
 type GenerateBody = {
