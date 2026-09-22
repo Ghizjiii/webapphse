@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const googleScriptUrl =
-  "https://script.google.com/macros/s/AKfycbxgSD_VbHQpSw_paYfm1ywVkLAIY3d6pN77JVprpsc_xnEY6xxEkSbYMPggXsV4edfF/exec";
+  "https://script.google.com/macros/s/AKfycbzXbh0j5Ukk1qdpbg2w_Ho9CXZFcNipI4LDVThrfERwwxjRU_ra-qNiqh51vvvkUkqR/exec";
 const googleScriptToken =
   Deno.env.get("GOOGLE_APPS_SCRIPT_PROTOCOL_TOKEN") ||
   Deno.env.get("GOOGLE_APPS_SCRIPT_TOKEN") ||
