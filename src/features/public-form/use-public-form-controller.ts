@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { supabase } from '../../lib/supabase';
+import { publicSupabase as supabase } from '../../lib/supabase';
 import { prepareParticipantPhotoFile, uploadCommentAttachment, uploadPhoto, uploadPaymentOrder } from '../../lib/cloudinary';
 import type { PaymentOrderExtractedFields } from '../../lib/cloudinary';
 import { extractPaymentOrderFields, validatePaymentOrderFields } from '../../lib/paymentOcr';

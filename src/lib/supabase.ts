@@ -13,6 +13,19 @@ export const supabase = createClient(
   supabaseAnonKey || 'invalid-anon-key'
 );
 
+// Public questionnaire links must never inherit an authenticated dashboard session.
+export const publicSupabase = createClient(
+  supabaseUrl || 'https://invalid.supabase.co',
+  supabaseAnonKey || 'invalid-anon-key',
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  }
+);
+
 export async function getFreshAccessToken(graceMs = 60_000): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
   const session = data.session;
