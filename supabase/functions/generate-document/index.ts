@@ -4,6 +4,7 @@ import { jsonResponse, preflightResponse, validateCorsRequest } from "../_shared
 const googleScriptUrl =
   "https://script.google.com/macros/s/AKfycbysawQ5fGVfMX98TqfORJI8bNmMf3C1XuT5RC1LZkIL7PEPZtOpt3CEqGfxfXlq_G7Z/exec";
 const googleScriptToken = Deno.env.get("GOOGLE_APPS_SCRIPT_TOKEN") || "";
+const googleScriptTimeoutMs = 285_000;
 
 type GenerateBody = {
   templateKey: string;
@@ -62,6 +63,7 @@ Deno.serve(async (req: Request) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(googleScriptTimeoutMs),
     });
 
     const rawText = await upstream.text();
@@ -117,6 +119,11 @@ Deno.serve(async (req: Request) => {
       photoIssues,
     });
   } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      return jsonResponse(req, 504, {
+        error: "Google Apps Script did not finish within 285 seconds",
+      });
+    }
     const msg = e instanceof Error ? e.message : String(e);
     return jsonResponse(req, 500, { error: msg });
   }

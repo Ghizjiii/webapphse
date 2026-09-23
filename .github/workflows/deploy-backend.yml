@@ -8,8 +8,10 @@ on:
     paths:
       - "supabase/functions/generate-document/**"
       - "supabase/functions/generate-protocol-document/**"
+      - "supabase/functions/main/**"
       - "supabase/functions/_shared/**"
       - "supabase/migrations/20260921000300_add_generated_document_issuer.sql"
+      - "deploy/nginx/supabase-hse"
       - ".github/workflows/deploy-backend.yml"
 
 concurrency:
@@ -38,11 +40,16 @@ jobs:
           scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" -r \
             supabase/functions/generate-document \
             supabase/functions/generate-protocol-document \
+            supabase/functions/main \
             supabase/functions/_shared \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/functions/"
           scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" \
             supabase/migrations/20260921000300_add_generated_document_issuer.sql \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/migration.sql"
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "mkdir -p '$REMOTE_RELEASE/nginx'"
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.VPS_PORT }}" \
+            deploy/nginx/supabase-hse \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$REMOTE_RELEASE/nginx/supabase-hse"
 
       - name: Apply migration and restart Edge Runtime
         env:
@@ -57,7 +64,7 @@ jobs:
           edge_id="$(docker ps --filter label=com.docker.compose.service=functions -q | head -n 1)"
           test -n "$edge_id"
 
-          for function_name in generate-document generate-protocol-document _shared; do
+          for function_name in generate-document generate-protocol-document main _shared; do
             docker exec -u 0 "$edge_id" mkdir -p "/home/deno/functions/$function_name"
             docker cp "$release_path/functions/$function_name/." "$edge_id:/home/deno/functions/$function_name/"
           done
@@ -65,6 +72,10 @@ jobs:
           db_id="$(docker ps --filter label=com.docker.compose.service=db -q | head -n 1)"
           test -n "$db_id"
           docker exec -i "$db_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres < "$release_path/migration.sql" >/dev/null
+
+          sudo -n install -o root -g root -m 0644 "$release_path/nginx/supabase-hse" /etc/nginx/sites-available/supabase-hse
+          sudo -n nginx -t
+          sudo -n systemctl reload nginx
 
           docker restart "$edge_id" >/dev/null
           rm -rf "$release_path"
