@@ -411,7 +411,23 @@ async function callGenerateDocumentFunctionOnce(input: {
     },
   });
 
-  if (error) throw new Error(error.message || 'Failed to invoke generate-document');
+  if (error) {
+    let upstreamMessage = '';
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      try {
+        const payload = await response.clone().json() as { error?: unknown; message?: unknown };
+        upstreamMessage = String(payload.error || payload.message || '').trim();
+      } catch {
+        try {
+          upstreamMessage = (await response.clone().text()).trim();
+        } catch {
+          upstreamMessage = '';
+        }
+      }
+    }
+    throw new Error(upstreamMessage || error.message || 'Failed to invoke generate-document');
+  }
 
   const fileUrl = String(data?.fileUrl || '');
   const fileName = String(data?.fileName || input.fileName);

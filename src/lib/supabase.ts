@@ -22,6 +22,7 @@ export const publicSupabase = createClient(
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false,
+      storageKey: 'hse-public-anon-auth',
     },
   }
 );

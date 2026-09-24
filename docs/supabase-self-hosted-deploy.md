@@ -53,3 +53,22 @@ For the questionnaire trash feature:
 4. Restart/reload the relevant Supabase services if the self-hosted deployment requires it.
 
 The exact commands depend on how Supabase is installed on the VPS: Docker Compose, Supabase CLI, or a custom service layout.
+
+## Document generation timeouts
+
+Document generation calls Google Apps Script and therefore crosses four timeout layers. Keep the outer layers longer than the inner one so the Edge Function can return a JSON error with CORS headers instead of a generic gateway response:
+
+```text
+Google Apps Script fetch timeout: 285 seconds
+Edge Runtime document worker:     300 seconds
+Kong functions-v1 read_timeout:   330000 milliseconds
+nginx proxy_read_timeout:         330 seconds
+```
+
+For the self-hosted stack, the Kong value is configured on the `functions-v1` service in:
+
+```text
+/opt/supabase-selfhosted/volumes/api/kong.yml
+```
+
+After changing it, validate the declarative config and restart only Kong. Keep a backup of the previous file for rollback.

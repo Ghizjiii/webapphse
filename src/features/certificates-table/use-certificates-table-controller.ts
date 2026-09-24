@@ -2368,14 +2368,10 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  const photoIssuesByFile: Array<{ fileName: string; issues: string[] }> = [];
 
  try {
- for (const group of groupList) {
+ let nextGroupIndex = 0;
+ const processGroup = async (group: (typeof groupList)[number]) => {
  try {
  const certIds = group.rows.map(row => row.cert.id);
- await supabase
- .from('generated_documents')
- .delete()
- .eq('questionnaire_id', questionnaireId)
- .in('certificate_id', certIds);
 
  const {
  fileUrl,
@@ -2395,6 +2391,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  photoIssuesByFile.push({ fileName, issues: photoIssues });
  }
 
+ const generatedAt = new Date().toISOString();
  const generatedDocumentRows = group.rows.map(row => ({
  questionnaire_id: questionnaireId,
  certificate_id: row.cert.id,
@@ -2410,7 +2407,7 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  course_name: row.cert.course_name || '',
  category: row.cert.category || '',
  employees_count: group.rows.length,
- generated_at: new Date().toISOString(),
+ generated_at: generatedAt,
  }));
  const { error: generatedDocumentInsertError } = await supabase
  .from('generated_documents')
@@ -2430,13 +2427,24 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  if (legacyInsertError) throw legacyInsertError;
  }
 
- await supabase
+ const { error: generatedDocumentCleanupError } = await supabase
+ .from('generated_documents')
+ .delete()
+ .eq('questionnaire_id', questionnaireId)
+ .in('certificate_id', certIds)
+ .lt('generated_at', generatedAt);
+ if (generatedDocumentCleanupError) {
+ console.warn('Generated document cleanup failed', generatedDocumentCleanupError);
+ }
+
+ const { error: certificateUpdateError } = await supabase
  .from('certificates')
  .update({
  document_url: fileUrl,
  updated_at: new Date().toISOString(),
  })
  .in('id', certIds);
+ if (certificateUpdateError) throw certificateUpdateError;
 
  generated++;
  setGenerationProgress(prev => prev ? { ...prev, processed: prev.processed + 1, generated } : prev);
@@ -2446,7 +2454,16 @@ async function bulkFillNumber(field: 'document_number' | 'protocol_number', labe
  failedGroups.push(`${group.courseName} / ${group.issuerCompany}: ${message}`);
  setGenerationProgress(prev => prev ? { ...prev, processed: prev.processed + 1, failed } : prev);
  }
+ };
+
+ const workerCount = Math.min(2, groupList.length);
+ await Promise.all(Array.from({ length: workerCount }, async () => {
+ while (true) {
+ const groupIndex = nextGroupIndex++;
+ if (groupIndex >= groupList.length) return;
+ await processGroup(groupList[groupIndex]);
  }
+ }));
 
  if (generated > 0) {
  showToast('success', `Сгенерировано файлов: ${generated}. Пропущено групп: ${skipped}. Ошибок: ${failed}.`);

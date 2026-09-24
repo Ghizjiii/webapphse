@@ -333,6 +333,7 @@ export default function QuestionnairePage() {
   const [linkEditing, setLinkEditing] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
   const paymentOrderInputRef = useRef<HTMLInputElement | null>(null);
+  const initializedQuestionnaireIdRef = useRef<string | null>(null);
   const courseCostSummaries = buildCourseCostSummarySet(certificates);
 
   const loadData = useCallback(async (options: { silent?: boolean } = {}) => {
@@ -513,7 +514,9 @@ export default function QuestionnairePage() {
   }, [loadData]);
 
   useEffect(() => {
-    loadData();
+    if (!id || initializedQuestionnaireIdRef.current === id) return;
+    initializedQuestionnaireIdRef.current = id;
+    void loadData();
     void Promise.all([
       supabase.from('ref_courses').select('name').order('sort_order').order('name'),
       supabase
@@ -537,7 +540,7 @@ export default function QuestionnairePage() {
           .filter(row => row.bitrix_item_id && row.name));
       }
     });
-  }, [loadData]);
+  }, [id, loadData]);
 
   useEffect(() => {
     if (!isAdmin) {
