@@ -19,6 +19,29 @@ type GenerateBody = {
   }>;
 };
 
+function issuerPlaceholder(placeholders: Record<string, string>, key: string): string {
+  return String(placeholders[key] || placeholders[`{{${key}}}`] || "");
+}
+
+function padIdCardItems(body: GenerateBody): NonNullable<GenerateBody["items"]> {
+  const items = Array.isArray(body.items) ? [...body.items] : [];
+  if (body.docType !== "id_card" || items.length === 0 || items.length % 4 === 0) {
+    return items;
+  }
+
+  const source = items[0]?.placeholders || {};
+  const issuerPlaceholders = {
+    MyCompanyName: issuerPlaceholder(source, "MyCompanyName"),
+    Director_Fullname: issuerPlaceholder(source, "Director_Fullname"),
+    Director_Shortname: issuerPlaceholder(source, "Director_Shortname"),
+  };
+
+  while (items.length % 4 !== 0) {
+    items.push({ placeholders: issuerPlaceholders, photoUrl: "" });
+  }
+  return items;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return preflightResponse(req);
@@ -56,7 +79,7 @@ Deno.serve(async (req: Request) => {
       fileName: body.fileName,
       placeholders: hasSinglePlaceholders ? body.placeholders : {},
       photoUrl: body.photoUrl || "",
-      items: hasItems ? body.items : [],
+      items: hasItems ? padIdCardItems(body) : [],
     };
 
     const upstream = await fetch(googleScriptUrl, {
